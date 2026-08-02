@@ -1,0 +1,25 @@
+# Example agentkeeper configuration. Copy to ./agentkeeper.yaml or pass
+# --config <path>. Every key can also be set via an AGENTKEEPER_-prefixed
+# environment variable, e.g. AGENTKEEPER_SERVER_LISTEN_ADDR.
+
+server:
+  listen_addr: ":8080"
+
+logging:
+  level: info    # debug | info | warn | error
+  format: console # console | json
+
+rules:
+  path: "" # path to a rules file defining circuit breakers, token compaction, etc.
+
+# The upstream LLM provider agentkeeper forwards all requests to. Callers
+# don't choose a provider; every request to the gateway goes to this one.
+# Anthropic is the only supported provider for now.
+provider:
+  name: anthropic
+  base_url: "https://api.anthropic.com"
+  # Name of the environment variable holding the upstream API key.
+  # agentkeeper reads the key from this env var at startup and injects it
+  # into upstream requests itself; the key is never set here, never
+  # accepted via caller-supplied headers, and never logged.
+  api_key_env: "ANTHROPIC_API_KEY"

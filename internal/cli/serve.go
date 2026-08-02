@@ -1,0 +1,47 @@
+package cli
+
+import (
+	"os/signal"
+	"syscall"
+
+	"github.com/spf13/cobra"
+
+	"github.com/agentkeeper/agentkeeper/internal/gateway"
+	"github.com/agentkeeper/agentkeeper/internal/logging"
+	"github.com/agentkeeper/agentkeeper/internal/provider"
+)
+
+func newServeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "serve",
+		Short: "Start the agentkeeper LLM gateway",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+
+			logger, err := logging.New(cfg.Logging)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = logger.Sync() }()
+
+			var prov provider.Provider
+			if cfg.Provider.Name == "anthropic" {
+				prov, err = provider.NewAnthropicProvider(cfg.Provider.BaseURL, cfg.Provider.APIKeyEnv)
+			} else {
+				prov, err = provider.NewHTTPProxy(cfg.Provider.Name, cfg.Provider.BaseURL)
+			}
+			if err != nil {
+				return err
+			}
+
+			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+
+			gw := gateway.New(cfg, logger, prov)
+			return gw.Run(ctx)
+		},
+	}
+}
