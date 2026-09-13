@@ -39,8 +39,8 @@ builds the ordered stage slice from config and mounts the pipeline
 between the mux and the provider handler:
 
 ```
-mux "/" → pipeline.Handler(provider.Handler())
-mux "/healthz" → gateway.handleHealthz          (never enters the pipeline)
+mux "/" -> pipeline.Handler(provider.Handler())
+mux "/healthz" -> gateway.handleHealthz          (never enters the pipeline)
 ```
 
 Per call, `Handler` does:
@@ -226,10 +226,10 @@ pipeline:
     token_counting: true
 ```
 
-| Field | Type | Default | Env var |
-| --- | --- | --- | --- |
-| `pipeline.max_body_bytes` | int64 | `10485760` | `AGENTKEEPER_PIPELINE_MAX_BODY_BYTES` |
-| `pipeline.stages.token_counting` | bool | `true` | `AGENTKEEPER_PIPELINE_STAGES_TOKEN_COUNTING` |
+| Field                            | Type  | Default    | Env var                                      |
+| -------------------------------- | ----- | ---------- | -------------------------------------------- |
+| `pipeline.max_body_bytes`        | int64 | `10485760` | `AGENTKEEPER_PIPELINE_MAX_BODY_BYTES`        |
+| `pipeline.stages.token_counting` | bool  | `true`     | `AGENTKEEPER_PIPELINE_STAGES_TOKEN_COUNTING` |
 
 Both need a default in `defaults()` and `Load()`, plus the entry in
 `configs/agentkeeper.example.yaml`. Each future stage spec adds one
@@ -245,16 +245,16 @@ value and silently disable the stage.
 
 ## Failure modes
 
-| Condition | Result |
-| --- | --- |
-| `Stage.Request` returns `error` | 503 `agentkeeper_unavailable`, stage named; `next` not called; logged at error |
-| `Stage.Request` panics | Recovered into an error; identical to the above; process survives |
-| `Decision` is `!allow` | Its status/message; short-circuit; logged at warn with `Reason` |
-| Request body exceeds `max_body_bytes` | 413 `agentkeeper_denied`, stage `"pipeline"`, before any stage runs |
-| Reading the request body fails | 400 `agentkeeper_denied`; not forwarded |
-| Response exceeds `max_body_bytes` | Streamed to the caller in full; `ResponseTruncated = true` and observers see a partial `ResponseBody` |
-| `ResponseObserver.Response` panics | Recovered and logged; the caller's response is untouched |
-| Unknown `pipeline.stages` key, or `max_body_bytes <= 0` | `config.Load` error; `serve` exits non-zero at startup |
+| Condition                                               | Result                                                                                                |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `Stage.Request` returns `error`                         | 503 `agentkeeper_unavailable`, stage named; `next` not called; logged at error                        |
+| `Stage.Request` panics                                  | Recovered into an error; identical to the above; process survives                                     |
+| `Decision` is `!allow`                                  | Its status/message; short-circuit; logged at warn with `Reason`                                       |
+| Request body exceeds `max_body_bytes`                   | 413 `agentkeeper_denied`, stage `"pipeline"`, before any stage runs                                   |
+| Reading the request body fails                          | 400 `agentkeeper_denied`; not forwarded                                                               |
+| Response exceeds `max_body_bytes`                       | Streamed to the caller in full; `ResponseTruncated = true` and observers see a partial `ResponseBody` |
+| `ResponseObserver.Response` panics                      | Recovered and logged; the caller's response is untouched                                              |
+| Unknown `pipeline.stages` key, or `max_body_bytes <= 0` | `config.Load` error; `serve` exits non-zero at startup                                                |
 
 Requests fail **closed** — the rationale is in the functional spec §
 *Failure behavior*. Responses cannot: by the time an observer runs, the

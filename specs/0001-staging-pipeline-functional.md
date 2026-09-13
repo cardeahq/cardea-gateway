@@ -69,8 +69,8 @@ is down", and not enough to map out the policy by probing.
 1. Every request that is not `/healthz` passes through the pipeline
    before reaching the provider. `/healthz` bypasses it entirely and
    answers even when a stage would deny.
-2. Stages run in one fixed order, the RFC's: identification → policies →
-   monitoring → filtering → rate-limiting → audit. The order is a
+2. Stages run in one fixed order, the RFC's: identification -> policies ->
+   monitoring -> filtering -> rate-limiting -> audit. The order is a
    property of the build, not of configuration.
 3. Configuration can only enable or disable a stage; it cannot reorder
    stages or insert one. Every stage is enabled unless the operator
@@ -113,10 +113,10 @@ is down", and not enough to map out the policy by probing.
 
 ## Operator controls
 
-| Control | What it does | Default | At the extremes |
-| --- | --- | --- | --- |
-| Per-stage enable | Turns one stage on or off, leaving order untouched | All stages on | All off: a plain proxy, and no call can be denied whatever else is configured. All on: every stage sees every call, and each enforces whatever it has been given |
-| Maximum body size | Largest request body the pipeline will read so stages can inspect it; also caps how much of a response is retained for observation | 10 MiB | Too low: legitimate large prompts are denied. Too high: memory grows with concurrent calls |
+| Control           | What it does                                                                                                                       | Default       | At the extremes                                                                                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Per-stage enable  | Turns one stage on or off, leaving order untouched                                                                                 | All stages on | All off: a plain proxy, and no call can be denied whatever else is configured. All on: every stage sees every call, and each enforces whatever it has been given |
+| Maximum body size | Largest request body the pipeline will read so stages can inspect it; also caps how much of a response is retained for observation | 10 MiB        | Too low: legitimate large prompts are denied. Too high: memory grows with concurrent calls                                                                       |
 
 With an operator who configures nothing, every stage runs and no call is
 denied — because no stage has been given anything to enforce. That is
