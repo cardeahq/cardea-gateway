@@ -45,8 +45,10 @@ mux "/healthz" -> gateway.handleHealthz          (never enters the pipeline)
 
 Per call, `Handler` does:
 
-1. Build a `Call`: generate `ID`, stamp `Received`, read and cap the
-   request body, restore `r.Body` so the provider still sees it.
+1. Build a `Call`: generate `ID`, stamp `Received`, read the request body
+   in full — denying with 413 if it exceeds `maxBodyBytes`, since a stage
+   cannot inspect what was not read — then restore `r.Body` so the
+   provider still sees it.
 2. Run each stage's `Request` in slice order. First `Decision` with
    `Allow == false`, or first non-nil `error`, short-circuits.
 3. On allow, invoke `next` with a `recorder` wrapping the
@@ -80,13 +82,19 @@ type Call struct {
 	Received time.Time
 	Request  *http.Request
 
-	Body          []byte
-	BodyTruncated bool
+	// Body is always the complete request body: an over-limit request is
+	// denied, never truncated, so stages never inspect less than the
+	// provider receives. ResponseBody has no such guarantee — see below.
+	Body []byte
 
 	Status   int
 	Duration time.Duration
 	Denial   *Denial
 
+	// ResponseBody is capped at maxBodyBytes with ResponseTruncated set;
+	// the caller still receives the response in full. A response cannot
+	// be denied after the fact, so truncating the retained copy is the
+	// only option available here.
 	ResponseBody      []byte
 	ResponseTruncated bool
 	ResponseErr       error
