@@ -28,6 +28,11 @@ Run the gateway directly: `go run ./cmd/agentkeeper serve [--config path.yaml]`.
 
 ## Architecture
 
+- `specs/` — functional and technical specifications. Not code; the
+  source of intent for behavior, including features not implemented yet.
+  Flat layout, shared numeric sequence:
+  `NNNN-<feature>-{functional,technical}.md` (see the `new-tech-spec`
+  skill).
 - `cmd/agentkeeper/main.go` — entrypoint; delegates immediately to `internal/cli`.
 - `internal/cli` — Cobra command tree (`root.go`, `serve.go`, `version.go`).
   Persistent `--config` flag lives on the root command; each subcommand's
@@ -84,6 +89,9 @@ interrupted.
   says (`// NewFoo builds a Foo` above `func NewFoo() Foo`).
 - Commands build their own dependencies (logger, gateway) inside `RunE`
   rather than reaching for package-level singletons.
+- Before implementing a feature, check `specs/` for a spec covering it and
+  follow it. If the implementation ends up diverging from the spec, update
+  the spec in the same change rather than leaving it stale.
 
 ## How to use AgentKeeper with OpenCode
 
