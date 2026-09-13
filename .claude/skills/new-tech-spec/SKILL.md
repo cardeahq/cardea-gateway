@@ -42,7 +42,8 @@ time — about anything the code can't answer:
 - **Scope** — one sentence on what the feature does, and the explicit
   non-goals. What is deliberately *not* in this version?
 - **Functional spec** — does one exist in `specs/`? If not, is the
-  behavior settled enough to design against, or should that come first?
+  behavior settled enough to design against, or should that come first
+  via the `new-func-spec` skill?
 - **Placement in the request path** — where in the `serve` data flow does
   it sit (`cli.serve` → `config.Config` → `zap.Logger` →
   `provider.Provider` → `gateway.Gateway`)? Does it inspect requests,
@@ -65,61 +66,25 @@ business logic under `internal/`, dependencies built in `RunE`).
 
 ## Structure of the document
 
-```md
-# NNNN — <Feature name> (technical)
+Start from `specs/TEMPLATE-technical.md` — read it and follow its
+sections and header block. Fill every placeholder, strip its guidance
+comments, and drop a section that genuinely doesn't apply (a feature with
+no config surface needs no Configuration section) rather than padding one
+to fill it.
 
-**Status:** Draft | Accepted | Implemented | Superseded by NNNN
-**Date:** YYYY-MM-DD
-**Functional spec:** specs/NNNN-<feature>-functional.md (or "none")
+Two sections are what make the spec worth having:
 
-## Context
-The problem, and why agentkeeper needs to solve it. Link the functional
-spec rather than restating its behavior.
-
-## Goals / Non-goals
-Bulleted. Non-goals are the more useful half — they are what stops scope
-creep during implementation.
-
-## Design
-The shape of the solution in prose plus, where it helps, a request-flow
-sketch. State where it hooks into the existing data flow.
-
-## Packages and types
-Per package touched: what is added or changed. Give real Go signatures
-for new exported types/functions — enough that the implementation is
-transcription, not invention. Say which files are new vs. modified.
-
-## Configuration
-New `config.Config` fields with YAML shape, defaults, and the matching
-`AGENTKEEPER_`-prefixed env var names. Note that each field needs a
-default in both `defaults()` and `Load()`, plus an entry in
-`configs/agentkeeper.example.yaml`.
-
-## Failure modes
-What happens on error, timeout, and misconfiguration. State fail-open vs.
-fail-closed explicitly and justify it.
-
-## Testing
-What proves this works: which packages get tests, what the table cases
-cover, and any `httptest`-based upstream fake needed.
-
-## Alternatives considered
-Each with a one-line reason it was rejected.
-
-## Open questions
-Anything unresolved, with who/what decides it. Delete the section when
-empty rather than leaving it with "none".
-```
-
-Drop a section that genuinely doesn't apply (a feature with no config
-surface needs no Configuration section) — but don't pad one to fill it.
+- **Packages and types** — every new exported type and function with a
+  real Go signature, and which files are new vs. modified. The bar is
+  that implementing it is transcription, not invention.
+- **Alternatives considered** — each with the one-line reason it lost.
+  If the section is empty the design probably hasn't been stress-tested.
 
 ## Before calling it done
 
 - [ ] Filename number is unused and the feature slug matches any existing
       functional spec for the same feature.
-- [ ] Status and date filled in; Status is `Draft` unless the user says
-      otherwise.
+- [ ] Date filled in.
 - [ ] Every new exported type/function appears with a real signature.
 - [ ] Failure behavior is stated explicitly, not implied.
 - [ ] Config fields list defaults and env var names.
