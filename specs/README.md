@@ -69,6 +69,7 @@ template:
 
 - `new-func-spec` — "write a functional spec", "write the requirements"
 - `new-tech-spec` — "write a technical spec", "spec out this feature"
+- `spec-review` — "check the technical spec against the functional spec"
 
 Each ends with a checklist covering the things that are easy to leave out:
 default posture with zero config, explicit fail-open vs. fail-closed, and
@@ -76,6 +77,11 @@ the privacy boundary (nothing logged or returned may carry prompt content,
 API keys, or `Authorization` headers).
 
 ## From spec to implementation
+
+When both halves exist, run `spec-review` before anything else — it
+cross-checks the technical design against the behavior it is supposed to
+implement, which is far cheaper to fix here than after the tests encode
+it.
 
 Once a spec is agreed, three subagents in `.claude/agents/` take it to
 done, with a human gate between each stage:

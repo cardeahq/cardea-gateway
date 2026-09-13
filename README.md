@@ -66,6 +66,12 @@ Start from [`specs/TEMPLATE-functional.md`](specs/TEMPLATE-functional.md)
 or [`specs/TEMPLATE-technical.md`](specs/TEMPLATE-technical.md), or use the
 `new-func-spec` / `new-tech-spec` Claude Code skills to draft one.
 
+Once both halves exist, the `spec-review` skill cross-checks them: does
+building what the technical spec describes produce the behavior the
+functional spec promises? Run it before the agents below. They treat the
+specs as the contract, so a disagreement that survives this point becomes
+a wrong test that the implementer is forbidden to correct.
+
 ### Building from a spec
 
 Implementation runs as three Claude Code agents (defined in
