@@ -7,23 +7,30 @@ spec, the spec gets updated in the same change rather than left stale.
 
 ## Layout
 
-Flat directory, one shared zero-padded numeric sequence across both kinds
-of spec:
+Flat directory, one zero-padded number per **feature**:
 
 ```
 specs/0001-circuit-breaker-functional.md
-specs/0002-circuit-breaker-technical.md
-specs/0003-token-compaction-functional.md
+specs/0001-circuit-breaker-technical.md
+specs/0002-token-compaction-functional.md
 ```
 
-`NNNN-<kebab-case-feature>-{functional,technical}.md`. The two halves of a
-feature share the same feature slug so they sort together by name, but each
-takes the next free number — numbers are never reused or renumbered, even
-for an abandoned spec. Pick the next one with:
+`NNNN-<kebab-case-feature>-{functional,technical}.md`. The number
+identifies the feature, not the document: both halves of a feature share
+it, along with the slug.
+
+A **new feature** takes the next free number — never one that has been
+used before, even by an abandoned spec. Find it with:
 
 ```sh
 ls specs/ | sort | tail -5
 ```
+
+Writing the **second half of an existing feature** is the opposite move:
+reuse that feature's number and slug exactly, changing only the
+`-functional` / `-technical` suffix. A feature may have only one half —
+a technical spec with no functional counterpart is fine, and its number
+stays its own.
 
 Every spec starts with a `**Date:**` line and a link to its counterpart.
 
@@ -84,7 +91,7 @@ done, with a human gate between each stage:
    the feature is implemented.
 
 Invoke each with the spec path, e.g. *"write the tests for
-specs/0002-circuit-breaker-technical.md"*.
+specs/0001-circuit-breaker-technical.md"*.
 
 Specs are worth reviewing on their own, before any of that starts — a spec
 PR is cheaper to argue with than an implementation PR.

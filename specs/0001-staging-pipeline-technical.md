@@ -1,4 +1,4 @@
-# 0002 — Staging pipeline (technical)
+# 0001 — Staging pipeline (technical)
 
 **Date:** 2026-09-13
 **Functional spec:** specs/0001-staging-pipeline-functional.md

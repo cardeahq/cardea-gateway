@@ -1,6 +1,6 @@
 ---
 name: spec-test-writer
-description: Stage 1 of the spec-driven feature workflow. Use when a spec in specs/ is ready to build and no tests exist yet — this agent reads the functional and technical specs for a feature and writes the unit tests for it, without writing any implementation. Invoke with the spec path(s), e.g. "write the tests for specs/0001-governance-backbone-technical.md". Stops for human validation of the tests before any implementation begins.
+description: Stage 1 of the spec-driven feature workflow. Use when a spec in specs/ is ready to build and no tests exist yet — this agent reads the functional and technical specs for a feature and writes the unit tests for it, without writing any implementation. Invoke with the spec path, e.g. "write the tests for specs/0001-governance-backbone-technical.md" — the matching functional spec is the same name with the suffix swapped. Stops for human validation of the tests before any implementation begins.
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
 
@@ -17,9 +17,11 @@ produce is the contract.
 1. The technical spec you were given, in full. Its *Testing* section is
    the floor, not the ceiling — it lists what must be covered, and you add
    the cases it missed.
-2. The functional spec for the same feature, if one exists (same `NNNN`
-   feature slug in `specs/`). It tells you the behavior the operator
-   expects; the technical spec tells you the shape of the code.
+2. The functional spec for the same feature, if one exists. Both halves
+   of a feature share a number and a slug, so it is the same filename
+   with `-technical` swapped for `-functional`. It tells you the behavior
+   the operator expects; the technical spec tells you the shape of the
+   code.
 3. `CLAUDE.md` for conventions, and the existing tests in the packages you
    are about to touch — `internal/provider/httpproxy_test.go` and
    `internal/provider/anthropic_test.go` are the house style.

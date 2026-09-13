@@ -12,25 +12,26 @@ task list. Write it before the code, not after.
 
 ## File location and naming
 
-Specs live flat in `specs/` with a shared, zero-padded numeric sequence
-across both kinds:
+Specs live flat in `specs/`, zero-padded, one number per **feature** —
+both halves of a feature share it:
 
 ```
 specs/0001-circuit-breaker-functional.md
-specs/0002-circuit-breaker-technical.md
-specs/0003-token-compaction-technical.md
+specs/0001-circuit-breaker-technical.md
+specs/0002-token-compaction-technical.md
 ```
 
-Pick the next number by listing what's there — never reuse or renumber an
-existing one, even if its spec was abandoned:
+Name the file `NNNN-<kebab-case-feature>-technical.md`. Which `NNNN`
+depends on whether the feature already has a functional spec:
 
-```sh
-ls specs/ 2>/dev/null | sort | tail -5
-```
+- **It does** — the usual case, since the functional spec comes first.
+  Reuse its number *and* slug exactly, changing only the suffix.
+- **It doesn't** — take the next unused number. Never reuse or renumber
+  one, even if its spec was abandoned:
 
-Name the file `NNNN-<kebab-case-feature>-technical.md`. If a functional
-spec for the same feature already exists, reuse its exact feature slug so
-the pair sorts together by name.
+  ```sh
+  ls specs/ 2>/dev/null | sort | tail -5
+  ```
 
 ## Interview first, then write
 

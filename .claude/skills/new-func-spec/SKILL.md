@@ -23,26 +23,27 @@ layout. If a sentence can only be understood by someone who has read
 
 ## File location and naming
 
-Specs live flat in `specs/` with a shared, zero-padded numeric sequence
-across both kinds:
+Specs live flat in `specs/`, zero-padded, one number per **feature** —
+both halves of a feature share it:
 
 ```
 specs/0001-circuit-breaker-functional.md
-specs/0002-circuit-breaker-technical.md
-specs/0003-token-compaction-functional.md
+specs/0001-circuit-breaker-technical.md
+specs/0002-token-compaction-functional.md
 ```
 
-Pick the next number by listing what's there — never reuse or renumber an
-existing one, even if its spec was abandoned:
+Name the file `NNNN-<kebab-case-feature>-functional.md`. Which `NNNN`
+depends on whether the feature already has a technical spec:
 
-```sh
-ls specs/ 2>/dev/null | sort | tail -5
-```
+- **It does** (the pair was written out of order) — reuse that spec's
+  number *and* slug exactly, changing only the suffix, and add the
+  back-link to it.
+- **It doesn't** — take the next unused number. Never reuse or renumber
+  one, even if its spec was abandoned:
 
-Name the file `NNNN-<kebab-case-feature>-functional.md`. If a technical
-spec for the same feature already exists (the pair was written out of
-order), reuse its exact feature slug so the two sort together by name,
-and add the back-link to it.
+  ```sh
+  ls specs/ 2>/dev/null | sort | tail -5
+  ```
 
 ## Interview first, then write
 

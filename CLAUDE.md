@@ -30,9 +30,9 @@ Run the gateway directly: `go run ./cmd/agentkeeper serve [--config path.yaml]`.
 
 - `specs/` — functional and technical specifications. Not code; the
   source of intent for behavior, including features not implemented yet.
-  Flat layout, shared numeric sequence:
-  `NNNN-<feature>-{functional,technical}.md` (see the `new-func-spec`
-  and `new-tech-spec` skills).
+  Flat layout, `NNNN-<feature>-{functional,technical}.md`, where `NNNN`
+  numbers the feature rather than the document — both halves of a feature
+  share it (see the `new-func-spec` and `new-tech-spec` skills).
 - `cmd/agentkeeper/main.go` — entrypoint; delegates immediately to `internal/cli`.
 - `internal/cli` — Cobra command tree (`root.go`, `serve.go`, `version.go`).
   Persistent `--config` flag lives on the root command; each subcommand's
