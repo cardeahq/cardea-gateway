@@ -1,12 +1,13 @@
 ---
 name: spec-review
 description: This skill should be used when the user asks to "check the technical spec against the functional spec", "do these specs agree", "review the spec pair", "spec review", or wants a design in specs/ verified against the behavior it is supposed to implement — before any tests or code are written.
+model: sonnet
 ---
 
 # Review a technical spec against its functional spec
 
-The functional spec says *what* a feature does; the technical spec says
-*how*. This check answers one question: **would building exactly what the
+The functional spec says _what_ a feature does; the technical spec says
+_how_. This check answers one question: **would building exactly what the
 technical spec describes produce exactly the behavior the functional spec
 promises?**
 
@@ -25,9 +26,9 @@ there is nothing to cross-check.
 ## What to check
 
 **1. Coverage — every promise has a mechanism.**
-Walk the functional spec's numbered *Behavior* rules one at a time and
+Walk the functional spec's numbered _Behavior_ rules one at a time and
 find the part of the technical design that delivers each. Do the same for
-every *Acceptance criterion* against the technical spec's *Testing*
+every _Acceptance criterion_ against the technical spec's _Testing_
 section. A rule with no mechanism, or a criterion with no test, is a gap:
 it will be built by whoever guesses first.
 
@@ -40,19 +41,19 @@ Read both halves for each of these and compare literally:
   property, and it inverts quietly.
 - **Status codes and error shapes.** A code named in an acceptance
   criterion must be the code in the technical spec's failure-mode table.
-- **Defaults.** The value in the functional *Operator controls* table
-  must equal the value in the technical *Configuration* table, including
+- **Defaults.** The value in the functional _Operator controls_ table
+  must equal the value in the technical _Configuration_ table, including
   its on/off posture. These are written at different times and drift.
 - **Ordering and short-circuit semantics.** "The first denial stops
   everything" and "every stage observes the outcome" are easy to design
   into conflict.
 
 **3. Scope — nothing designed that was not asked for.**
-Anything a caller or operator can *observe* — a status code, a header, an
+Anything a caller or operator can _observe_ — a status code, a header, an
 error field, a log line, a config key — must trace back to a functional
 rule or control. A technical spec that invents caller-visible behavior is
 adding requirements nobody agreed to, in the document least likely to be
-read by the people affected. Check the functional *Non-goals* list too: a
+read by the people affected. Check the functional _Non-goals_ list too: a
 design that quietly implements one is scope creep with a paper trail.
 
 **4. Internal consistency of the technical spec.**
@@ -66,7 +67,7 @@ Look for:
 - A design narrative that contradicts the failure-mode table. When the
   prose says "cap" and the table says "reject", they describe different
   systems.
-- An exported signature in *Packages and types* that no described flow
+- An exported signature in _Packages and types_ that no described flow
   calls.
 
 **5. Audience leakage.**
@@ -94,14 +95,14 @@ regardless of internal consistency:
   `configs/agentkeeper.example.yaml`.
 
 **7. Unresolved open questions.**
-An *Open questions* entry that defers to a future spec is fine. One that
-leaves a value, status code, or default undecided in *this* feature
+An _Open questions_ entry that defers to a future spec is fine. One that
+leaves a value, status code, or default undecided in _this_ feature
 blocks stage 1 — the test writer cannot write that assertion without
 guessing. Flag those specifically.
 
 ## Which half is wrong
 
-Don't assume. The functional spec governs *what*, so it usually wins —
+Don't assume. The functional spec governs _what_, so it usually wins —
 but a technical spec sometimes proves a promised behavior is impossible
 or unaffordable, and that is a finding about the functional spec, not a
 detail to design around. Say which half you believe is wrong and why; the
