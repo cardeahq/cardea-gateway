@@ -41,7 +41,9 @@ quietly.
   which will extend this contract.
 - Choosing the upstream provider. Unchanged: agentkeeper decides from
   config, the caller cannot see or select it.
-- Per-stage timeouts, retries, and parallel execution of stages.
+- Bounding how long a stage may take, retrying a stage, and running
+  stages in parallel. A time limit needs a stage that can actually block
+  before its cost is knowable; see *Open questions*.
 
 ## Users and scenarios
 
@@ -91,11 +93,12 @@ is down", and not enough to map out the policy by probing.
    supplied by the caller is ignored, never echoed, and never used in the
    record — a caller must not be able to forge or collide the trail that
    describes it.
-9. When a stage fails rather than decides — it errors, times out, or
-   crashes — the call is **denied**, not forwarded. The caller gets a
-   "governance unavailable" error naming the stage. A broken governance
-   layer must never degrade into "allow everything", and a crashing stage
-   must not take down the gateway process.
+9. When a stage fails rather than decides — it errors or crashes — the
+   call is **denied**, not forwarded. The caller gets a "governance
+   unavailable" error naming the stage. A broken governance layer must
+   never degrade into "allow everything", and a crashing stage must not
+   take down the gateway process. A stage that neither returns nor fails
+   is a separate case, and an open question below.
 10. Every enabled stage observes the call's outcome once it completes,
     whether it was allowed, denied by another stage, or failed —
     including stages that sit after the one that denied. This is what
@@ -134,12 +137,18 @@ explicit choice in config rather than the quiet default.
 
 ## Failure behavior
 
-**Requests fail closed.** A stage that errors, times out or panics denies
-the call with a "governance unavailable" error; the request is not
-forwarded. The trade is deliberate: it costs availability, and it is the
-only posture where "break the stage" is not a way to bypass the control.
-The operator's remedy is to disable the offending stage — one config
-change, and a visible one.
+**Requests fail closed.** A stage that errors or panics denies the call
+with a "governance unavailable" error; the request is not forwarded. The
+trade is deliberate: it costs availability, and it is the only posture
+where "break the stage" is not a way to bypass the control. The
+operator's remedy is to disable the offending stage — one config change,
+and a visible one.
+
+A stage that hangs is neither: the call is held open rather than denied,
+so the caller waits instead of receiving an error. It still never reaches
+the provider, so the control is not bypassed — but that call produces no
+outcome record, which every other path guarantees. No stage specified so
+far can block, and putting a time limit on one is an open question below.
 
 **Responses cannot fail closed.** Once bytes are on the wire the caller
 has them. A failure while observing a response is logged and the call is
@@ -214,3 +223,13 @@ stages; a reason that quotes payload content is a defect in that stage.
   *Behavior* forbids in this design. Whether filtering gets an opt-in
   "buffer the response fully before sending" mode, at the cost of
   streaming, is for the filtering spec to settle.
+- How long may a stage take before the call is denied on its behalf?
+  Nothing bounds it today, so a stage that hangs holds the call open
+  indefinitely. Deferred to the policies spec — the first stage that
+  calls anything over a network, and so the first that can hang. It
+  decides the limit, its default, and whether the limit is per stage or
+  across the whole sequence. Two things make this worth deferring rather
+  than guessing: a limit has no knowable cost until there is a stage
+  whose normal duration it might cut short, and enforcing one on a stage
+  that ignores it is harder than it looks — see the technical spec's
+  matching question.

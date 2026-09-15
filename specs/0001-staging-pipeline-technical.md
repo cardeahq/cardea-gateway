@@ -46,9 +46,11 @@ mux "/healthz" -> gateway.handleHealthz          (never enters the pipeline)
 Per call, `Handler` does:
 
 1. Build a `Call`: generate `ID`, stamp `Received`, read the request body
-   in full — denying with 413 if it exceeds `maxBodyBytes`, since a stage
-   cannot inspect what was not read — then restore `r.Body` so the
-   provider still sees it.
+   in full, then restore `r.Body` so the provider still sees it. A body
+   over `maxBodyBytes`, or a read that fails, sets `Call.Denial` and
+   jumps to step 4 without running any stage — a stage cannot inspect
+   what was not read, but the call still happened and still gets an
+   outcome record.
 2. Run each stage's `Request` in slice order. First `Decision` with
    `Allow == false`, or first non-nil `error`, short-circuits.
 3. On allow, invoke `next` with a `recorder` wrapping the
@@ -57,7 +59,9 @@ Per call, `Handler` does:
 4. Fill in the outcome on `Call` (status, duration, denier, response
    bytes), then invoke `Response` on every enabled stage that implements
    `ResponseObserver`, in reverse slice order, regardless of how the call
-   ended.
+   ended: allowed, denied by a stage, denied by the pipeline in step 1,
+   or failed. Every call that enters `Handler` reaches step 4 — there is
+   no path that returns earlier.
 
 Reverse order in step 4 mirrors the nesting the middleware chain had, and
 means audit — last to decide — is first to see the outcome.
@@ -258,8 +262,8 @@ value and silently disable the stage.
 | `Stage.Request` returns `error`                         | 503 `agentkeeper_unavailable`, stage named; `next` not called; logged at error                        |
 | `Stage.Request` panics                                  | Recovered into an error; identical to the above; process survives                                     |
 | `Decision` is `!allow`                                  | Its status/message; short-circuit; logged at warn with `Reason`                                       |
-| Request body exceeds `max_body_bytes`                   | 413 `agentkeeper_denied`, stage `"pipeline"`, before any stage runs                                   |
-| Reading the request body fails                          | 400 `agentkeeper_denied`; not forwarded                                                               |
+| Request body exceeds `max_body_bytes`                   | 413 agentkeeper_denied, stage "pipeline", before any stage's Request runs; observers still run        |
+| Reading the request body fails                          | 400 agentkeeper_denied; not forwarded; observers still run                                            |
 | Response exceeds `max_body_bytes`                       | Streamed to the caller in full; `ResponseTruncated = true` and observers see a partial `ResponseBody` |
 | `ResponseObserver.Response` panics                      | Recovered and logged; the caller's response is untouched                                              |
 | Unknown `pipeline.stages` key, or `max_body_bytes <= 0` | `config.Load` error; `serve` exits non-zero at startup                                                |
@@ -285,6 +289,9 @@ allow / deny / error / panic / observer):
 - Body: read once, `r.Body` still readable by `next` and byte-identical;
   over-limit denied with 413 and `next` never invoked.
 - Panic in `Request` and in `Response` are both contained.
+- Pipeline-level denial: an over-limit body denies with 413, no stage's
+  `Request` is invoked, and every observer still runs exactly once with
+  `c.Denial` populated. Same for a request whose body fails to read.
 - Streaming: an `httptest` SSE upstream that flushes three chunks with a
   gap; assert each chunk reaches the client before the handler returns
   and that `Response` runs only after the last one.
@@ -322,7 +329,14 @@ unknown-stage-key rejection, non-positive `max_body_bytes` rejection.
 
 - Whether `Stage.Request` should receive a per-stage `context.Context`
   with its own deadline, or inherit the request's. Deferred until a stage
-  makes a network call (the policies stage, first).
+  makes a network call (the policies stage, first). Note that a deadline
+  alone does not bound anything: a goroutine cannot be interrupted, so
+  `ctx` only stops a stage that checks `ctx.Done()` or hands `ctx` to
+  something that does. Enforcing a limit on an uncooperative stage means
+  running it in its own goroutine and abandoning it on expiry, leaking
+  that goroutine and whatever it holds. Whoever settles this picks
+  between cooperative cancellation with a documented hole, and
+  abandonment with a leak.
 - Buffering the whole request body defeats streaming *uploads*. No
   current provider request streams, so this is acceptable now; revisit if
   one does.

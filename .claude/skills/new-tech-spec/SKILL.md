@@ -1,13 +1,14 @@
 ---
 name: new-tech-spec
 description: This skill should be used when the user asks to "write a technical spec", "bootstrap a spec", "draft a design doc", "spec out this feature", or otherwise wants a new architecture/design document created under specs/ for an agentkeeper feature.
+model: sonnet
 ---
 
 # Bootstrap a technical specification
 
-A technical spec describes *how* a feature will be built — architecture,
+A technical spec describes _how_ a feature will be built — architecture,
 types, config surface, request flow, trade-offs. It is not a functional
-spec (which describes *what* the feature does for the operator) and not a
+spec (which describes _what_ the feature does for the operator) and not a
 task list. Write it before the code, not after.
 
 ## File location and naming
@@ -25,7 +26,7 @@ Name the file `NNNN-<kebab-case-feature>-technical.md`. Which `NNNN`
 depends on whether the feature already has a functional spec:
 
 - **It does** — the usual case, since the functional spec comes first.
-  Reuse its number *and* slug exactly, changing only the suffix.
+  Reuse its number _and_ slug exactly, changing only the suffix.
 - **It doesn't** — take the next unused number. Never reuse or renumber
   one, even if its spec was abandoned:
 
@@ -41,7 +42,7 @@ codebase, then ask the user — batched via `AskUserQuestion`, not one at a
 time — about anything the code can't answer:
 
 - **Scope** — one sentence on what the feature does, and the explicit
-  non-goals. What is deliberately *not* in this version?
+  non-goals. What is deliberately _not_ in this version?
 - **Functional spec** — does one exist in `specs/`? If not, is the
   behavior settled enough to design against, or should that come first
   via the `new-func-spec` skill?
