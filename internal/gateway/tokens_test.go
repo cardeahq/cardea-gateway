@@ -1,84 +1,86 @@
 package gateway
 
 import (
-	"bytes"
-	"compress/gzip"
-	"net/http"
-	"net/http/httptest"
+	"context"
 	"testing"
 
-	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
+
+	"github.com/agentkeeper/agentkeeper/internal/pipeline"
 )
 
-func TestCountTokensStage_AccumulatesUsageAcrossRequests(t *testing.T) {
-	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"usage":{"input_tokens":10,"output_tokens":5}}`))
-	})
+// tokenStage must satisfy both halves of the pipeline.Stage contract: it
+// never denies, but it does need to observe responses to count tokens.
+var (
+	_ pipeline.Stage            = (*tokenStage)(nil)
+	_ pipeline.ResponseObserver = (*tokenStage)(nil)
+)
 
-	tokens := &tokenCounter{}
-	handler := countTokensStage(zap.NewNop(), tokens)(upstream)
+func TestTokenStage_Name(t *testing.T) {
+	s := &tokenStage{logger: zaptest.NewLogger(t), counter: &tokenCounter{}}
+	if got := s.Name(); got != "token_counting" {
+		t.Fatalf("Name() = %q, want %q", got, "token_counting")
+	}
+}
+
+func TestTokenStage_RequestAlwaysAllows(t *testing.T) {
+	s := &tokenStage{logger: zaptest.NewLogger(t), counter: &tokenCounter{}}
+	call := &pipeline.Call{Body: []byte(`{"prompt":"hi"}`)}
+
+	decision, err := s.Request(context.Background(), call)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if decision != pipeline.Allow() {
+		t.Fatalf("Request() decision = %+v, want pipeline.Allow()", decision)
+	}
+}
+
+func TestTokenStage_ResponseAccumulatesUsageAcrossCalls(t *testing.T) {
+	counter := &tokenCounter{}
+	s := &tokenStage{logger: zaptest.NewLogger(t), counter: counter}
 
 	for range 2 {
-		req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if body := rec.Body.String(); body != `{"usage":{"input_tokens":10,"output_tokens":5}}` {
-			t.Fatalf("client body = %q, want passthrough of upstream body", body)
-		}
+		call := &pipeline.Call{ResponseBody: []byte(`{"usage":{"input_tokens":10,"output_tokens":5}}`)}
+		s.Response(context.Background(), call)
 	}
 
-	if got := tokens.sent.Load(); got != 20 {
+	if got := counter.sent.Load(); got != 20 {
 		t.Fatalf("total sent = %d, want 20", got)
 	}
-	if got := tokens.received.Load(); got != 10 {
+	if got := counter.received.Load(); got != 10 {
 		t.Fatalf("total received = %d, want 10", got)
 	}
 }
 
-func TestCountTokensStage_DecodesGzippedUsage(t *testing.T) {
-	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var buf bytes.Buffer
-		gw := gzip.NewWriter(&buf)
-		_, _ = gw.Write([]byte(`{"usage":{"input_tokens":10,"output_tokens":5}}`))
-		_ = gw.Close()
+func TestTokenStage_ResponseIgnoresNonUsageBodies(t *testing.T) {
+	counter := &tokenCounter{}
+	s := &tokenStage{logger: zaptest.NewLogger(t), counter: counter}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Encoding", "gzip")
-		_, _ = w.Write(buf.Bytes())
-	})
+	call := &pipeline.Call{ResponseBody: []byte("data: {\"type\":\"content_block_delta\"}\n\n")}
+	s.Response(context.Background(), call)
 
-	tokens := &tokenCounter{}
-	handler := countTokensStage(zap.NewNop(), tokens)(upstream)
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if got := tokens.sent.Load(); got != 10 {
-		t.Fatalf("total sent = %d, want 10", got)
-	}
-	if got := tokens.received.Load(); got != 5 {
-		t.Fatalf("total received = %d, want 5", got)
+	if counter.sent.Load() != 0 || counter.received.Load() != 0 {
+		t.Fatalf("expected no tokens counted for non-JSON body, got sent=%d received=%d",
+			counter.sent.Load(), counter.received.Load())
 	}
 }
 
-func TestCountTokensStage_IgnoresNonUsageBodies(t *testing.T) {
-	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("data: {\"type\":\"content_block_delta\"}\n\n"))
-	})
+func TestTokenStage_ResponseToleratesDeniedCallWithNoResponseBody(t *testing.T) {
+	counter := &tokenCounter{}
+	s := &tokenStage{logger: zaptest.NewLogger(t), counter: counter}
 
-	tokens := &tokenCounter{}
-	handler := countTokensStage(zap.NewNop(), tokens)(upstream)
+	call := &pipeline.Call{
+		Denial:       &pipeline.Denial{Stage: "rate_limiting", Status: 429, Message: "denied"},
+		ResponseBody: nil,
+	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	// Must not panic on a denied call whose ResponseBody is empty or
+	// absent, per the ResponseObserver contract.
+	s.Response(context.Background(), call)
 
-	if tokens.sent.Load() != 0 || tokens.received.Load() != 0 {
-		t.Fatalf("expected no tokens counted for non-JSON body, got sent=%d received=%d",
-			tokens.sent.Load(), tokens.received.Load())
+	if counter.sent.Load() != 0 || counter.received.Load() != 0 {
+		t.Fatalf("expected no tokens counted for a denied call, got sent=%d received=%d",
+			counter.sent.Load(), counter.received.Load())
 	}
 }

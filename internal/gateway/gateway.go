@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/agentkeeper/agentkeeper/internal/pipeline"
 	"github.com/agentkeeper/agentkeeper/internal/provider"
 )
 
@@ -27,10 +28,12 @@ func New(cfg config.Config, logger *zap.Logger, prov provider.Provider) *Gateway
 		logger:   logger,
 		provider: prov,
 	}
-	tokens := &tokenCounter{}
+
+	stages := buildStages(cfg, logger)
+	pl := pipeline.New(logger, cfg.Pipeline.MaxBodyBytes, stages...)
 
 	mux.HandleFunc("/healthz", g.handleHealthz)
-	mux.Handle("/", chain(prov.Handler(), stages(logger, tokens)...))
+	mux.Handle("/", pl.Handler(prov.Handler()))
 
 	g.server = &http.Server{
 		Addr:    cfg.Server.ListenAddr,
@@ -68,42 +71,13 @@ func (g *Gateway) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-// chain wraps final with mw in order, so mw[0] runs first and final runs
-// last.
-func chain(final http.Handler, mw ...func(http.Handler) http.Handler) http.Handler {
-	h := final
-	for i := len(mw) - 1; i >= 0; i-- {
-		h = mw[i](h)
+// buildStages walks the RFC's fixed stage order and appends the
+// constructor for each stage whose config boolean is true. A new stage
+// spec adds its constructor at its position here.
+func buildStages(cfg config.Config, logger *zap.Logger) []pipeline.Stage {
+	var stages []pipeline.Stage
+	if cfg.Pipeline.Stages.TokenCounting {
+		stages = append(stages, &tokenStage{logger: logger, counter: &tokenCounter{}})
 	}
-	return h
-}
-
-func logRequests(logger *zap.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			logger.Info("request", zap.String("method", r.Method), zap.String("path", r.URL.Path))
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-func displayTokenUsage(logger *zap.Logger, tokens *tokenCounter) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			next.ServeHTTP(w, r)
-			logger.Info(
-				"token usage",
-				zap.Int64("total_sent", tokens.sent.Load()),
-				zap.Int64("total_received", tokens.received.Load()),
-			)
-		})
-	}
-}
-
-func stages(logger *zap.Logger, tokens *tokenCounter) []func(http.Handler) http.Handler {
-	return []func(http.Handler) http.Handler{
-		displayTokenUsage(logger, tokens),
-		countTokensStage(logger, tokens),
-		//logRequests(logger),
-	}
+	return stages
 }
