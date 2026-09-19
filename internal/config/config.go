@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 )
 
@@ -18,6 +19,7 @@ type Config struct {
 	Logging  LoggingConfig  `mapstructure:"logging"`
 	Rules    RulesConfig    `mapstructure:"rules"`
 	Provider ProviderConfig `mapstructure:"provider"`
+	Pipeline PipelineConfig `mapstructure:"pipeline"`
 }
 
 type ServerConfig struct {
@@ -44,6 +46,18 @@ type ProviderConfig struct {
 	APIKeyEnv string `mapstructure:"api_key_env"`
 }
 
+type PipelineConfig struct {
+	// MaxBodyBytes is the largest request body the pipeline will read for
+	// stage inspection, and the cap on how much of a response is retained
+	// for observation.
+	MaxBodyBytes int64        `mapstructure:"max_body_bytes"`
+	Stages       StagesConfig `mapstructure:"stages"`
+}
+
+type StagesConfig struct {
+	TokenCounting bool `mapstructure:"token_counting"`
+}
+
 func defaults() Config {
 	return Config{
 		Server: ServerConfig{
@@ -61,6 +75,12 @@ func defaults() Config {
 			BaseURL:   "https://api.anthropic.com",
 			APIKeyEnv: "ANTHROPIC_API_KEY",
 		},
+		Pipeline: PipelineConfig{
+			MaxBodyBytes: 10485760,
+			Stages: StagesConfig{
+				TokenCounting: true,
+			},
+		},
 	}
 }
 
@@ -77,6 +97,8 @@ func Load(cfgFile string) (Config, error) {
 	v.SetDefault("provider.name", d.Provider.Name)
 	v.SetDefault("provider.base_url", d.Provider.BaseURL)
 	v.SetDefault("provider.api_key_env", d.Provider.APIKeyEnv)
+	v.SetDefault("pipeline.max_body_bytes", d.Pipeline.MaxBodyBytes)
+	v.SetDefault("pipeline.stages.token_counting", d.Pipeline.Stages.TokenCounting)
 
 	v.SetEnvPrefix(EnvPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -101,6 +123,18 @@ func Load(cfgFile string) (Config, error) {
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return Config{}, fmt.Errorf("unmarshalling config: %w", err)
+	}
+
+	var stages StagesConfig
+	err := v.UnmarshalKey("pipeline.stages", &stages, func(dc *mapstructure.DecoderConfig) {
+		dc.ErrorUnused = true
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("unmarshalling pipeline.stages: %w", err)
+	}
+
+	if cfg.Pipeline.MaxBodyBytes <= 0 {
+		return Config{}, fmt.Errorf("pipeline.max_body_bytes must be positive, got %d", cfg.Pipeline.MaxBodyBytes)
 	}
 
 	return cfg, nil

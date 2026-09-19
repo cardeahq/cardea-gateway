@@ -44,6 +44,97 @@ make lint   # run golangci-lint
 make fmt    # gofmt the tree
 ```
 
+## How features get built
+
+Features here start as a written spec, not as code. [`specs/`](specs/) is
+the source of intent — including for behavior that isn't implemented yet.
+Before writing code for a feature, check whether a spec already covers it
+and follow it.
+
+Each feature has up to two specs, named
+`NNNN-<feature>-{functional,technical}.md`. Both halves share the number
+and the slug — the number identifies the feature, not the document:
+
+| | Functional | Technical |
+| --- | --- | --- |
+| Answers | *what* it does, and for whom | *how* it is built |
+| Written for | operators and client developers | whoever implements it |
+| Contains | behavior rules, operator controls, Given/When/Then acceptance criteria | packages, Go signatures, config fields, failure modes |
+
+The functional spec comes first; the technical spec designs against it.
+Start from [`specs/TEMPLATE-functional.md`](specs/TEMPLATE-functional.md)
+or [`specs/TEMPLATE-technical.md`](specs/TEMPLATE-technical.md), or use the
+`new-func-spec` / `new-tech-spec` Claude Code skills to draft one.
+
+Once both halves exist, the `spec-review` skill cross-checks them: does
+building what the technical spec describes produce the behavior the
+functional spec promises? Run it before the agents below. They treat the
+specs as the contract, so a disagreement that survives this point becomes
+a wrong test that the implementer is forbidden to correct.
+
+### Building from a spec
+
+Implementation runs as three Claude Code agents (defined in
+`.claude/agents/`), in order, **with a human review between each**. No
+agent starts the next one — you do, after reading its report.
+
+**1. Tests.** Point `spec-test-writer` at the technical spec — it finds
+the functional half itself, since they share a number and slug:
+
+> Use the spec-test-writer agent to write the tests for
+> specs/0001-staging-pipeline-technical.md
+
+It writes tests and *no implementation*, so the tree does not compile when
+it finishes. That is the expected end state: every build error should be
+`undefined: <thing the spec says to build>`, and the agent reports that
+list as the implementer's to-do.
+
+Review its report before moving on — especially the ambiguities it says it
+had to interpret. Those interpretations become requirements the next agent
+is forbidden to correct, so this is the cheapest place to catch a
+misunderstanding.
+
+**Then commit the tests.** This isn't bookkeeping: stage 3 verifies that
+the implementation didn't weaken the approved tests by diffing `*_test.go`
+against `HEAD`. If the tests and the implementation land in one
+uncommitted blob, that check can't tell them apart.
+
+**2. Implementation.** Then:
+
+> Use the spec-implementer agent to implement
+> specs/0001-staging-pipeline-technical.md
+
+Its one hard rule: it may not modify, skip, or weaken any test file. Where
+the tests and the spec disagree, the tests win and it reports the
+divergence. If it believes a test is wrong, it stops and asks rather than
+working around it — which sends the work back to stage 1.
+
+**3. Quality gate.** Finally:
+
+> Use the quality-gate agent to verify
+> specs/0001-staging-pipeline-technical.md
+
+It runs unattended, changes nothing, and returns exactly `VERDICT: PASS` or
+`VERDICT: FAIL` — never a qualified pass. Alongside the mechanical checks
+(`build`, `vet`, `test`, `lint`, `gofmt`) it asks the question the other
+two can't: *would this test survive a no-op implementation?* A green suite
+of hollow tests is the failure this chain exists to catch.
+
+On FAIL, route by the finding — hollow or missing tests go back to stage 1,
+implementation defects to stage 2 — then re-run the gate.
+
+### Why the gates are human
+
+The agents are deliberately narrow: the test writer can't implement, the
+implementer can't touch tests, the gate can't fix anything. That only works
+if a person checks the handoff between them. The two decisions worth your
+attention are whether the tests really pin down the spec's behavior (after
+stage 1), and whether the code does what the spec says rather than merely
+what makes the tests green (after stage 2).
+
+One standing rule: if an implementation ends up diverging from its spec,
+update the spec in the same change rather than leaving it stale.
+
 ## Usecases
 
 ### Use agentkeeper with opencode
