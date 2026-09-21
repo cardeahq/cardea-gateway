@@ -1,6 +1,6 @@
 module github.com/agentkeeper/agentkeeper
 
-go 1.26.1
+go 1.26.6
 
 require (
 	github.com/go-viper/mapstructure/v2 v2.4.0
