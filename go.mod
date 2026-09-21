@@ -3,7 +3,7 @@ module github.com/agentkeeper/agentkeeper
 go 1.26.6
 
 require (
-	github.com/go-viper/mapstructure/v2 v2.4.0
+	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
