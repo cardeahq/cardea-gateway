@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/agentkeeper/agentkeeper/internal/identity"
 	"github.com/agentkeeper/agentkeeper/internal/pipeline"
 	"github.com/agentkeeper/agentkeeper/internal/provider"
 )
@@ -21,7 +22,7 @@ type Gateway struct {
 	server   *http.Server
 }
 
-func New(cfg config.Config, logger *zap.Logger, prov provider.Provider) *Gateway {
+func New(cfg config.Config, logger *zap.Logger, prov provider.Provider) (*Gateway, error) {
 	mux := http.NewServeMux()
 	g := &Gateway{
 		cfg:      cfg,
@@ -29,7 +30,10 @@ func New(cfg config.Config, logger *zap.Logger, prov provider.Provider) *Gateway
 		provider: prov,
 	}
 
-	stages := buildStages(cfg, logger)
+	stages, err := buildStages(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
 	pl := pipeline.New(logger, cfg.Pipeline.MaxBodyBytes, stages...)
 
 	mux.HandleFunc("/healthz", g.handleHealthz)
@@ -39,7 +43,7 @@ func New(cfg config.Config, logger *zap.Logger, prov provider.Provider) *Gateway
 		Addr:    cfg.Server.ListenAddr,
 		Handler: mux,
 	}
-	return g
+	return g, nil
 }
 
 // Run blocks until ctx is cancelled or the server fails.
@@ -74,10 +78,17 @@ func (g *Gateway) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // buildStages walks the RFC's fixed stage order and appends the
 // constructor for each stage whose config boolean is true. A new stage
 // spec adds its constructor at its position here.
-func buildStages(cfg config.Config, logger *zap.Logger) []pipeline.Stage {
+func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, error) {
 	var stages []pipeline.Stage
+	if cfg.Pipeline.Stages.Identification {
+		registry, err := identity.NewRegistry(cfg.Agents)
+		if err != nil {
+			return nil, fmt.Errorf("building agent registry: %w", err)
+		}
+		stages = append(stages, &identityStage{registry: registry})
+	}
 	if cfg.Pipeline.Stages.TokenCounting {
 		stages = append(stages, &tokenStage{logger: logger, counter: &tokenCounter{}})
 	}
-	return stages
+	return stages, nil
 }

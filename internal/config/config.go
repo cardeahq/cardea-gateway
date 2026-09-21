@@ -20,6 +20,7 @@ type Config struct {
 	Rules    RulesConfig    `mapstructure:"rules"`
 	Provider ProviderConfig `mapstructure:"provider"`
 	Pipeline PipelineConfig `mapstructure:"pipeline"`
+	Agents   []AgentConfig  `mapstructure:"agents"`
 }
 
 type ServerConfig struct {
@@ -55,7 +56,19 @@ type PipelineConfig struct {
 }
 
 type StagesConfig struct {
-	TokenCounting bool `mapstructure:"token_counting"`
+	TokenCounting  bool `mapstructure:"token_counting"`
+	Identification bool `mapstructure:"identification"`
+}
+
+// AgentConfig is one operator-registered agent. At least one of
+// APIKeyEnv/JWTSecretEnv must be set; both may be, e.g. while migrating an
+// agent from an API key to a JWT. Credential values are never written here
+// — only the name of the environment variable holding them, matching
+// ProviderConfig.APIKeyEnv.
+type AgentConfig struct {
+	AgentID      string `mapstructure:"agent_id"`
+	APIKeyEnv    string `mapstructure:"api_key_env"`
+	JWTSecretEnv string `mapstructure:"jwt_secret_env"`
 }
 
 func defaults() Config {
@@ -78,9 +91,11 @@ func defaults() Config {
 		Pipeline: PipelineConfig{
 			MaxBodyBytes: 10485760,
 			Stages: StagesConfig{
-				TokenCounting: true,
+				TokenCounting:  true,
+				Identification: false,
 			},
 		},
+		Agents: nil,
 	}
 }
 
@@ -99,6 +114,7 @@ func Load(cfgFile string) (Config, error) {
 	v.SetDefault("provider.api_key_env", d.Provider.APIKeyEnv)
 	v.SetDefault("pipeline.max_body_bytes", d.Pipeline.MaxBodyBytes)
 	v.SetDefault("pipeline.stages.token_counting", d.Pipeline.Stages.TokenCounting)
+	v.SetDefault("pipeline.stages.identification", d.Pipeline.Stages.Identification)
 
 	v.SetEnvPrefix(EnvPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -133,8 +149,30 @@ func Load(cfgFile string) (Config, error) {
 		return Config{}, fmt.Errorf("unmarshalling pipeline.stages: %w", err)
 	}
 
+	var agents []AgentConfig
+	err = v.UnmarshalKey("agents", &agents, func(dc *mapstructure.DecoderConfig) {
+		dc.ErrorUnused = true
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("unmarshalling agents: %w", err)
+	}
+
 	if cfg.Pipeline.MaxBodyBytes <= 0 {
 		return Config{}, fmt.Errorf("pipeline.max_body_bytes must be positive, got %d", cfg.Pipeline.MaxBodyBytes)
+	}
+
+	seenAgentIDs := make(map[string]bool, len(cfg.Agents))
+	for _, a := range cfg.Agents {
+		if a.AgentID == "" {
+			return Config{}, fmt.Errorf("agents entry has an empty agent_id")
+		}
+		if seenAgentIDs[a.AgentID] {
+			return Config{}, fmt.Errorf("agents: duplicate agent_id %q", a.AgentID)
+		}
+		seenAgentIDs[a.AgentID] = true
+		if a.APIKeyEnv == "" && a.JWTSecretEnv == "" {
+			return Config{}, fmt.Errorf("agents: agent_id %q must set api_key_env, jwt_secret_env, or both", a.AgentID)
+		}
 	}
 
 	return cfg, nil

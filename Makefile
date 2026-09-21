@@ -19,6 +19,10 @@ run:
 test:
 	go test ./...
 
+.PHONY: vet
+vet:
+	go vet ./...
+
 .PHONY: lint
 lint:
 	golangci-lint run ./...
@@ -26,6 +30,18 @@ lint:
 .PHONY: fmt
 fmt:
 	gofmt -l -w .
+
+.PHONY: fmt-check
+fmt-check:
+	@unformatted="$$(gofmt -l .)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "gofmt needed on:"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
+
+.PHONY: check
+check: build vet fmt-check lint test
 
 .PHONY: tidy
 tidy:
