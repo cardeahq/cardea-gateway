@@ -39,7 +39,10 @@ func TestGateway_HealthzBypassesPipelineRegardlessOfStageConfig(t *testing.T) {
 					Stages:       config.StagesConfig{TokenCounting: tt.tokenCounting},
 				},
 			}
-			g := New(cfg, zaptest.NewLogger(t), prov)
+			g, err := New(cfg, zaptest.NewLogger(t), prov)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
 
 			req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 			rec := httptest.NewRecorder()
@@ -66,7 +69,10 @@ func TestGateway_ForwardsAllowedCallsThroughPipelineToProvider(t *testing.T) {
 			Stages:       config.StagesConfig{TokenCounting: true},
 		},
 	}
-	g := New(cfg, zaptest.NewLogger(t), prov)
+	g, err := New(cfg, zaptest.NewLogger(t), prov)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	rec := httptest.NewRecorder()
@@ -97,7 +103,10 @@ func TestBuildStages_RespectsConfigBooleans(t *testing.T) {
 					Stages:       config.StagesConfig{TokenCounting: tt.tokenCounting},
 				},
 			}
-			stages := buildStages(cfg, zaptest.NewLogger(t))
+			stages, err := buildStages(cfg, zaptest.NewLogger(t))
+			if err != nil {
+				t.Fatalf("buildStages: %v", err)
+			}
 			if len(stages) != tt.wantLen {
 				t.Fatalf("len(buildStages(...)) = %d, want %d", len(stages), tt.wantLen)
 			}
@@ -112,7 +121,10 @@ func TestBuildStages_TokenCountingStageIsNamedAfterItsConfigKey(t *testing.T) {
 			Stages:       config.StagesConfig{TokenCounting: true},
 		},
 	}
-	stages := buildStages(cfg, zaptest.NewLogger(t))
+	stages, err := buildStages(cfg, zaptest.NewLogger(t))
+	if err != nil {
+		t.Fatalf("buildStages: %v", err)
+	}
 	if len(stages) != 1 {
 		t.Fatalf("len(buildStages(...)) = %d, want 1", len(stages))
 	}

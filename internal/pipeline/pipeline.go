@@ -28,6 +28,12 @@ type Call struct {
 	// exactly what the provider receives.
 	Body []byte
 
+	// AgentID is set by the pipeline from the identification stage's
+	// Decision on a successful match (AllowAs). Empty when identification
+	// is disabled, hasn't run yet, or denied the call. Once set, no later
+	// stage's Decision can overwrite it — see Handler.
+	AgentID string
+
 	Status   int
 	Duration time.Duration
 	Denial   *Denial
@@ -60,6 +66,7 @@ type Decision struct {
 	status  int
 	message string
 	reason  string
+	agentID string
 }
 
 func Allow() Decision {
@@ -68,6 +75,13 @@ func Allow() Decision {
 
 func Deny(status int, message, reason string) Decision {
 	return Decision{status: status, message: message, reason: reason}
+}
+
+// AllowAs allows the call and attaches agentID as its identity. A later
+// stage's plain Allow() never clears or overwrites an identity a prior
+// AllowAs already set — see Handler.
+func AllowAs(agentID string) Decision {
+	return Decision{allow: true, agentID: agentID}
 }
 
 type Stage interface {
@@ -154,6 +168,9 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 						zap.String("reason", decision.reason),
 					)
 					break
+				}
+				if decision.agentID != "" && c.AgentID == "" {
+					c.AgentID = decision.agentID
 				}
 			}
 		}

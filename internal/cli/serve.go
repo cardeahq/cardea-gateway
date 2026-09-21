@@ -40,7 +40,10 @@ func newServeCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			gw := gateway.New(cfg, logger, prov)
+			gw, err := gateway.New(cfg, logger, prov)
+			if err != nil {
+				return err
+			}
 			return gw.Run(ctx)
 		},
 	}
