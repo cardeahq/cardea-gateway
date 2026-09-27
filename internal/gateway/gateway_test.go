@@ -103,7 +103,7 @@ func TestBuildStages_RespectsConfigBooleans(t *testing.T) {
 					Stages:       config.StagesConfig{TokenCounting: tt.tokenCounting},
 				},
 			}
-			stages, err := buildStages(cfg, zaptest.NewLogger(t))
+			stages, _, err := buildStages(cfg, zaptest.NewLogger(t))
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -121,7 +121,7 @@ func TestBuildStages_TokenCountingStageIsNamedAfterItsConfigKey(t *testing.T) {
 			Stages:       config.StagesConfig{TokenCounting: true},
 		},
 	}
-	stages, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}

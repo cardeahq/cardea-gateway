@@ -210,3 +210,171 @@ func TestLoad_RejectsUnknownKeyInAgentsEntry(t *testing.T) {
 		t.Fatal("Load with an unknown key inside an agents entry = nil error, want error")
 	}
 }
+
+func TestLoad_TracingDefaults(t *testing.T) {
+	path := writeConfigFile(t, "")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Pipeline.Stages.Tracing {
+		t.Fatal("Pipeline.Stages.Tracing = false, want true by default")
+	}
+	want := TracingConfig{
+		FingerprintKeyEnv: "TRACE_FINGERPRINT_KEY",
+		MaxReadBytes:      16777216,
+		Sink:              TraceSinkConfig{Type: "logging", Path: ""},
+	}
+	if cfg.Tracing.FingerprintKeyEnv != want.FingerprintKeyEnv || cfg.Tracing.MaxReadBytes != want.MaxReadBytes || cfg.Tracing.Sink != want.Sink {
+		t.Fatalf("Tracing = %+v, want %+v", cfg.Tracing, want)
+	}
+	if len(cfg.Tracing.Sessions) != 0 {
+		t.Fatalf("Tracing.Sessions = %+v, want empty by default", cfg.Tracing.Sessions)
+	}
+
+	d := defaults()
+	if !d.Pipeline.Stages.Tracing || d.Tracing.MaxReadBytes != want.MaxReadBytes || d.Tracing.Sink != want.Sink || d.Tracing.FingerprintKeyEnv != want.FingerprintKeyEnv {
+		t.Fatalf("defaults() tracing = %+v / stage %v, want %+v / true", d.Tracing, d.Pipeline.Stages.Tracing, want)
+	}
+}
+
+func TestLoad_TracingStageExplicitFalseIsHonored(t *testing.T) {
+	path := writeConfigFile(t, "pipeline:\n  stages:\n    tracing: false\n")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Pipeline.Stages.Tracing {
+		t.Fatal("Pipeline.Stages.Tracing = true, want false: an explicit false must be honored")
+	}
+}
+
+func TestLoad_TracingEnvVarOverrides(t *testing.T) {
+	tests := []struct {
+		env   string
+		value string
+		check func(Config) bool
+	}{
+		{"AGENTKEEPER_PIPELINE_STAGES_TRACING", "false", func(c Config) bool { return !c.Pipeline.Stages.Tracing }},
+		{"AGENTKEEPER_TRACING_FINGERPRINT_KEY_ENV", "MY_TRACE_KEY", func(c Config) bool { return c.Tracing.FingerprintKeyEnv == "MY_TRACE_KEY" }},
+		{"AGENTKEEPER_TRACING_MAX_READ_BYTES", "4096", func(c Config) bool { return c.Tracing.MaxReadBytes == 4096 }},
+		{"AGENTKEEPER_TRACING_SINK_TYPE", "logging", func(c Config) bool { return c.Tracing.Sink.Type == "logging" }},
+		{"AGENTKEEPER_TRACING_SINK_PATH", "/var/log/agentkeeper/records.jsonl", func(c Config) bool {
+			return c.Tracing.Sink.Path == "/var/log/agentkeeper/records.jsonl"
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.env, func(t *testing.T) {
+			path := writeConfigFile(t, "")
+			t.Setenv(tt.env, tt.value)
+
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if !tt.check(cfg) {
+				t.Fatalf("%s=%s was not honored: Tracing = %+v, stages = %+v", tt.env, tt.value, cfg.Tracing, cfg.Pipeline.Stages)
+			}
+		})
+	}
+}
+
+const tracingAgentsYAML = "agents:\n" +
+	"  - agent_id: \"agent-alpha\"\n" +
+	"    api_key_env: \"AGENT_ALPHA_API_KEY\"\n" +
+	"  - agent_id: \"agent-beta\"\n" +
+	"    api_key_env: \"AGENT_BETA_API_KEY\"\n"
+
+func TestLoad_TracingSessionsWellFormedListUnmarshalsCleanly(t *testing.T) {
+	yaml := tracingAgentsYAML +
+		"tracing:\n" +
+		"  sessions:\n" +
+		"    - agents: [\"agent-alpha\"]\n" +
+		"      sources:\n" +
+		"        - body_field: metadata.user_id\n" +
+		"          pattern: '_session_([0-9a-f-]{36})$'\n" +
+		"    - default: true\n" +
+		"      sources:\n" +
+		"        - header: X-Session-Id\n" +
+		"        - baggage: session.id\n"
+	path := writeConfigFile(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []SessionSourceList{
+		{Agents: []string{"agent-alpha"}, Sources: []SessionSource{{BodyField: "metadata.user_id", Pattern: `_session_([0-9a-f-]{36})$`}}},
+		{Default: true, Sources: []SessionSource{{Header: "X-Session-Id"}, {Baggage: "session.id"}}},
+	}
+	if !reflect.DeepEqual(cfg.Tracing.Sessions, want) {
+		t.Fatalf("Tracing.Sessions = %+v, want %+v", cfg.Tracing.Sessions, want)
+	}
+}
+
+func TestLoad_TracingRejections(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{"unknown sink type", "tracing:\n  sink:\n    type: kafka\n"},
+		{"zero max_read_bytes", "tracing:\n  max_read_bytes: 0\n"},
+		{"negative max_read_bytes", "tracing:\n  max_read_bytes: -1\n"},
+		{
+			"sessions entry with neither agents nor default",
+			"tracing:\n  sessions:\n    - sources:\n        - header: X-Session-Id\n",
+		},
+		{
+			"sessions entry with empty agents and no default",
+			"tracing:\n  sessions:\n    - agents: []\n      sources:\n        - header: X-Session-Id\n",
+		},
+		{
+			"sessions entry with both agents and default",
+			tracingAgentsYAML + "tracing:\n  sessions:\n    - agents: [\"agent-alpha\"]\n      default: true\n      sources:\n        - header: X-Session-Id\n",
+		},
+		{
+			"default given twice",
+			"tracing:\n  sessions:\n    - default: true\n      sources:\n        - header: A\n    - default: true\n      sources:\n        - header: B\n",
+		},
+		{
+			"agent in two entries",
+			tracingAgentsYAML + "tracing:\n  sessions:\n" +
+				"    - agents: [\"agent-alpha\"]\n      sources:\n        - header: A\n" +
+				"    - agents: [\"agent-beta\", \"agent-alpha\"]\n      sources:\n        - header: B\n",
+		},
+		{
+			"agent not registered in agents[]",
+			tracingAgentsYAML + "tracing:\n  sessions:\n    - agents: [\"agent-gamma\"]\n      sources:\n        - header: X-Session-Id\n",
+		},
+		{
+			"entry with no sources",
+			"tracing:\n  sessions:\n    - default: true\n      sources: []\n",
+		},
+		{
+			"source setting no kind",
+			"tracing:\n  sessions:\n    - default: true\n      sources:\n        - pattern: '(.+)'\n",
+		},
+		{
+			"source setting two kinds",
+			"tracing:\n  sessions:\n    - default: true\n      sources:\n        - header: X-Session-Id\n          baggage: session.id\n",
+		},
+		{
+			"unknown key in a sessions entry",
+			"tracing:\n  sessions:\n    - defualt: true\n      sources:\n        - header: X-Session-Id\n",
+		},
+		{
+			"unknown key in a source",
+			"tracing:\n  sessions:\n    - default: true\n      sources:\n        - headr: X-Session-Id\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeConfigFile(t, tt.yaml)
+			if cfg, err := Load(path); err == nil {
+				t.Fatalf("Load = nil error, want an error; Tracing = %+v", cfg.Tracing)
+			}
+		})
+	}
+}
