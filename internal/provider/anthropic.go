@@ -40,6 +40,7 @@ func NewAnthropicProvider(baseURL, apiKeyEnv string) (Provider, error) {
 			pr.Out.Header.Del("Authorization")
 			pr.Out.Header.Set("x-api-key", apiKey)
 		},
+		ErrorHandler: errorHandler,
 	}
 
 	return &anthropicProvider{proxy: proxy}, nil

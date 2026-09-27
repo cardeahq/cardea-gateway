@@ -221,7 +221,14 @@ that ends up in the audit trail.
   today, the slice has at most one element; each later stage spec inserts
   its constructor at its position in this function.
 
-- `tokens.go`: `countTokensStage` becomes a `pipeline.Stage`:
+- `tokens.go`: `countTokensStage` becomes a `pipeline.Stage`.
+
+  > **Removed later.** The token counting stage, `tokens.go`,
+  > `provider.ParseUsage` and the `pipeline.stages.token_counting` key
+  > were deleted after call tracing (0003) shipped: the stage's only
+  > output was a running-total log line, and every response record now
+  > carries its call's `tokens`. The design below is kept as history.
+
 
   ```go
   type tokenStage struct {

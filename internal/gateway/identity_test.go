@@ -176,27 +176,29 @@ func TestIdentityStage_DenialsShareStatusAndMessage(t *testing.T) {
 	}
 }
 
-func TestBuildStages_PrependsIdentificationAheadOfTokenCounting(t *testing.T) {
+func TestBuildStages_PrependsIdentificationAheadOfTracing(t *testing.T) {
 	t.Setenv("AK_GW_TEST_BUILD_ALPHA_KEY", alphaAPIKey)
 	cfg := config.Config{
 		Pipeline: config.PipelineConfig{
 			MaxBodyBytes: 1 << 20,
-			Stages:       config.StagesConfig{TokenCounting: true, Identification: true},
+			Stages:       config.StagesConfig{Tracing: true, Identification: true},
 		},
-		Agents: []config.AgentConfig{{AgentID: "agent-alpha", APIKeyEnv: "AK_GW_TEST_BUILD_ALPHA_KEY"}},
+		Agents:  []config.AgentConfig{{AgentID: "agent-alpha", APIKeyEnv: "AK_GW_TEST_BUILD_ALPHA_KEY"}},
+		Tracing: fileSinkTracing(t),
 	}
-	stages, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
+	t.Cleanup(func() { _ = sink.Close() })
 	if len(stages) != 2 {
 		t.Fatalf("len(stages) = %d, want 2", len(stages))
 	}
 	if stages[0].Name() != "identification" {
 		t.Fatalf("stages[0].Name() = %q, want %q", stages[0].Name(), "identification")
 	}
-	if stages[1].Name() != "token_counting" {
-		t.Fatalf("stages[1].Name() = %q, want %q", stages[1].Name(), "token_counting")
+	if stages[1].Name() != "tracing" {
+		t.Fatalf("stages[1].Name() = %q, want %q", stages[1].Name(), "tracing")
 	}
 }
 
@@ -204,18 +206,20 @@ func TestBuildStages_OmitsIdentificationWhenDisabled(t *testing.T) {
 	cfg := config.Config{
 		Pipeline: config.PipelineConfig{
 			MaxBodyBytes: 1 << 20,
-			Stages:       config.StagesConfig{TokenCounting: true, Identification: false},
+			Stages:       config.StagesConfig{Tracing: true, Identification: false},
 		},
+		Tracing: fileSinkTracing(t),
 	}
-	stages, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
+	t.Cleanup(func() { _ = sink.Close() })
 	if len(stages) != 1 {
 		t.Fatalf("len(stages) = %d, want 1", len(stages))
 	}
-	if stages[0].Name() != "token_counting" {
-		t.Fatalf("stages[0].Name() = %q, want %q", stages[0].Name(), "token_counting")
+	if stages[0].Name() != "tracing" {
+		t.Fatalf("stages[0].Name() = %q, want %q", stages[0].Name(), "tracing")
 	}
 	for _, s := range stages {
 		if s.Name() == "identification" {
@@ -228,9 +232,10 @@ func TestBuildStages_ReturnsErrorNotPartialStagesOnRegistryFailure(t *testing.T)
 	cfg := config.Config{
 		Pipeline: config.PipelineConfig{
 			MaxBodyBytes: 1 << 20,
-			Stages:       config.StagesConfig{TokenCounting: true, Identification: true},
+			Stages:       config.StagesConfig{Tracing: true, Identification: true},
 		},
-		Agents: []config.AgentConfig{{AgentID: "agent-a", APIKeyEnv: "AK_GW_TEST_UNSET_ENV_VAR_ABC123"}},
+		Agents:  []config.AgentConfig{{AgentID: "agent-a", APIKeyEnv: "AK_GW_TEST_UNSET_ENV_VAR_ABC123"}},
+		Tracing: fileSinkTracing(t),
 	}
 	stages, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err == nil {

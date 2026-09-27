@@ -28,10 +28,9 @@ func NewHTTPProxy(name, baseURL string) (Provider, error) {
 		return nil, fmt.Errorf("base URL %q for provider %q must be absolute", baseURL, name)
 	}
 
-	return &httpProxyProvider{
-		name:  name,
-		proxy: httputil.NewSingleHostReverseProxy(target),
-	}, nil
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ErrorHandler = errorHandler
+	return &httpProxyProvider{name: name, proxy: proxy}, nil
 }
 
 func (p *httpProxyProvider) Name() string { return p.name }

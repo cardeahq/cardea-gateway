@@ -58,8 +58,9 @@ Anthropic wire format, sessions, fingerprints and the sink in a new
   (`model`, `tool_results`, `tool_calls`, `response_id`, …) take their
   not-applicable values. The next provider's spec adds its parser.
 - Content encodings other than identity and gzip on responses.
-- Changing `token_counting`. It keeps parsing `Call.ResponseBody`; the
-  tap parses usage separately for the record's `tokens`.
+- A running token total. The `token_counting` stage (0001) was removed
+  after this spec: its only output was a log line, and each response
+  record's `tokens` now carries the call's usage.
 
 ## Design
 
@@ -69,7 +70,7 @@ Anthropic wire format, sessions, fingerprints and the sink in a new
 cli.serve → config.Config → zap.Logger → provider.Provider → gateway.Gateway
                                                               │
       gateway.New builds: trace.Tracer, trace.Sink, stages ───┘
-      pipeline.New(logger, maxBody, sink, identification, tracing, token_counting)
+      pipeline.New(logger, maxBody, sink, identification, tracing)
 ```
 
 Tracing inspects both requests and responses and changes neither.
@@ -143,8 +144,10 @@ not-applicable values: `session.status: "absent"`, `model: null`,
 - **Request metadata.** The body is decoded, if it is a JSON object, into
   `{model, stream, messages []json.RawMessage}`. `model` is `null` if
   absent; `stream` is `false` if absent.
-- **New tool results.** Only the last element of `messages` is decoded.
-  If its `role` is `user` and its `content` is an array, every block with
+- **New tool results.** Only the last element of `messages` whose `role`
+  is not `system` is decoded; trailing `system` messages are skipped,
+  since Claude Code appends one after the tool results. If its `role` is
+  `user` and its `content` is an array, every block with
   `type: "tool_result"` becomes a `ToolResult`:
   - `tool_call_id` comes from `tool_use_id`.
   - `is_error` defaults to `false`.
@@ -620,8 +623,8 @@ func (s *tracingStage) Request(_ context.Context, c *pipeline.Call) (pipeline.De
 
 `gateway.go`:
 
-- `buildStages` inserts tracing between identification and
-  token_counting, and also returns the sink:
+- `buildStages` inserts tracing after identification, and also returns
+  the sink:
 
   ```go
   func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, *trace.LogSink, error)
@@ -647,7 +650,6 @@ type Config struct {
 }
 
 type StagesConfig struct {
-	TokenCounting  bool `mapstructure:"token_counting"`
 	Identification bool `mapstructure:"identification"`
 	Tracing        bool `mapstructure:"tracing"` // new, defaults true
 }
@@ -715,7 +717,6 @@ failures from the tracer and sink surface.
 ```yaml
 pipeline:
   stages:
-    token_counting: true
     identification: false
     tracing: true
 

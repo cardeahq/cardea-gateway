@@ -27,33 +27,8 @@ func TestLoad_PipelineDefaults(t *testing.T) {
 	if cfg.Pipeline.MaxBodyBytes != 10485760 {
 		t.Fatalf("Pipeline.MaxBodyBytes = %d, want %d", cfg.Pipeline.MaxBodyBytes, 10485760)
 	}
-	if !cfg.Pipeline.Stages.TokenCounting {
-		t.Fatal("Pipeline.Stages.TokenCounting = false, want true: every stage boolean defaults to true")
-	}
-}
-
-func TestLoad_PipelineStageExplicitFalseInYAMLIsHonored(t *testing.T) {
-	path := writeConfigFile(t, "pipeline:\n  stages:\n    token_counting: false\n")
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Pipeline.Stages.TokenCounting {
-		t.Fatal("Pipeline.Stages.TokenCounting = true, want false: an explicit false must be honored")
-	}
-}
-
-func TestLoad_PipelineStageEnvVarOverride(t *testing.T) {
-	path := writeConfigFile(t, "")
-	t.Setenv("AGENTKEEPER_PIPELINE_STAGES_TOKEN_COUNTING", "false")
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Pipeline.Stages.TokenCounting {
-		t.Fatal("Pipeline.Stages.TokenCounting = true, want false: an env var override must be honored")
+	if !cfg.Pipeline.Stages.Tracing {
+		t.Fatal("Pipeline.Stages.Tracing = false, want true: every stage boolean defaults to true")
 	}
 }
 
@@ -96,7 +71,7 @@ func TestLoad_RejectsNonPositiveMaxBodyBytes(t *testing.T) {
 	}
 }
 
-func TestDefaults_IdentificationDisabledUnlikeTokenCounting(t *testing.T) {
+func TestDefaults_IdentificationDisabledUnlikeTracing(t *testing.T) {
 	d := defaults()
 	if d.Pipeline.Stages.Identification {
 		t.Fatal("defaults().Pipeline.Stages.Identification = true, want false")
@@ -104,8 +79,8 @@ func TestDefaults_IdentificationDisabledUnlikeTokenCounting(t *testing.T) {
 	if len(d.Agents) != 0 {
 		t.Fatalf("defaults().Agents = %+v, want empty", d.Agents)
 	}
-	if !d.Pipeline.Stages.TokenCounting {
-		t.Fatal("defaults().Pipeline.Stages.TokenCounting = false, want true: identification's default deliberately diverges from every other stage's default of true")
+	if !d.Pipeline.Stages.Tracing {
+		t.Fatal("defaults().Pipeline.Stages.Tracing = false, want true: identification's default deliberately diverges from every other stage's default of true")
 	}
 }
 
@@ -122,8 +97,8 @@ func TestLoad_IdentificationAndAgentsDefaultToDisabledAndEmpty(t *testing.T) {
 	if len(cfg.Agents) != 0 {
 		t.Fatalf("Agents = %+v, want empty by default", cfg.Agents)
 	}
-	if !cfg.Pipeline.Stages.TokenCounting {
-		t.Fatal("Pipeline.Stages.TokenCounting = false, want true: unlike identification, this stage still defaults to on")
+	if !cfg.Pipeline.Stages.Tracing {
+		t.Fatal("Pipeline.Stages.Tracing = false, want true: unlike identification, this stage still defaults to on")
 	}
 }
 

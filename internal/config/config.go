@@ -21,6 +21,7 @@ type Config struct {
 	Provider ProviderConfig `mapstructure:"provider"`
 	Pipeline PipelineConfig `mapstructure:"pipeline"`
 	Agents   []AgentConfig  `mapstructure:"agents"`
+	Tracing  TracingConfig  `mapstructure:"tracing"`
 }
 
 type ServerConfig struct {
@@ -56,8 +57,8 @@ type PipelineConfig struct {
 }
 
 type StagesConfig struct {
-	TokenCounting  bool `mapstructure:"token_counting"`
 	Identification bool `mapstructure:"identification"`
+	Tracing        bool `mapstructure:"tracing"`
 }
 
 // AgentConfig is one operator-registered agent. At least one of
@@ -69,6 +70,43 @@ type AgentConfig struct {
 	AgentID      string `mapstructure:"agent_id"`
 	APIKeyEnv    string `mapstructure:"api_key_env"`
 	JWTSecretEnv string `mapstructure:"jwt_secret_env"`
+}
+
+type TracingConfig struct {
+	// FingerprintKeyEnv names the env var holding the HMAC key for
+	// fingerprints (at least 32 bytes). The key itself is never in config.
+	// Unset var: a random per-process key is generated, with a warning.
+	FingerprintKeyEnv string `mapstructure:"fingerprint_key_env"`
+	// MaxReadBytes caps what the response tap buffers: one streamed tool
+	// call's arguments, one SSE event, or a whole non-streamed body.
+	MaxReadBytes int64               `mapstructure:"max_read_bytes"`
+	Sink         TraceSinkConfig     `mapstructure:"sink"`
+	Sessions     []SessionSourceList `mapstructure:"sessions"`
+}
+
+type TraceSinkConfig struct {
+	// Type is "logging", the only sink in this version.
+	Type string `mapstructure:"type"`
+	// Path is where the logging sink appends records; "" means stdout.
+	Path string `mapstructure:"path"`
+}
+
+// SessionSourceList applies to the named Agents, or to every agent
+// without a list of its own when Default is true. Exactly one of the two
+// is set.
+type SessionSourceList struct {
+	Agents  []string        `mapstructure:"agents"`
+	Default bool            `mapstructure:"default"`
+	Sources []SessionSource `mapstructure:"sources"`
+}
+
+// SessionSource sets exactly one of Header, BodyField, Baggage. Pattern is
+// an optional RE2 regexp with exactly one capture group.
+type SessionSource struct {
+	Header    string `mapstructure:"header"`
+	BodyField string `mapstructure:"body_field"`
+	Baggage   string `mapstructure:"baggage"`
+	Pattern   string `mapstructure:"pattern"`
 }
 
 func defaults() Config {
@@ -91,11 +129,16 @@ func defaults() Config {
 		Pipeline: PipelineConfig{
 			MaxBodyBytes: 10485760,
 			Stages: StagesConfig{
-				TokenCounting:  true,
 				Identification: false,
+				Tracing:        true,
 			},
 		},
 		Agents: nil,
+		Tracing: TracingConfig{
+			FingerprintKeyEnv: "TRACE_FINGERPRINT_KEY",
+			MaxReadBytes:      16777216,
+			Sink:              TraceSinkConfig{Type: "logging", Path: ""},
+		},
 	}
 }
 
@@ -113,8 +156,12 @@ func Load(cfgFile string) (Config, error) {
 	v.SetDefault("provider.base_url", d.Provider.BaseURL)
 	v.SetDefault("provider.api_key_env", d.Provider.APIKeyEnv)
 	v.SetDefault("pipeline.max_body_bytes", d.Pipeline.MaxBodyBytes)
-	v.SetDefault("pipeline.stages.token_counting", d.Pipeline.Stages.TokenCounting)
 	v.SetDefault("pipeline.stages.identification", d.Pipeline.Stages.Identification)
+	v.SetDefault("pipeline.stages.tracing", d.Pipeline.Stages.Tracing)
+	v.SetDefault("tracing.fingerprint_key_env", d.Tracing.FingerprintKeyEnv)
+	v.SetDefault("tracing.max_read_bytes", d.Tracing.MaxReadBytes)
+	v.SetDefault("tracing.sink.type", d.Tracing.Sink.Type)
+	v.SetDefault("tracing.sink.path", d.Tracing.Sink.Path)
 
 	v.SetEnvPrefix(EnvPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -157,6 +204,14 @@ func Load(cfgFile string) (Config, error) {
 		return Config{}, fmt.Errorf("unmarshalling agents: %w", err)
 	}
 
+	var sessions []SessionSourceList
+	err = v.UnmarshalKey("tracing.sessions", &sessions, func(dc *mapstructure.DecoderConfig) {
+		dc.ErrorUnused = true
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("unmarshalling tracing.sessions: %w", err)
+	}
+
 	if cfg.Pipeline.MaxBodyBytes <= 0 {
 		return Config{}, fmt.Errorf("pipeline.max_body_bytes must be positive, got %d", cfg.Pipeline.MaxBodyBytes)
 	}
@@ -175,5 +230,59 @@ func Load(cfgFile string) (Config, error) {
 		}
 	}
 
+	if err := validateTracing(cfg.Tracing, seenAgentIDs); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+func validateTracing(t TracingConfig, agents map[string]bool) error {
+	if t.Sink.Type != "logging" {
+		return fmt.Errorf("tracing.sink.type must be \"logging\", got %q", t.Sink.Type)
+	}
+	if t.MaxReadBytes <= 0 {
+		return fmt.Errorf("tracing.max_read_bytes must be positive, got %d", t.MaxReadBytes)
+	}
+
+	hasDefault := false
+	listed := make(map[string]bool)
+	for i, l := range t.Sessions {
+		where := fmt.Sprintf("tracing.sessions[%d]", i)
+		switch {
+		case l.Default && len(l.Agents) > 0:
+			return fmt.Errorf("%s: set either agents or default, not both", where)
+		case !l.Default && len(l.Agents) == 0:
+			return fmt.Errorf("%s: set a non-empty agents list or default: true", where)
+		case l.Default:
+			if hasDefault {
+				return fmt.Errorf("%s: the default session source list is given twice", where)
+			}
+			hasDefault = true
+		}
+		for _, a := range l.Agents {
+			if !agents[a] {
+				return fmt.Errorf("%s: agent %q is not registered in agents", where, a)
+			}
+			if listed[a] {
+				return fmt.Errorf("%s: agent %q appears in more than one session source list", where, a)
+			}
+			listed[a] = true
+		}
+		if len(l.Sources) == 0 {
+			return fmt.Errorf("%s: at least one source is required", where)
+		}
+		for j, s := range l.Sources {
+			kinds := 0
+			for _, v := range []string{s.Header, s.BodyField, s.Baggage} {
+				if v != "" {
+					kinds++
+				}
+			}
+			if kinds != 1 {
+				return fmt.Errorf("%s.sources[%d]: set exactly one of header, body_field, baggage", where, j)
+			}
+		}
+	}
+	return nil
 }

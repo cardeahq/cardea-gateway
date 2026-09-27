@@ -6,3 +6,5 @@
 .idea/
 
 agentkeeper.yaml
+agentkeeper.local.yaml
+traces.jsonl

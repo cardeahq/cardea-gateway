@@ -355,6 +355,28 @@ func TestRequest_ReadsOnlyNewToolResults(t *testing.T) {
 			body: `{"model":"m","messages":[{"role":"assistant","content":[{"type":"tool_result","tool_use_id":"toolu_T","content":"x"}]}]}`,
 		},
 		{
+			name: "trailing system messages after the tool results are skipped (Claude Code)",
+			body: `{"model":"m","messages":[` +
+				`{"role":"user","content":[{"type":"text","text":"go"}]},` +
+				`{"role":"system","content":[{"type":"text","text":"reminder"}]},` +
+				`{"role":"assistant","content":[{"type":"tool_use","id":"toolu_probe_1","name":"Bash","input":{}}]},` +
+				`{"role":"user","content":[{"tool_use_id":"toolu_probe_1","type":"tool_result","content":"ok","is_error":false}]},` +
+				`{"role":"system","content":[{"type":"text","text":"reminder"}]},` +
+				`{"role":"system","content":"another"}]}`,
+			wantIDs: []string{"toolu_probe_1"},
+		},
+		{
+			name: "a system message after an assistant message does not reach back to older results",
+			body: `{"model":"m","messages":[` +
+				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_T","content":"x"}]},` +
+				`{"role":"assistant","content":"done"},` +
+				`{"role":"system","content":[{"type":"text","text":"reminder"}]}]}`,
+		},
+		{
+			name: "only system messages has no tool results",
+			body: `{"model":"m","messages":[{"role":"system","content":"s"}]}`,
+		},
+		{
 			name: "empty messages has no tool results",
 			body: `{"model":"m","messages":[]}`,
 		},

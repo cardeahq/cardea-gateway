@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/agentkeeper/agentkeeper/internal/trace"
 )
 
 // Call is the state every stage shares over the life of one request.
@@ -46,6 +48,10 @@ type Call struct {
 	ResponseBody      []byte
 	ResponseTruncated bool
 	ResponseErr       error
+
+	// Trace is set by the pipeline from the tracing stage's Decision
+	// (AllowTraced). Nil when tracing is disabled or did not run.
+	Trace *trace.RequestInfo
 }
 
 // Denial is attached to Call when a stage — or the pipeline itself —
@@ -67,6 +73,8 @@ type Decision struct {
 	message string
 	reason  string
 	agentID string
+	trace   *trace.RequestInfo
+	tap     *trace.ResponseTap
 }
 
 func Allow() Decision {
@@ -82,6 +90,12 @@ func Deny(status int, message, reason string) Decision {
 // AllowAs already set — see Handler.
 func AllowAs(agentID string) Decision {
 	return Decision{allow: true, agentID: agentID}
+}
+
+// AllowTraced allows the call and attaches what tracing read from the
+// request, plus the tap that will read its response.
+func AllowTraced(info trace.RequestInfo, tap *trace.ResponseTap) Decision {
+	return Decision{allow: true, trace: &info, tap: tap}
 }
 
 type Stage interface {
@@ -100,11 +114,32 @@ type ResponseObserver interface {
 type Pipeline struct {
 	logger  *zap.Logger
 	maxBody int64
+	sink    trace.Sink
 	stages  []Stage
 }
 
-func New(logger *zap.Logger, maxBodyBytes int64, stages ...Stage) *Pipeline {
-	return &Pipeline{logger: logger, maxBody: maxBodyBytes, stages: stages}
+// New's sink is nil when tracing is disabled; the pipeline then builds no
+// records.
+func New(logger *zap.Logger, maxBodyBytes int64, sink trace.Sink, stages ...Stage) *Pipeline {
+	return &Pipeline{logger: logger, maxBody: maxBodyBytes, sink: sink, stages: stages}
+}
+
+// stageResult is one stage's decision on the request, kept for the
+// request record. Decision is "allowed", "denied", "failed" or "not_run".
+type stageResult struct {
+	name     string
+	started  time.Time
+	duration time.Duration
+	decision string
+}
+
+// observation is one stage's observation of the response, kept for the
+// response record.
+type observation struct {
+	name      string
+	started   time.Time
+	duration  time.Duration
+	completed bool
 }
 
 func (p *Pipeline) Handler(next http.Handler) http.Handler {
@@ -119,6 +154,7 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 
 		var denial *Denial
 		var stageErr error
+		bodyRead := false
 
 		switch {
 		case readErr != nil:
@@ -136,15 +172,23 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 				Reason:  fmt.Sprintf("body exceeds %d bytes", p.maxBody),
 			}
 		default:
+			bodyRead = true
 			c.Body = body
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 
 		ctx := r.Context()
+		var results []stageResult
+		var tap *trace.ResponseTap
+		var tapStage string
 		if denial == nil {
 			for _, s := range p.stages {
+				started := time.Now()
 				decision, err := p.call(ctx, s, c)
+				res := stageResult{name: s.Name(), started: started, duration: time.Since(started)}
 				if err != nil {
+					res.decision = "failed"
+					results = append(results, res)
 					stageErr = err
 					denial = &Denial{
 						Stage:   s.Name(),
@@ -156,6 +200,8 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 					break
 				}
 				if !decision.allow {
+					res.decision = "denied"
+					results = append(results, res)
 					status := decision.status
 					if status == 0 {
 						status = http.StatusInternalServerError
@@ -169,8 +215,36 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 					)
 					break
 				}
+				res.decision = "allowed"
+				results = append(results, res)
 				if decision.agentID != "" && c.AgentID == "" {
 					c.AgentID = decision.agentID
+				}
+				if decision.trace != nil {
+					c.Trace = decision.trace
+				}
+				if decision.tap != nil {
+					tap, tapStage = decision.tap, s.Name()
+				}
+			}
+		}
+		for _, s := range p.stages[len(results):] {
+			results = append(results, stageResult{name: s.Name(), decision: "not_run"})
+		}
+
+		if p.sink != nil {
+			rec := buildRequestRecord(c, results, denial, stageErr != nil, bodyRead)
+			if err := p.sink.Write(rec); err != nil {
+				p.logger.Error("trace sink refused the request record",
+					zap.String("call_id", c.ID), zap.String("stage", "tracing"), zap.String("record", "request"), zap.Error(err))
+				if denial == nil {
+					stageErr = err
+					denial = &Denial{
+						Stage:   "tracing",
+						Status:  http.StatusServiceUnavailable,
+						Message: "governance unavailable",
+						Reason:  "trace sink: " + err.Error(),
+					}
 				}
 			}
 		}
@@ -178,10 +252,14 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 		c.Denial = denial
 
 		var rec *bodyRecorder
+		var forwardedAt, ended time.Time
+		var abort any
 		if denial == nil {
-			rec = newBodyRecorder(w, p.maxBody)
-			next.ServeHTTP(rec, r)
-			c.Status = rec.status
+			forwardedAt = time.Now()
+			rec = newBodyRecorder(w, p.maxBody, tap)
+			abort = serveNext(next, rec, r)
+			ended = time.Now()
+			c.Status = rec.statusSent()
 		} else {
 			c.Status = denial.Status
 			writeDenial(w, c.ID, denial, stageErr != nil)
@@ -198,15 +276,56 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 			}
 		}
 
+		var observations []observation
 		for i := len(p.stages) - 1; i >= 0; i-- {
 			s := p.stages[i]
 			obs, ok := s.(ResponseObserver)
 			if !ok {
 				continue
 			}
-			p.observe(ctx, s.Name(), obs, c)
+			started := time.Now()
+			completed := p.observe(ctx, s.Name(), obs, c)
+			observations = append(observations, observation{name: s.Name(), started: started, duration: time.Since(started), completed: completed})
+		}
+
+		if rec != nil && p.sink != nil {
+			info, tapObs := rec.tapResult(tapStage, forwardedAt)
+			if tapObs != nil && !tapObs.completed {
+				p.logger.Error("tracing could not record the whole response",
+					zap.String("call_id", c.ID), zap.String("stage", "tracing"), zap.String("record", "response"), zap.Error(rec.tapError(info)))
+			}
+			if tapObs != nil {
+				observations = append([]observation{*tapObs}, observations...)
+			}
+			resp := buildResponseRecord(c, rec, info, observations, forwardedAt, ended)
+			if err := p.sink.Write(resp); err != nil {
+				p.logger.Error("trace sink refused the response record; the record is lost",
+					zap.String("call_id", c.ID), zap.String("stage", "tracing"), zap.String("record", "response"), zap.Error(err))
+			}
+		} else if rec != nil {
+			_, _ = rec.tapResult(tapStage, forwardedAt)
+		}
+
+		if abort != nil {
+			panic(abort)
 		}
 	})
+}
+
+// serveNext runs next, catching http.ErrAbortHandler, which ReverseProxy
+// panics with when the agent or the provider drops mid-response, so the
+// call can still be observed and recorded before the abort resumes.
+func serveNext(next http.Handler, w http.ResponseWriter, r *http.Request) (abort any) {
+	defer func() {
+		if p := recover(); p != nil {
+			if p != http.ErrAbortHandler {
+				panic(p)
+			}
+			abort = p
+		}
+	}()
+	next.ServeHTTP(w, r)
+	return nil
 }
 
 func (p *Pipeline) call(ctx context.Context, s Stage, c *Call) (d Decision, err error) {
@@ -218,13 +337,15 @@ func (p *Pipeline) call(ctx context.Context, s Stage, c *Call) (d Decision, err 
 	return s.Request(ctx, c)
 }
 
-func (p *Pipeline) observe(ctx context.Context, name string, obs ResponseObserver, c *Call) {
+func (p *Pipeline) observe(ctx context.Context, name string, obs ResponseObserver, c *Call) (completed bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			p.logger.Error("stage response observer panicked", zap.String("stage", name), zap.Any("panic", r))
+			completed = false
 		}
 	}()
 	obs.Response(ctx, c)
+	return true
 }
 
 func newRequestID() string {

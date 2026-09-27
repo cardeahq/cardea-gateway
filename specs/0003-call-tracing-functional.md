@@ -215,8 +215,10 @@ exactly as before, and nothing they send or receive is altered.
 10. A request resends the whole conversation, so it carries every earlier
     tool result, not only new ones. The **new** tool results are those in
     the request's last message — the ones answering the tool calls of the
-    previous response. Only those are recorded; earlier ones were
-    recorded with the call that first carried them.
+    previous response. Trailing system messages do not count as the last
+    message: some agents (Claude Code among them) append one after the
+    message carrying the tool results. Only the new results are recorded;
+    earlier ones were recorded with the call that first carried them.
 11. Every new tool result is recorded in the request record: the
     identifier of the tool call it answers, whether the agent marked it
     as an error, and its size and fingerprint. Agentkeeper does not check
@@ -439,8 +441,7 @@ request, before it is forwarded or refused (rule 5).
   },
   "stages": [
     { "name": "identification", "started_at": "2026-09-27T14:03:11.402200Z", "duration_us": 41, "decision": "allowed" },
-    { "name": "tracing", "started_at": "2026-09-27T14:03:11.402245Z", "duration_us": 388, "decision": "allowed" },
-    { "name": "token_counting", "started_at": "2026-09-27T14:03:11.402640Z", "duration_us": 12, "decision": "allowed" }
+    { "name": "tracing", "started_at": "2026-09-27T14:03:11.402245Z", "duration_us": 388, "decision": "allowed" }
   ],
   "tool_results": [
     {
@@ -510,8 +511,7 @@ for every request that reached the provider (rule 6).
     "status": 200
   },
   "stages": [
-    { "name": "tracing", "started_at": "2026-09-27T14:03:12.024021Z", "duration_us": 1840, "observation": "completed" },
-    { "name": "token_counting", "started_at": "2026-09-27T14:03:15.584310Z", "duration_us": 9, "observation": "completed" }
+    { "name": "tracing", "started_at": "2026-09-27T14:03:12.024021Z", "duration_us": 1840, "observation": "completed" }
   ],
   "streamed": true,
   "response_id": "msg_01XFDUDYJgAACzvnptvVoYEL",
