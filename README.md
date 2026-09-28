@@ -227,3 +227,7 @@ for any organization-run LLM gateway.
    `http://localhost:8080`. Check agentkeeper's logs for the `token usage`
    lines to see sent/received token counts per request.
 
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
+
