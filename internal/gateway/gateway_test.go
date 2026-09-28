@@ -3,6 +3,7 @@ package gateway
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"go.uber.org/zap/zaptest"
@@ -19,10 +20,21 @@ type stubProvider struct {
 func (stubProvider) Name() string            { return "stub" }
 func (p stubProvider) Handler() http.Handler { return p.handler }
 
+// fileSinkTracing is a tracing config whose records go to a temp file, so
+// tests that enable tracing never write to stdout.
+func fileSinkTracing(t *testing.T) config.TracingConfig {
+	t.Helper()
+	return config.TracingConfig{
+		FingerprintKeyEnv: "AK_GW_TEST_UNSET_FINGERPRINT_KEY",
+		MaxReadBytes:      1 << 20,
+		Sink:              config.TraceSinkConfig{Type: "logging", Path: filepath.Join(t.TempDir(), "records.jsonl")},
+	}
+}
+
 func TestGateway_HealthzBypassesPipelineRegardlessOfStageConfig(t *testing.T) {
 	tests := []struct {
-		name          string
-		tokenCounting bool
+		name    string
+		tracing bool
 	}{
 		{"pipeline stage enabled", true},
 		{"pipeline stage disabled", false},
@@ -36,8 +48,9 @@ func TestGateway_HealthzBypassesPipelineRegardlessOfStageConfig(t *testing.T) {
 				Server: config.ServerConfig{ListenAddr: "127.0.0.1:0"},
 				Pipeline: config.PipelineConfig{
 					MaxBodyBytes: 1 << 20,
-					Stages:       config.StagesConfig{TokenCounting: tt.tokenCounting},
+					Stages:       config.StagesConfig{Tracing: tt.tracing},
 				},
+				Tracing: fileSinkTracing(t),
 			}
 			g, err := New(cfg, zaptest.NewLogger(t), prov)
 			if err != nil {
@@ -66,8 +79,9 @@ func TestGateway_ForwardsAllowedCallsThroughPipelineToProvider(t *testing.T) {
 		Server: config.ServerConfig{ListenAddr: "127.0.0.1:0"},
 		Pipeline: config.PipelineConfig{
 			MaxBodyBytes: 1 << 20,
-			Stages:       config.StagesConfig{TokenCounting: true},
+			Stages:       config.StagesConfig{Tracing: true},
 		},
+		Tracing: fileSinkTracing(t),
 	}
 	g, err := New(cfg, zaptest.NewLogger(t), prov)
 	if err != nil {
@@ -88,24 +102,28 @@ func TestGateway_ForwardsAllowedCallsThroughPipelineToProvider(t *testing.T) {
 
 func TestBuildStages_RespectsConfigBooleans(t *testing.T) {
 	tests := []struct {
-		name          string
-		tokenCounting bool
-		wantLen       int
+		name    string
+		tracing bool
+		wantLen int
 	}{
-		{"token counting enabled", true, 1},
-		{"token counting disabled", false, 0},
+		{"tracing enabled", true, 1},
+		{"tracing disabled", false, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := config.Config{
 				Pipeline: config.PipelineConfig{
 					MaxBodyBytes: 1 << 20,
-					Stages:       config.StagesConfig{TokenCounting: tt.tokenCounting},
+					Stages:       config.StagesConfig{Tracing: tt.tracing},
 				},
+				Tracing: fileSinkTracing(t),
 			}
-			stages, err := buildStages(cfg, zaptest.NewLogger(t))
+			stages, sink, err := buildStages(cfg, zaptest.NewLogger(t))
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
+			}
+			if sink != nil {
+				t.Cleanup(func() { _ = sink.Close() })
 			}
 			if len(stages) != tt.wantLen {
 				t.Fatalf("len(buildStages(...)) = %d, want %d", len(stages), tt.wantLen)
@@ -114,21 +132,23 @@ func TestBuildStages_RespectsConfigBooleans(t *testing.T) {
 	}
 }
 
-func TestBuildStages_TokenCountingStageIsNamedAfterItsConfigKey(t *testing.T) {
+func TestBuildStages_TracingStageIsNamedAfterItsConfigKey(t *testing.T) {
 	cfg := config.Config{
 		Pipeline: config.PipelineConfig{
 			MaxBodyBytes: 1 << 20,
-			Stages:       config.StagesConfig{TokenCounting: true},
+			Stages:       config.StagesConfig{Tracing: true},
 		},
+		Tracing: fileSinkTracing(t),
 	}
-	stages, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
+	t.Cleanup(func() { _ = sink.Close() })
 	if len(stages) != 1 {
 		t.Fatalf("len(buildStages(...)) = %d, want 1", len(stages))
 	}
-	if got := stages[0].Name(); got != "token_counting" {
-		t.Fatalf("stages[0].Name() = %q, want %q (matching its pipeline.stages config key)", got, "token_counting")
+	if got := stages[0].Name(); got != "tracing" {
+		t.Fatalf("stages[0].Name() = %q, want %q (matching its pipeline.stages config key)", got, "tracing")
 	}
 }

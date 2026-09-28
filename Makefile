@@ -23,9 +23,13 @@ test:
 vet:
 	go vet ./...
 
+# golangci-lint must load packages with the Go version it was built with;
+# pin lint to go.mod's version, the one CI uses, whatever the local default.
+GO_MOD_VERSION := $(shell go list -m -f '{{.GoVersion}}')
+
 .PHONY: lint
 lint:
-	golangci-lint run ./...
+	GOTOOLCHAIN=go$(GO_MOD_VERSION) golangci-lint run ./...
 
 .PHONY: fmt
 fmt:

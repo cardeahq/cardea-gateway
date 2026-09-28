@@ -171,7 +171,7 @@ func TestPipeline_RequestOrder_DenialShortCircuits(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	p := New(zaptest.NewLogger(t), 1<<20, s1, s2, s3)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, s1, s2, s3)
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("hi"))
 	rec := doRequest(t, p, next, req)
 
@@ -246,7 +246,7 @@ func TestPipeline_ObserverOrderAndCoverage(t *testing.T) {
 			for i, s := range stages {
 				pstages[i] = s
 			}
-			p := New(zaptest.NewLogger(t), 1<<20, pstages...)
+			p := New(zaptest.NewLogger(t), 1<<20, nil, pstages...)
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 			doRequest(t, p, next, httptest.NewRequest(http.MethodPost, "/", nil))
 
@@ -280,7 +280,7 @@ func TestPipeline_NonObserverStagesAreSkippedWithoutError(t *testing.T) {
 	plain := &fakeStage{name: "plain", decision: Allow(), log: log} // implements Stage only, not ResponseObserver
 	obs := allowStage("obs", log)
 
-	p := New(zaptest.NewLogger(t), 1<<20, plain, obs)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, plain, obs)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	rec := doRequest(t, p, next, httptest.NewRequest(http.MethodGet, "/", nil))
 
@@ -298,7 +298,7 @@ func TestPipeline_NonObserverStagesAreSkippedWithoutError(t *testing.T) {
 func TestPipeline_DenialRendering(t *testing.T) {
 	const reason = "agent ak-42 exceeded 10 req/min"
 	stage := denyStage("rate_limiting", http.StatusTooManyRequests, "request quota exceeded", reason, nil)
-	p := New(zaptest.NewLogger(t), 1<<20, stage)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("next must not be called on denial")
 	})
@@ -341,7 +341,7 @@ func TestPipeline_DenialRendering(t *testing.T) {
 func TestPipeline_UnavailableRendering_OnStageError(t *testing.T) {
 	const secret = "upstream-internal-detail-should-not-leak"
 	stage := errStage("policies", fmt.Errorf("dial tcp failed: %s", secret), nil)
-	p := New(zaptest.NewLogger(t), 1<<20, stage)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("next must not be called when a stage errors")
 	})
@@ -373,7 +373,7 @@ func TestPipeline_UnavailableRendering_OnStageError(t *testing.T) {
 func TestPipeline_UnavailableRendering_OnStagePanic(t *testing.T) {
 	const secret = "panic-internal-detail-should-not-leak"
 	stage := &fakeObserverStage{fakeStage: &fakeStage{name: "monitoring", panicRequest: true, panicMsg: secret}}
-	p := New(zaptest.NewLogger(t), 1<<20, stage)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("next must not be called when a stage panics")
 	})
@@ -415,7 +415,7 @@ func TestPipeline_UnavailableRendering_OnStagePanic(t *testing.T) {
 
 func TestPipeline_ResponsePanicDoesNotAffectAlreadySentResponse(t *testing.T) {
 	stage := &fakeObserverStage{fakeStage: &fakeStage{name: "audit", decision: Allow()}, panicResponse: true}
-	p := New(zaptest.NewLogger(t), 1<<20, stage)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("upstream-ok"))
@@ -441,7 +441,7 @@ func TestPipeline_ResponsePanicDoesNotAffectAlreadySentResponse(t *testing.T) {
 
 func TestPipeline_RequestID_GeneratedAndCallerCannotControlIt(t *testing.T) {
 	stage := denyStage("identification", http.StatusForbidden, "denied", "reason", nil)
-	p := New(zaptest.NewLogger(t), 1<<20, stage)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("next must not be called")
 	})
@@ -479,7 +479,7 @@ func TestPipeline_RequestID_GeneratedAndCallerCannotControlIt(t *testing.T) {
 
 func TestPipeline_RequestID_UniquePerCall(t *testing.T) {
 	stage := allowStage("audit", nil)
-	p := New(zaptest.NewLogger(t), 1<<20, stage)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	seen := make(map[string]bool)
@@ -499,7 +499,7 @@ func TestPipeline_RequestID_UniquePerCall(t *testing.T) {
 func TestPipeline_BodyReadOnceAndSharedWithNext(t *testing.T) {
 	const bodyText = `{"hello":"world"}`
 	stage := allowStage("filtering", nil)
-	p := New(zaptest.NewLogger(t), 1<<20, stage)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 
 	var nextBody string
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -527,7 +527,7 @@ func TestPipeline_BodyReadOnceAndSharedWithNext(t *testing.T) {
 
 func TestPipeline_BodyOverLimitDeniedBeforeAnyStageRuns(t *testing.T) {
 	stage := allowStage("identification", nil)
-	p := New(zaptest.NewLogger(t), 10, stage) // 10-byte limit
+	p := New(zaptest.NewLogger(t), 10, nil, stage) // 10-byte limit
 
 	var nextCalled atomic.Bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { nextCalled.Store(true) })
@@ -562,7 +562,7 @@ func TestPipeline_BodyOverLimitDeniedBeforeAnyStageRuns(t *testing.T) {
 
 func TestPipeline_BodyReadFailureDenied(t *testing.T) {
 	stage := allowStage("identification", nil)
-	p := New(zaptest.NewLogger(t), 1<<20, stage)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 
 	var nextCalled atomic.Bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { nextCalled.Store(true) })
@@ -594,7 +594,7 @@ func TestPipeline_BodyReadFailureDenied(t *testing.T) {
 
 func TestPipeline_ZeroValueDecisionDenies(t *testing.T) {
 	stage := &fakeObserverStage{fakeStage: &fakeStage{name: "policies", decision: Decision{}}}
-	p := New(zaptest.NewLogger(t), 1<<20, stage)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 
 	var nextCalled atomic.Bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { nextCalled.Store(true) })
@@ -614,7 +614,7 @@ func TestPipeline_ZeroValueDecisionDenies(t *testing.T) {
 
 func TestPipeline_AllowedCallPassesThroughUnchanged(t *testing.T) {
 	stages := []Stage{allowStage("identification", nil), allowStage("policies", nil), allowStage("audit", nil)}
-	p := New(zaptest.NewLogger(t), 1<<20, stages...)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stages...)
 
 	const upstreamBody = `{"ok":true}`
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -649,7 +649,7 @@ func TestPipeline_DecodesGzipResponseBodyForObservers(t *testing.T) {
 	wireBytes := append([]byte(nil), gzipped.Bytes()...)
 
 	stage := allowStage("token_counting", nil)
-	p := New(zaptest.NewLogger(t), 1<<20, stage)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
@@ -691,7 +691,7 @@ func TestPipeline_StreamingResponseFlushesBeforeObserving(t *testing.T) {
 	})
 
 	stage := allowStage("audit", nil)
-	p := New(zaptest.NewLogger(t), 1<<20, stage)
+	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 	srv := httptest.NewServer(p.Handler(next))
 	defer srv.Close()
 
@@ -757,7 +757,7 @@ func TestPipeline_ResponseOverLimitStreamsFullyButObservationIsTruncated(t *test
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stage := allowStage("audit", nil)
-			p := New(zaptest.NewLogger(t), maxBody, stage)
+			p := New(zaptest.NewLogger(t), maxBody, nil, stage)
 
 			var fullBody []byte
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -795,7 +795,7 @@ func TestPipeline_ResponseUnderLimitIsNotMarkedTruncated(t *testing.T) {
 	const upstreamBody = `{"ok":true}`
 
 	stage := allowStage("audit", nil)
-	p := New(zaptest.NewLogger(t), maxBody, stage)
+	p := New(zaptest.NewLogger(t), maxBody, nil, stage)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(upstreamBody))
@@ -819,7 +819,7 @@ func TestPipeline_ResponseUnderLimitIsNotMarkedTruncated(t *testing.T) {
 
 func TestPipeline_AllStagesDisabled_PassesThroughByteIdenticalWithNoStageInvoked(t *testing.T) {
 	const upstreamBody = `{"ok":true}`
-	p := New(zaptest.NewLogger(t), 1<<20) // no stages at all, as if every pipeline.stages.* was disabled
+	p := New(zaptest.NewLogger(t), 1<<20, nil) // no stages at all, as if every pipeline.stages.* was disabled
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Upstream", "yes")

@@ -176,27 +176,29 @@ func TestIdentityStage_DenialsShareStatusAndMessage(t *testing.T) {
 	}
 }
 
-func TestBuildStages_PrependsIdentificationAheadOfTokenCounting(t *testing.T) {
+func TestBuildStages_PrependsIdentificationAheadOfTracing(t *testing.T) {
 	t.Setenv("AK_GW_TEST_BUILD_ALPHA_KEY", alphaAPIKey)
 	cfg := config.Config{
 		Pipeline: config.PipelineConfig{
 			MaxBodyBytes: 1 << 20,
-			Stages:       config.StagesConfig{TokenCounting: true, Identification: true},
+			Stages:       config.StagesConfig{Tracing: true, Identification: true},
 		},
-		Agents: []config.AgentConfig{{AgentID: "agent-alpha", APIKeyEnv: "AK_GW_TEST_BUILD_ALPHA_KEY"}},
+		Agents:  []config.AgentConfig{{AgentID: "agent-alpha", APIKeyEnv: "AK_GW_TEST_BUILD_ALPHA_KEY"}},
+		Tracing: fileSinkTracing(t),
 	}
-	stages, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
+	t.Cleanup(func() { _ = sink.Close() })
 	if len(stages) != 2 {
 		t.Fatalf("len(stages) = %d, want 2", len(stages))
 	}
 	if stages[0].Name() != "identification" {
 		t.Fatalf("stages[0].Name() = %q, want %q", stages[0].Name(), "identification")
 	}
-	if stages[1].Name() != "token_counting" {
-		t.Fatalf("stages[1].Name() = %q, want %q", stages[1].Name(), "token_counting")
+	if stages[1].Name() != "tracing" {
+		t.Fatalf("stages[1].Name() = %q, want %q", stages[1].Name(), "tracing")
 	}
 }
 
@@ -204,18 +206,20 @@ func TestBuildStages_OmitsIdentificationWhenDisabled(t *testing.T) {
 	cfg := config.Config{
 		Pipeline: config.PipelineConfig{
 			MaxBodyBytes: 1 << 20,
-			Stages:       config.StagesConfig{TokenCounting: true, Identification: false},
+			Stages:       config.StagesConfig{Tracing: true, Identification: false},
 		},
+		Tracing: fileSinkTracing(t),
 	}
-	stages, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
+	t.Cleanup(func() { _ = sink.Close() })
 	if len(stages) != 1 {
 		t.Fatalf("len(stages) = %d, want 1", len(stages))
 	}
-	if stages[0].Name() != "token_counting" {
-		t.Fatalf("stages[0].Name() = %q, want %q", stages[0].Name(), "token_counting")
+	if stages[0].Name() != "tracing" {
+		t.Fatalf("stages[0].Name() = %q, want %q", stages[0].Name(), "tracing")
 	}
 	for _, s := range stages {
 		if s.Name() == "identification" {
@@ -228,11 +232,12 @@ func TestBuildStages_ReturnsErrorNotPartialStagesOnRegistryFailure(t *testing.T)
 	cfg := config.Config{
 		Pipeline: config.PipelineConfig{
 			MaxBodyBytes: 1 << 20,
-			Stages:       config.StagesConfig{TokenCounting: true, Identification: true},
+			Stages:       config.StagesConfig{Tracing: true, Identification: true},
 		},
-		Agents: []config.AgentConfig{{AgentID: "agent-a", APIKeyEnv: "AK_GW_TEST_UNSET_ENV_VAR_ABC123"}},
+		Agents:  []config.AgentConfig{{AgentID: "agent-a", APIKeyEnv: "AK_GW_TEST_UNSET_ENV_VAR_ABC123"}},
+		Tracing: fileSinkTracing(t),
 	}
-	stages, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err == nil {
 		t.Fatal("buildStages with a registry construction failure = nil error, want error")
 	}
@@ -272,7 +277,7 @@ func TestGatewayNew_ReturnsErrorNotPartialGatewayOnRegistryFailure(t *testing.T)
 
 func TestIdentityStage_FullPipeline_NoAuthorizationHeaderDeniedBeforeProvider(t *testing.T) {
 	stage := &identityStage{registry: newAlphaBetaRegistry(t)}
-	p := pipeline.New(zaptest.NewLogger(t), 1<<20, stage)
+	p := pipeline.New(zaptest.NewLogger(t), 1<<20, nil, stage)
 
 	var providerCalled bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -295,7 +300,7 @@ func TestIdentityStage_FullPipeline_NoAuthorizationHeaderDeniedBeforeProvider(t 
 func TestIdentityStage_FullPipeline_TwoAgentsDifferentShapesNeverCrossAttributed(t *testing.T) {
 	stage := &identityStage{registry: newAlphaBetaRegistry(t)}
 	capture := &capturingStage{}
-	p := pipeline.New(zaptest.NewLogger(t), 1<<20, stage, capture)
+	p := pipeline.New(zaptest.NewLogger(t), 1<<20, nil, stage, capture)
 
 	var providerCalls int
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -347,7 +352,7 @@ func TestIdentityStage_FullPipeline_ZeroAgentsRegisteredDeniesEveryProxiedReques
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := pipeline.New(zaptest.NewLogger(t), 1<<20, stage)
+			p := pipeline.New(zaptest.NewLogger(t), 1<<20, nil, stage)
 			var providerCalled bool
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				providerCalled = true
