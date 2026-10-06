@@ -423,6 +423,10 @@ operator's stack, and the same for every sink:
 - Identifiers: `ak_…` per call (0001), `fp_…` for fingerprints.
   Tool-call identifiers are the provider's, unchanged.
 
+A JSON Schema of both records is in `schemas/trace-record.v1.schema.json`.
+It is the contract written out for tools; where it and this section
+disagree, this section governs and the schema is fixed.
+
 ### `request` record
 
 Agent → agentkeeper → LLM. Written when every stage has decided on the

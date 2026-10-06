@@ -229,6 +229,9 @@ this.
 
 - **Idempotence.** Accepting the same batch twice has the same effect as
   accepting it once.
+- **Schema.** One line of the body is described by the JSON Schema
+  `schemas/cardea-intake-line.v1.schema.json`; the record inside it by
+  `schemas/trace-record.v1.schema.json`.
 
 ## Operator controls
 

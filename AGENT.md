@@ -74,6 +74,13 @@ Run the gateway directly: `go run ./cmd/agentkeeper serve [--config path.yaml]`.
   policy and data files and the input document; `internal/gateway/policies.go`
   adapts it to a stage. `SIGHUP` (or `policies.watch`) reloads the policy.
 
+- `schemas/` — JSON Schemas of the trace record (`trace-record.v1`) and of
+  one line of a Cardea batch (`cardea-intake-line.v1`). Hand-written, the
+  public contract with the platform and operators' tooling: when a record
+  field changes in `internal/trace/record.go`, change the schema in the
+  same commit (`internal/trace/schema_test.go` fails the build if they
+  drift).
+
 - `internal/trace` — builds the call-trace records (specs/0003) and hands
   each one to the trace sink. `LogSink` appends JSON Lines to stdout or a
   file; `CardeaSink` (specs/0005) queues records and a background

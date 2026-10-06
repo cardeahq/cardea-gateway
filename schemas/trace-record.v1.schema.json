@@ -1,0 +1,405 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trace-record.v1.schema.json",
+  "title": "Cardea Gateway trace record, v1",
+  "description": "One record of the call trace: a `request` record (agent to LLM) or a `response` record (LLM to agent). Defined by specs/0003-call-tracing-functional.md and extended by specs/0004 (stage detail). Within v1, fields and record types may be added and the listed values of a field may grow, so unknown properties are allowed and value sets are documented in `examples` rather than enumerated: consumers must ignore what they do not know and treat unknown values as opaque. Every field is always present; a field that does not apply is null and an empty list is [].",
+  "oneOf": [
+    { "$ref": "#/$defs/requestRecord" },
+    { "$ref": "#/$defs/responseRecord" }
+  ],
+  "$defs": {
+    "timestamp": {
+      "description": "RFC 3339 UTC with exactly six fractional digits.",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+    },
+    "durationUs": {
+      "description": "A duration in whole microseconds.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "httpStatus": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599
+    },
+    "stringOrNull": {
+      "type": ["string", "null"]
+    },
+    "callId": {
+      "description": "Identifier of the call, generated per call by the Gateway. The request and response records of one call carry the same value.",
+      "type": "string",
+      "pattern": "^ak_.+"
+    },
+    "fingerprint": {
+      "description": "Keyed HMAC of a value that is never recorded; equal values give equal fingerprints within one deployment key.",
+      "type": ["string", "null"],
+      "pattern": "^fp_.+"
+    },
+    "session": {
+      "description": "The session the agent claims; identical in both records of a call. `id` is set only when status is `claimed`; `source` and `source_name` are null when status is `absent`.",
+      "type": "object",
+      "required": ["id", "status", "source", "source_name"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stringOrNull" },
+        "status": {
+          "type": "string",
+          "description": "One of: claimed, invalid, absent."
+        },
+        "source": {
+          "type": ["string", "null"],
+          "description": "One of: header, body_field, baggage; null when absent."
+        },
+        "source_name": {
+          "description": "The header name, body field path or baggage key the session came from.",
+          "$ref": "#/$defs/stringOrNull"
+        }
+      }
+    },
+    "finding": {
+      "description": "A fact visible in one record alone. Carries a `kind` and, depending on the kind, the identifiers it concerns. Known kinds: response_truncated, tool_calls_unread.",
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string" }
+      }
+    },
+    "requestRecord": {
+      "description": "Agent to Gateway to LLM. Written when every stage has decided on the request, before it is forwarded or refused.",
+      "type": "object",
+      "required": [
+        "schema", "record", "call_id", "agent_id", "session", "received_at",
+        "duration_us", "model", "stream", "size_bytes", "outcome", "stages",
+        "tool_results", "findings"
+      ],
+      "properties": {
+        "schema": { "const": "agentkeeper.trace/v1" },
+        "record": { "const": "request" },
+        "call_id": { "$ref": "#/$defs/callId" },
+        "agent_id": {
+          "description": "The identified agent, or null when identification is off or did not identify one.",
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "session": { "$ref": "#/$defs/session" },
+        "received_at": {
+          "description": "When the Gateway received the request.",
+          "$ref": "#/$defs/timestamp"
+        },
+        "duration_us": {
+          "description": "How long the Gateway took to forward or refuse the request: its own overhead on the way in.",
+          "$ref": "#/$defs/durationUs"
+        },
+        "model": {
+          "description": "The model the caller requested, as named in the request.",
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "stream": {
+          "description": "Whether the caller asked for a streamed response.",
+          "type": "boolean"
+        },
+        "size_bytes": {
+          "description": "Size of the request body; null when the body was not read in full (too large, or unreadable).",
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "outcome": {
+          "type": "object",
+          "required": ["result", "status", "stage", "reason"],
+          "properties": {
+            "result": {
+              "type": "string",
+              "description": "One of: forwarded, denied, failed."
+            },
+            "status": {
+              "description": "What the agent received; null when forwarded.",
+              "type": ["integer", "null"],
+              "minimum": 100,
+              "maximum": 599
+            },
+            "stage": {
+              "description": "The stage that refused the request; null when forwarded.",
+              "$ref": "#/$defs/stringOrNull"
+            },
+            "reason": {
+              "description": "The audit-only reason for the refusal; appears here and never in a response. Null when forwarded.",
+              "$ref": "#/$defs/stringOrNull"
+            }
+          }
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "started_at", "duration_us", "decision", "detail"],
+            "properties": {
+              "name": { "type": "string" },
+              "started_at": {
+                "description": "Null when the stage did not run.",
+                "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }]
+              },
+              "duration_us": {
+                "description": "Null when the stage did not run.",
+                "oneOf": [{ "$ref": "#/$defs/durationUs" }, { "type": "null" }]
+              },
+              "decision": {
+                "type": "string",
+                "description": "One of: allowed, denied, failed, not_run."
+              },
+              "detail": {
+                "description": "What a stage reports about its own decision; null for stages that report none. Today only the policies stage sets it (specs/0004).",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": ["revision", "rules"],
+                    "properties": {
+                      "revision": {
+                        "description": "The policy revision in force.",
+                        "type": "string"
+                      },
+                      "rules": {
+                        "description": "Identifiers of the rules that fired; empty when none did.",
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    }
+                  },
+                  { "type": "null" }
+                ]
+              }
+            }
+          }
+        },
+        "tool_results": {
+          "description": "The new tool results this request carries.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tool_call_id", "is_error", "size_bytes", "fingerprint"],
+            "properties": {
+              "tool_call_id": {
+                "description": "The provider's identifier of the tool call this result answers, as the agent sent it.",
+                "type": "string"
+              },
+              "is_error": { "type": "boolean" },
+              "size_bytes": { "type": "integer", "minimum": 0 },
+              "fingerprint": { "$ref": "#/$defs/fingerprint" }
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        }
+      },
+      "examples": [
+        {
+          "schema": "agentkeeper.trace/v1",
+          "record": "request",
+          "call_id": "ak_7f3c2b1d9e8a4f60",
+          "agent_id": "acme-bot",
+          "session": {
+            "id": "8d0c7a3e-5b1f-4c2a-9e6d-1f2a3b4c5d6e",
+            "status": "claimed",
+            "source": "body_field",
+            "source_name": "metadata.user_id"
+          },
+          "received_at": "2026-09-27T14:03:11.402113Z",
+          "duration_us": 1794,
+          "model": "claude-sonnet-5",
+          "stream": true,
+          "size_bytes": 48213,
+          "outcome": { "result": "forwarded", "status": null, "stage": null, "reason": null },
+          "stages": [
+            { "name": "identification", "started_at": "2026-09-27T14:03:11.402200Z", "duration_us": 41, "decision": "allowed", "detail": null },
+            { "name": "tracing", "started_at": "2026-09-27T14:03:11.402245Z", "duration_us": 388, "decision": "allowed", "detail": null },
+            { "name": "policies", "started_at": "2026-09-27T14:03:11.402640Z", "duration_us": 903, "decision": "allowed", "detail": { "revision": "r7", "rules": [] } }
+          ],
+          "tool_results": [
+            { "tool_call_id": "toolu_01A9", "is_error": false, "size_bytes": 5120, "fingerprint": "fp_9c1e0b7d44a2f316" }
+          ],
+          "findings": []
+        }
+      ]
+    },
+    "responseRecord": {
+      "description": "LLM to Gateway to agent. Written when the response to the agent ends, for every request that reached the provider.",
+      "type": "object",
+      "required": [
+        "schema", "record", "call_id", "agent_id", "session", "started_at",
+        "first_byte_us", "duration_us", "outcome", "stages", "streamed",
+        "response_id", "response_model", "stop_reason", "tokens", "tool_calls",
+        "findings"
+      ],
+      "properties": {
+        "schema": { "const": "agentkeeper.trace/v1" },
+        "record": { "const": "response" },
+        "call_id": { "$ref": "#/$defs/callId" },
+        "agent_id": { "$ref": "#/$defs/stringOrNull" },
+        "session": { "$ref": "#/$defs/session" },
+        "started_at": {
+          "description": "When the Gateway forwarded the request to the provider; first_byte_us and duration_us are measured from it.",
+          "$ref": "#/$defs/timestamp"
+        },
+        "first_byte_us": {
+          "description": "Time to the provider's first byte; null when the provider never responded.",
+          "oneOf": [{ "$ref": "#/$defs/durationUs" }, { "type": "null" }]
+        },
+        "duration_us": {
+          "description": "Time until the response to the agent ended.",
+          "$ref": "#/$defs/durationUs"
+        },
+        "outcome": {
+          "type": "object",
+          "required": ["result", "upstream_status", "status"],
+          "properties": {
+            "result": {
+              "type": "string",
+              "description": "One of: delivered, unanswered. There is no denied or failed: responses are always accepted."
+            },
+            "upstream_status": {
+              "description": "The provider's HTTP status; null when unanswered.",
+              "type": ["integer", "null"],
+              "minimum": 100,
+              "maximum": 599
+            },
+            "status": {
+              "description": "What the agent received: the provider's status when delivered, the Gateway's error when unanswered.",
+              "$ref": "#/$defs/httpStatus"
+            }
+          }
+        },
+        "stages": {
+          "description": "Every enabled stage that observes responses, in the order they observed.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "started_at", "duration_us", "observation"],
+            "properties": {
+              "name": { "type": "string" },
+              "started_at": { "$ref": "#/$defs/timestamp" },
+              "duration_us": { "$ref": "#/$defs/durationUs" },
+              "observation": {
+                "type": "string",
+                "description": "One of: completed, failed."
+              }
+            }
+          }
+        },
+        "streamed": { "type": "boolean" },
+        "response_id": {
+          "description": "The provider's own identifier for the response; null when the provider did not send one.",
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "response_model": {
+          "description": "The model that produced the response, as the provider reports it; may differ from the request record's model.",
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "stop_reason": {
+          "description": "Why the model stopped, as the provider reports it, unchanged (for Anthropic: end_turn, tool_use, max_tokens, stop_sequence, and others).",
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "tokens": {
+          "description": "Null when the response's usage was not read.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["sent", "received"],
+              "properties": {
+                "sent": { "type": "integer", "minimum": 0 },
+                "received": { "type": "integer", "minimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "tool_calls": {
+          "description": "The tool calls the model requested in this response.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "tool_call_id", "tool_name", "server_side", "argument_names",
+              "size_bytes", "fingerprint", "relayed_at", "outcome", "recorded"
+            ],
+            "properties": {
+              "tool_call_id": {
+                "description": "The provider's identifier, unchanged; the same value appears in the request record that carries the tool's result.",
+                "type": "string"
+              },
+              "tool_name": { "type": "string" },
+              "server_side": { "type": "boolean" },
+              "argument_names": {
+                "description": "Names of the arguments, never their values; null when not recorded.",
+                "oneOf": [
+                  { "type": "array", "items": { "type": "string" } },
+                  { "type": "null" }
+                ]
+              },
+              "size_bytes": {
+                "type": ["integer", "null"],
+                "minimum": 0
+              },
+              "fingerprint": { "$ref": "#/$defs/fingerprint" },
+              "relayed_at": {
+                "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }]
+              },
+              "outcome": {
+                "type": "string",
+                "description": "One of: delivered, not_delivered."
+              },
+              "recorded": {
+                "description": "False when tracing did not record this tool call in full; the fields it could not read are then null.",
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        }
+      },
+      "examples": [
+        {
+          "schema": "agentkeeper.trace/v1",
+          "record": "response",
+          "call_id": "ak_7f3c2b1d9e8a4f60",
+          "agent_id": "acme-bot",
+          "session": {
+            "id": "8d0c7a3e-5b1f-4c2a-9e6d-1f2a3b4c5d6e",
+            "status": "claimed",
+            "source": "body_field",
+            "source_name": "metadata.user_id"
+          },
+          "started_at": "2026-09-27T14:03:11.403907Z",
+          "first_byte_us": 620114,
+          "duration_us": 4180337,
+          "outcome": { "result": "delivered", "upstream_status": 200, "status": 200 },
+          "stages": [
+            { "name": "tracing", "started_at": "2026-09-27T14:03:12.024021Z", "duration_us": 1840, "observation": "completed" }
+          ],
+          "streamed": true,
+          "response_id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+          "response_model": "claude-sonnet-5-20260801",
+          "stop_reason": "tool_use",
+          "tokens": { "sent": 1834, "received": 212 },
+          "tool_calls": [
+            {
+              "tool_call_id": "toolu_01B2",
+              "tool_name": "bash",
+              "server_side": false,
+              "argument_names": ["command"],
+              "size_bytes": 38,
+              "fingerprint": "fp_03d8a6c2e91b7f40",
+              "relayed_at": "2026-09-27T14:03:15.571930Z",
+              "outcome": "delivered",
+              "recorded": true
+            }
+          ],
+          "findings": []
+        }
+      ]
+    }
+  }
+}

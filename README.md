@@ -44,6 +44,48 @@ make lint   # run golangci-lint
 make fmt    # gofmt the tree
 ```
 
+## JSON Schemas
+
+[`schemas/`](schemas/) holds the machine-readable contract of what the Gateway
+emits (JSON Schema draft 2020-12). Two files:
+
+- **[`trace-record.v1.schema.json`](schemas/trace-record.v1.schema.json)**: one
+  call-trace record, as written by the log sink (JSON Lines) or sent by the
+  Cardea sink. A call produces a `request` record (agent to LLM: model,
+  stream flag, outcome, stage decisions, tool results received) and a
+  `response` record (LLM to agent: timings, outcome, tokens, stop reason,
+  tool calls requested). Both share `call_id`, `agent_id` and `session`.
+- **[`cardea-intake-line.v1.schema.json`](schemas/cardea-intake-line.v1.schema.json)**:
+  one line of the batch the Cardea sink POSTs to the platform: a gzip-compressed
+  NDJSON body where each line is `{"seq": N, "record": <trace record>}`. `seq`
+  numbers records per Gateway instance from 1, so a gap means lost records and
+  a repeat means a duplicate. The instance identity travels in the
+  `X-Cardea-Instance` header and the tenant is derived from the API key, so
+  neither appears in the line.
+
+### For users and integrators
+
+- Every field is always present; one that does not apply is `null`, an empty
+  list is `[]`.
+- Within v1, fields and values may be added. Ignore unknown properties and
+  treat unknown values (e.g. a new `finding.kind`) as opaque.
+- Prompts, tool arguments and tool results are never recorded: only sizes,
+  argument names and keyed fingerprints (`fp_…`).
+- Validate a record or line with any 2020-12 validator, for example
+  `check-jsonschema --schemafile schemas/cardea-intake-line.v1.schema.json line.json`.
+  The intake schema references the trace schema by relative `$ref`, so keep
+  the two files side by side.
+
+### For developers
+
+- The schemas are hand-written, not generated. When a field changes in
+  `internal/trace/record.go`, update the schema in the same commit.
+- Additive changes stay in v1. A breaking change (removing or retyping a
+  field) needs a new `v2` file and a new `schema` constant; keep v1 until
+  consumers have moved.
+- Value sets are documented in `description`/`examples`, not enumerated with
+  `enum`, so adding a value is not a breaking change.
+
 ## How features get built
 
 Features here start as a written spec, not as code. [`specs/`](specs/) is

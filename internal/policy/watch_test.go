@@ -127,10 +127,15 @@ func TestWatch_NothingHappensBeforeTheSettleTimeEnds(t *testing.T) {
 	e, _, _, _ := startWatch(t, path)
 	rev := e.Revision()
 
+	written := time.Now()
 	writeFile(t, dir, "policy.rego", rule("v2"))
 	time.Sleep(watchSettle / 3)
-	if e.Revision() != rev {
-		t.Fatal("the policy reloaded before the settle time elapsed")
+	// The reload timer starts after the write, so a reload seen less than
+	// the settle time after `written` is early. A slow machine may overshoot
+	// the sleep; a reload seen after the settle time is then legitimate.
+	changed := e.Revision() != rev
+	if elapsed := time.Since(written); changed && elapsed < watchSettle {
+		t.Fatalf("the policy reloaded %v after the change, before the settle time (%v) elapsed", elapsed, watchSettle)
 	}
 	waitFor(t, "the reload after settling", func() bool { return e.Revision() != rev })
 }

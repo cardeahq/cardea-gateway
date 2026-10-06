@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cardea-intake-line.v1.schema.json",
+  "title": "Cardea intake batch line, v1",
+  "description": "One line of the body the Cardea sink POSTs to the platform (specs/0005-cardea-sink-functional.md, Delivery contract). The body is gzip-compressed (`Content-Encoding: gzip`) newline-delimited JSON (`Content-Type: application/x-ndjson`): each line is one object matching this schema, in increasing `seq` order. The sender's instance identity travels in the `X-Cardea-Instance` header, not in the line, and the tenant is never in the payload: the platform derives it from the API key. The platform orders and deduplicates by (instance identity, seq). Unknown properties are allowed.",
+  "type": "object",
+  "required": ["seq", "record"],
+  "properties": {
+    "seq": {
+      "description": "The record's number within its Gateway instance: starts at 1, no number skipped. A record lost before delivery still uses its number, so a gap marks lost records and a repeated number marks a duplicate. A restarted Gateway has a new instance identity and starts again at 1.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "record": {
+      "description": "The trace record, exactly as the Gateway produced it (a `request` or a `response` record).",
+      "$ref": "trace-record.v1.schema.json"
+    }
+  },
+  "examples": [
+    {
+      "seq": 1,
+      "record": {
+        "schema": "agentkeeper.trace/v1",
+        "record": "response",
+        "call_id": "ak_7f3c2b1d9e8a4f60",
+        "agent_id": null,
+        "session": { "id": null, "status": "absent", "source": null, "source_name": null },
+        "started_at": "2026-09-27T14:03:11.403907Z",
+        "first_byte_us": null,
+        "duration_us": 10004213,
+        "outcome": { "result": "unanswered", "upstream_status": null, "status": 502 },
+        "stages": [],
+        "streamed": false,
+        "response_id": null,
+        "response_model": null,
+        "stop_reason": null,
+        "tokens": null,
+        "tool_calls": [],
+        "findings": []
+      }
+    }
+  ]
+}
