@@ -58,7 +58,10 @@ is a separate governance step with its own spec (specs/0004).
   agent claims and is recorded as such.
 - Record what every pipeline stage decided on every request, and how
   every stage's observation of every response went, so the audit trail
-  accounts for every call and every decision taken on it.
+  can account for every call and every decision taken on it. Agentkeeper
+  records every crossing and hands each record to the sink; whether a
+  sink delivers it is the sink's business, and a record a sink loses is
+  reported, never silently (rule 23, amended by 0005).
 - Describe every crossing as a record in one documented, versioned JSON
   data model, so an operator can build their own observability stack on
   it without depending on any particular tracing product. The same
@@ -113,7 +116,7 @@ is a separate governance step with its own spec (specs/0004).
   — derived from the records. Agent traces stay in the JSON records only.
 - Collecting, storing, assembling or querying traces. Agentkeeper is not
   a collection service.
-- Sampling. Every crossing is recorded.
+- Sampling. Every crossing is recorded and handed to the sink.
 
 ## Users and scenarios
 
@@ -282,12 +285,18 @@ exactly as before, and nothing they send or receive is altered.
     travel and where they go, and how they are encoded on the way; it
     never adds, drops or changes a field.
 23. A sink either accepts a record or reports that it could not. A record
-    the sink could not accept is a record that could not be written (see
-    *Failure behavior*).
-24. Exactly one sink is active. This version has one kind, **logging**:
-    it writes each record as one line of JSON to standard output or to a
-    file (see *Logging sink*). Sinks added by later specs consume the
-    same records and follow rules 21–23.
+    the sink could not accept is **lost**: the failure is logged at error
+    level, naming the call and the record, and the call is never refused,
+    delayed or altered because of it (see *Failure behavior*). *Amended by
+    0005: 0003 originally denied a call whose request record the sink did
+    not accept.*
+24. One or more sinks may be active, each receiving every record
+    independently. This spec defines one kind, **logging**: it writes each
+    record as one line of JSON to standard output or to a file (see
+    *Logging sink*); specs/0005 adds the Cardea sink and running both.
+    Sinks added by later specs consume the same records and follow rules
+    21–23. *Amended by 0005: 0003 originally allowed exactly one active
+    sink.*
 
 ## Operator controls
 
@@ -307,21 +316,25 @@ and responses pass exactly as they do today.
 
 ## Failure behavior
 
-**Tracing fails closed on requests, and never on responses.** A request
-that agentkeeper cannot record never reaches the provider. The operator
-asked for a record of everything the agent does, and a gap that opens
-silently under load is exactly the kind of gap that matters in an
-incident. Responses, however, are always accepted (rule 3): once the
-provider has answered, the agent receives the response whatever tracing
-manages to record of it, and any gap is named in the records and the
-application logs.
+**Tracing fails closed on requests when tracing itself fails, never
+because a sink fails, and never on responses.** A request that tracing
+cannot read never reaches the provider: the operator asked for a record
+of everything the agent does, and tracing that cannot do its own job is
+a gap that matters in an incident. But *delivering* the record is a
+different matter. *Amended by 0005:* a sink that cannot take a record
+never causes a call to be refused, because a sink may depend on a remote
+service or on a disk the operator does not control, and because with
+several sinks one could record a call that another's failure then
+refused. The loss is logged at error level and, for sinks that number
+their records, visible downstream as a gap. Responses are always
+accepted (rule 3): once the provider has answered, the agent receives the
+response whatever tracing manages to record of it, and any gap is named
+in the records and the application logs.
 
 - **The request cannot be recorded** — its tool results cannot be read,
-  tracing errors or crashes, or the sink does not accept the request
-  record. The call is denied with 0001's "governance unavailable" error
-  naming the stage, and the provider never receives it. Because the
-  request record is handed over before forwarding, no request reaches
-  the provider without its record.
+  or tracing errors or crashes. The call is denied with 0001's
+  "governance unavailable" error naming the stage, and the provider
+  never receives it.
 - **A tool call in the response cannot be recorded** — tracing errors or
   crashes while reading it. The response is still relayed in full and
   unchanged. The failure is logged at error level with the call's
@@ -329,19 +342,18 @@ application logs.
   `failed` and the tool call with `recorded` `false`, with whatever of it
   could be recorded. This is the one gap the records can have on a call
   that was relayed, and the record names it.
-- **The sink does not accept a response record.** The agent already has
-  its response, so that call cannot be refused. The failure is logged at
-  error level with the call's identifier. The next call's request record
-  is the next thing handed to the sink, so while the sink keeps refusing,
-  every new call is denied by the first case above; once it accepts
-  again, calls go through. At most the response records of calls in
-  flight when the sink failed are lost, each named in the error log.
+- **The sink does not accept a record, request or response.** *Amended by
+  0005.* The call carries on exactly as if it had: a request is forwarded
+  and a response is relayed. The failure is logged at error level with
+  the call's identifier and the record type, and the record is lost.
   Agentkeeper does not buffer records the sink refused: holding them for
-  a later retry is a collector's job.
+  a later retry is the sink's or a collector's job, and the Cardea sink
+  of 0005 does exactly that.
 
 Handing the request record over before forwarding puts the sink's write
 in every call's path. For the logging sink that is a local append; a
-network sink has to weigh it (see *Open questions*).
+sink that depends on anything remote must not make the call wait on it
+(specs/0005 enqueues and delivers in the background).
 
 **Reading a session never refuses a call.** A source that is absent, a
 body that does not have the expected shape, or a value that is invalid
@@ -410,6 +422,10 @@ operator's stack, and the same for every sink:
   `[]` when empty.
 - Identifiers: `ak_…` per call (0001), `fp_…` for fingerprints.
   Tool-call identifiers are the provider's, unchanged.
+
+A JSON Schema of both records is in `schemas/trace-record.v1.schema.json`.
+It is the contract written out for tools; where it and this section
+disagree, this section governs and the schema is fixed.
 
 ### `request` record
 
@@ -680,14 +696,15 @@ together (rule 18). A session holds one or more traces. A record whose
     processed, **then** the caller's value appears neither in the
     response nor in any record.
 11. **Given** a sink that does not accept records, **when** a call
-    arrives, **then** it is denied with "governance unavailable" and never
-    reaches the provider; **and when** the sink accepts records again,
-    **then** the next call is proxied normally.
+    arrives, **then** it is proxied normally, the agent receives the
+    provider's response, and an error-level log line names the call and
+    the lost request record. *(Amended by 0005; originally the call was
+    denied.)*
 12. **Given** a sink that stops accepting records while a call's response
     is streaming, **when** that response ends, **then** the agent has
     received the full response, the lost response record is named in an
-    error-level log line, and the next call is denied with "governance
-    unavailable".
+    error-level log line, and the next call is proxied normally.
+    *(Amended by 0005; originally the next call was denied.)*
 13. **Given** a response larger than the maximum body size containing a
     tool call at its end, **when** the call completes, **then** the tool
     call is in its response record.
@@ -767,6 +784,14 @@ together (rule 18). A session holds one or more traces. A record whose
     unchanged, and the response record has `tool_calls` `[]`, the finding
     `tool_calls_unread`, and tracing's `observation` `completed`.
 
+## Relationship to 0005
+
+specs/0005 amends this feature: rules 23 and 24, the sink part of
+*Failure behavior*, acceptance criteria 11 and 12, and the open question
+on network sinks are updated above (each marked *Amended by 0005*). A
+sink no longer refuses calls, and more than one sink may be active. What
+tracing itself does when it cannot read a request is unchanged.
+
 ## Relationship to 0001
 
 This feature keeps 0001's observe-only responses (its rule 13 and
@@ -790,14 +815,13 @@ It changes two things 0001 fixes, and 0001 is amended with it:
   calls of one task. That would bring back state between calls, and
   should be designed for several instances from the start. Decided by
   the spec for that policy.
-- How a network sink behaves when the downstream service is slow or
-  unreachable. The request record is handed over before forwarding, so a
-  slow sink slows every call, and an unreachable one refuses them.
-  Whether a network sink may acknowledge a record before the downstream
-  service has it — a small bounded buffer — and whether more than one
-  sink may be active at a time, is decided by the spec that adds network
-  sinks; whatever it decides must keep rule 21: agentkeeper never
-  becomes the place records are kept.
+- ~~How a network sink behaves when the downstream service is slow or
+  unreachable.~~ Settled by specs/0005: a sink never refuses a call; the
+  Cardea sink acknowledges a record once it is queued, delivers in the
+  background from a bounded buffer, and drops (and reports) records when
+  the buffer is full; more than one sink may be active. This keeps rule
+  21: the buffer is bounded and lost on restart, so agentkeeper still
+  never becomes the place records are kept.
 - How the later OpenTelemetry sink represents links between calls. It
   must stay stateless too, so it can carry tool-call identifiers on each
   record's spans, but not parent one call's span under another's;

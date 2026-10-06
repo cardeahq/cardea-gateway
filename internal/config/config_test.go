@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -200,7 +201,7 @@ func TestLoad_TracingDefaults(t *testing.T) {
 	want := TracingConfig{
 		FingerprintKeyEnv: "TRACE_FINGERPRINT_KEY",
 		MaxReadBytes:      16777216,
-		Sink:              TraceSinkConfig{Type: "logging", Path: ""},
+		Sink:              TraceSinkConfig{Type: "logging", Path: "", Cardea: wantCardeaDefaults()},
 	}
 	if cfg.Tracing.FingerprintKeyEnv != want.FingerprintKeyEnv || cfg.Tracing.MaxReadBytes != want.MaxReadBytes || cfg.Tracing.Sink != want.Sink {
 		t.Fatalf("Tracing = %+v, want %+v", cfg.Tracing, want)
@@ -488,4 +489,246 @@ func TestLoad_NonexistentPolicyPathIsNotRejectedByLoad(t *testing.T) {
 	if _, err := Load(writeConfigFile(t, "policies:\n  path: /no/such/policy.rego\n")); err != nil {
 		t.Fatalf("Load: %v, want nil: a missing policy file is policy.New's error", err)
 	}
+}
+
+// --- cardea sink (specs/0005) --------------------------------------------------
+
+func wantCardeaDefaults() CardeaSinkConfig {
+	return CardeaSinkConfig{
+		Endpoint:        "",
+		APIKeyEnv:       "",
+		QueueSize:       10000,
+		QueueMaxBytes:   67108864,
+		BatchMaxRecords: 500,
+		BatchMaxBytes:   1048576,
+		BatchMaxDelay:   time.Second,
+		RequestTimeout:  10 * time.Second,
+		ShutdownTimeout: 10 * time.Second,
+	}
+}
+
+// cardeaYAML selects the Cardea sink with the two mandatory settings, plus
+// extra lines indented under tracing.sink.cardea.
+func cardeaYAML(sinkType string, extra ...string) string {
+	y := "tracing:\n  sink:\n    type: " + sinkType + "\n    cardea:\n" +
+		"      endpoint: https://platform.example.com/ingest\n" +
+		"      api_key_env: CARDEA_API_KEY\n"
+	for _, e := range extra {
+		y += "      " + e + "\n"
+	}
+	return y
+}
+
+func TestLoad_CardeaSinkDefaults(t *testing.T) {
+	cfg, err := Load(writeConfigFile(t, ""))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Tracing.Sink.Type != "logging" {
+		t.Fatalf("Tracing.Sink.Type = %q, want logging by default: sending data off the machine is a deliberate act", cfg.Tracing.Sink.Type)
+	}
+	if want := wantCardeaDefaults(); cfg.Tracing.Sink.Cardea != want {
+		t.Fatalf("Tracing.Sink.Cardea = %+v, want %+v", cfg.Tracing.Sink.Cardea, want)
+	}
+	if d := defaults().Tracing.Sink.Cardea; d != wantCardeaDefaults() {
+		t.Fatalf("defaults().Tracing.Sink.Cardea = %+v, want %+v", d, wantCardeaDefaults())
+	}
+	if cfg.Tracing.Sink.UsesCardea() || !cfg.Tracing.Sink.UsesLogging() {
+		t.Fatalf("default sink: UsesCardea=%v UsesLogging=%v, want false and true", cfg.Tracing.Sink.UsesCardea(), cfg.Tracing.Sink.UsesLogging())
+	}
+}
+
+func TestLoad_CardeaSinkFromFileKeepsTheOtherDefaults(t *testing.T) {
+	cfg, err := Load(writeConfigFile(t, cardeaYAML("logging+cardea")))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := wantCardeaDefaults()
+	want.Endpoint = "https://platform.example.com/ingest"
+	want.APIKeyEnv = "CARDEA_API_KEY"
+	if cfg.Tracing.Sink.Cardea != want {
+		t.Fatalf("Cardea = %+v, want %+v", cfg.Tracing.Sink.Cardea, want)
+	}
+}
+
+func TestTraceSinkConfig_UsesCardeaAndUsesLogging(t *testing.T) {
+	tests := []struct {
+		sinkType    string
+		wantCardea  bool
+		wantLogging bool
+	}{
+		{"logging", false, true},
+		{"cardea", true, false},
+		{"logging+cardea", true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.sinkType, func(t *testing.T) {
+			s := TraceSinkConfig{Type: tt.sinkType}
+			if s.UsesCardea() != tt.wantCardea || s.UsesLogging() != tt.wantLogging {
+				t.Fatalf("type %q: UsesCardea=%v UsesLogging=%v, want %v and %v", tt.sinkType, s.UsesCardea(), s.UsesLogging(), tt.wantCardea, tt.wantLogging)
+			}
+		})
+	}
+}
+
+func TestLoad_CardeaSinkEnvVarOverrides(t *testing.T) {
+	// The mandatory settings come from the environment too, so every case
+	// is a valid configuration with one field changed.
+	base := map[string]string{
+		"AGENTKEEPER_TRACING_SINK_TYPE":               "cardea",
+		"AGENTKEEPER_TRACING_SINK_CARDEA_ENDPOINT":    "https://platform.example.com/ingest",
+		"AGENTKEEPER_TRACING_SINK_CARDEA_API_KEY_ENV": "CARDEA_API_KEY",
+	}
+	tests := []struct {
+		env   string
+		value string
+		check func(TraceSinkConfig) bool
+	}{
+		{"AGENTKEEPER_TRACING_SINK_TYPE", "logging+cardea", func(s TraceSinkConfig) bool { return s.Type == "logging+cardea" }},
+		{"AGENTKEEPER_TRACING_SINK_CARDEA_ENDPOINT", "http://localhost:9000/in", func(s TraceSinkConfig) bool { return s.Cardea.Endpoint == "http://localhost:9000/in" }},
+		{"AGENTKEEPER_TRACING_SINK_CARDEA_API_KEY_ENV", "OTHER_KEY", func(s TraceSinkConfig) bool { return s.Cardea.APIKeyEnv == "OTHER_KEY" }},
+		{"AGENTKEEPER_TRACING_SINK_CARDEA_QUEUE_SIZE", "20000", func(s TraceSinkConfig) bool { return s.Cardea.QueueSize == 20000 }},
+		{"AGENTKEEPER_TRACING_SINK_CARDEA_QUEUE_MAX_BYTES", "134217728", func(s TraceSinkConfig) bool { return s.Cardea.QueueMaxBytes == 134217728 }},
+		{"AGENTKEEPER_TRACING_SINK_CARDEA_BATCH_MAX_RECORDS", "100", func(s TraceSinkConfig) bool { return s.Cardea.BatchMaxRecords == 100 }},
+		{"AGENTKEEPER_TRACING_SINK_CARDEA_BATCH_MAX_BYTES", "2097152", func(s TraceSinkConfig) bool { return s.Cardea.BatchMaxBytes == 2097152 }},
+		{"AGENTKEEPER_TRACING_SINK_CARDEA_BATCH_MAX_DELAY", "2s", func(s TraceSinkConfig) bool { return s.Cardea.BatchMaxDelay == 2*time.Second }},
+		{"AGENTKEEPER_TRACING_SINK_CARDEA_REQUEST_TIMEOUT", "5s", func(s TraceSinkConfig) bool { return s.Cardea.RequestTimeout == 5*time.Second }},
+		{"AGENTKEEPER_TRACING_SINK_CARDEA_SHUTDOWN_TIMEOUT", "3s", func(s TraceSinkConfig) bool { return s.Cardea.ShutdownTimeout == 3*time.Second }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.env, func(t *testing.T) {
+			for k, v := range base {
+				t.Setenv(k, v)
+			}
+			t.Setenv(tt.env, tt.value)
+			cfg, err := Load(writeConfigFile(t, ""))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if !tt.check(cfg.Tracing.Sink) {
+				t.Fatalf("%s=%s was not honored: Sink = %+v", tt.env, tt.value, cfg.Tracing.Sink)
+			}
+		})
+	}
+}
+
+func TestLoad_CardeaSinkAcceptsValidConfigurations(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{"cardea", cardeaYAML("cardea")},
+		{"logging+cardea", cardeaYAML("logging+cardea")},
+		{"https endpoint", strings.Replace(cardeaYAML("cardea"), "https://platform.example.com/ingest", "https://platform.example.com", 1)},
+		{"http on localhost", strings.Replace(cardeaYAML("cardea"), "https://platform.example.com/ingest", "http://localhost", 1)},
+		{"http on localhost with port and path", strings.Replace(cardeaYAML("cardea"), "https://platform.example.com/ingest", "http://localhost:9000/in?x=1", 1)},
+		{"http on 127.0.0.1", strings.Replace(cardeaYAML("cardea"), "https://platform.example.com/ingest", "http://127.0.0.1:9", 1)},
+		{"http elsewhere in 127.0.0.0/8", strings.Replace(cardeaYAML("cardea"), "https://platform.example.com/ingest", "http://127.5.5.5:9000", 1)},
+		{"http on ::1", strings.Replace(cardeaYAML("cardea"), "https://platform.example.com/ingest", "http://[::1]:9000", 1)},
+		{"batch_max_bytes at 8 MiB", cardeaYAML("cardea", "batch_max_bytes: 8388608", "queue_max_bytes: 8388608")},
+		{"shutdown_timeout 0 skips draining", cardeaYAML("cardea", "shutdown_timeout: 0s")},
+		{"queue exactly one batch", cardeaYAML("cardea", "batch_max_records: 10", "queue_size: 10", "batch_max_bytes: 4096", "queue_max_bytes: 4096")},
+		{"batch of one record", cardeaYAML("cardea", "batch_max_records: 1")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Load(writeConfigFile(t, tt.yaml)); err != nil {
+				t.Fatalf("Load: %v, want the configuration accepted", err)
+			}
+		})
+	}
+}
+
+func TestLoad_CardeaSinkRejections(t *testing.T) {
+	withEndpoint := func(endpoint string) string {
+		return strings.Replace(cardeaYAML("cardea"), "https://platform.example.com/ingest", endpoint, 1)
+	}
+	tests := []struct {
+		name      string
+		yaml      string
+		wantInErr string // the field the error must name
+	}{
+		{"plain http to a remote host", withEndpoint("http://platform.example.com"), "endpoint"},
+		{"plain http to example.com", withEndpoint("http://example.com"), "endpoint"},
+		{"plain http to a lookalike of localhost", withEndpoint("http://localhost.example.com"), "endpoint"},
+		{"endpoint with userinfo", withEndpoint("https://user:s3cr3tpass@platform.example.com/in"), "endpoint"},
+		{"endpoint with a username only", withEndpoint("https://user@platform.example.com/in"), "endpoint"},
+		{"endpoint with a fragment", withEndpoint("https://platform.example.com/in#frag"), "endpoint"},
+		{"endpoint without a host", withEndpoint("https:///in"), "endpoint"},
+		{"endpoint that is not a URL", withEndpoint("not a url"), "endpoint"},
+		{"endpoint with another scheme", withEndpoint("ftp://platform.example.com/in"), "endpoint"},
+		{"endpoint that does not parse", withEndpoint("https://platform.example.com:notaport/in"), "endpoint"},
+		{
+			"empty endpoint",
+			"tracing:\n  sink:\n    type: cardea\n    cardea:\n      api_key_env: CARDEA_API_KEY\n",
+			"endpoint",
+		},
+		{
+			"empty api_key_env",
+			"tracing:\n  sink:\n    type: cardea\n    cardea:\n      endpoint: https://platform.example.com/in\n",
+			"api_key_env",
+		},
+		{"no cardea settings at all with logging+cardea", "tracing:\n  sink:\n    type: logging+cardea\n", "endpoint"},
+		{"queue_size zero", cardeaYAML("cardea", "queue_size: 0"), "queue_size"},
+		{"queue_size below batch_max_records", cardeaYAML("cardea", "batch_max_records: 500", "queue_size: 499"), "queue_size"},
+		{"queue_max_bytes below batch_max_bytes", cardeaYAML("cardea", "batch_max_bytes: 1048576", "queue_max_bytes: 1048575"), "queue_max_bytes"},
+		{"batch_max_records zero", cardeaYAML("cardea", "batch_max_records: 0"), "batch_max_records"},
+		{"batch_max_records negative", cardeaYAML("cardea", "batch_max_records: -1"), "batch_max_records"},
+		{"batch_max_bytes zero", cardeaYAML("cardea", "batch_max_bytes: 0"), "batch_max_bytes"},
+		{"batch_max_bytes above 8 MiB", cardeaYAML("cardea", "batch_max_bytes: 8388609", "queue_max_bytes: 67108864"), "batch_max_bytes"},
+		{"batch_max_delay zero", cardeaYAML("cardea", "batch_max_delay: 0s"), "batch_max_delay"},
+		{"batch_max_delay negative", cardeaYAML("cardea", "batch_max_delay: -1s"), "batch_max_delay"},
+		{"request_timeout zero", cardeaYAML("cardea", "request_timeout: 0s"), "request_timeout"},
+		{"request_timeout negative", cardeaYAML("cardea", "request_timeout: -1s"), "request_timeout"},
+		{"shutdown_timeout negative", cardeaYAML("cardea", "shutdown_timeout: -1s"), "shutdown_timeout"},
+		{"unknown sink type", "tracing:\n  sink:\n    type: kafka\n", "type"},
+		{"sink types are not combinable in other orders", "tracing:\n  sink:\n    type: cardea+logging\n", "type"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(writeConfigFile(t, tt.yaml))
+			if err == nil {
+				t.Fatalf("Load = nil error, want a rejection naming %q", tt.wantInErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantInErr) {
+				t.Fatalf("error %q does not name %q", err, tt.wantInErr)
+			}
+			if strings.Contains(err.Error(), "s3cr3tpass") {
+				t.Fatalf("error %q echoes the endpoint's userinfo", err)
+			}
+		})
+	}
+}
+
+func TestLoad_CardeaSettingsAreIgnoredAndUnvalidatedWhenTheTypeIsLogging(t *testing.T) {
+	yaml := "tracing:\n  sink:\n    type: logging\n    cardea:\n" +
+		"      endpoint: http://platform.example.com\n" +
+		"      batch_max_records: 0\n" +
+		"      queue_size: -5\n" +
+		"      request_timeout: 0s\n"
+	cfg, err := Load(writeConfigFile(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v, want the cardea section ignored when the type does not include cardea", err)
+	}
+	if cfg.Tracing.Sink.UsesCardea() {
+		t.Fatal("UsesCardea() = true for type logging")
+	}
+}
+
+func TestLoad_NoTenantSettingAnywhereInTheTraceSinkConfig(t *testing.T) {
+	var walk func(path string, typ reflect.Type)
+	walk = func(path string, typ reflect.Type) {
+		for i := range typ.NumField() {
+			f := typ.Field(i)
+			tag := f.Tag.Get("mapstructure")
+			if strings.Contains(strings.ToLower(f.Name), "tenant") || strings.Contains(strings.ToLower(tag), "tenant") {
+				t.Errorf("%s.%s (tag %q) names a tenant: the credential alone identifies it", path, f.Name, tag)
+			}
+			if f.Type.Kind() == reflect.Struct {
+				walk(path+"."+f.Name, f.Type)
+			}
+		}
+	}
+	walk("TraceSinkConfig", reflect.TypeOf(TraceSinkConfig{}))
+	walk("CardeaSinkConfig", reflect.TypeOf(CardeaSinkConfig{}))
 }

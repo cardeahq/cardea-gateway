@@ -4,6 +4,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -103,10 +105,37 @@ type TracingConfig struct {
 }
 
 type TraceSinkConfig struct {
-	// Type is "logging", the only sink in this version.
+	// Type is "logging", "cardea" or "logging+cardea".
 	Type string `mapstructure:"type"`
 	// Path is where the logging sink appends records; "" means stdout.
-	Path string `mapstructure:"path"`
+	Path   string           `mapstructure:"path"`
+	Cardea CardeaSinkConfig `mapstructure:"cardea"`
+}
+
+// CardeaSinkConfig is read only when Type includes "cardea".
+type CardeaSinkConfig struct {
+	// Endpoint is the full URL batches are POSTed to. Required, no default.
+	Endpoint string `mapstructure:"endpoint"`
+	// APIKeyEnv names the env var holding the platform API key. Required,
+	// no default. The key itself is never in config.
+	APIKeyEnv       string        `mapstructure:"api_key_env"`
+	QueueSize       int           `mapstructure:"queue_size"`
+	QueueMaxBytes   int64         `mapstructure:"queue_max_bytes"`
+	BatchMaxRecords int           `mapstructure:"batch_max_records"`
+	BatchMaxBytes   int           `mapstructure:"batch_max_bytes"`
+	BatchMaxDelay   time.Duration `mapstructure:"batch_max_delay"`
+	RequestTimeout  time.Duration `mapstructure:"request_timeout"`
+	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
+}
+
+// UsesCardea reports whether t.Type selects the Cardea sink.
+func (t TraceSinkConfig) UsesCardea() bool {
+	return t.Type == "cardea" || t.Type == "logging+cardea"
+}
+
+// UsesLogging reports whether t.Type selects the local sink.
+func (t TraceSinkConfig) UsesLogging() bool {
+	return t.Type == "logging" || t.Type == "logging+cardea"
 }
 
 // SessionSourceList applies to the named Agents, or to every agent
@@ -156,7 +185,19 @@ func defaults() Config {
 		Tracing: TracingConfig{
 			FingerprintKeyEnv: "TRACE_FINGERPRINT_KEY",
 			MaxReadBytes:      16777216,
-			Sink:              TraceSinkConfig{Type: "logging", Path: ""},
+			Sink: TraceSinkConfig{
+				Type: "logging",
+				Path: "",
+				Cardea: CardeaSinkConfig{
+					QueueSize:       10000,
+					QueueMaxBytes:   67108864,
+					BatchMaxRecords: 500,
+					BatchMaxBytes:   1048576,
+					BatchMaxDelay:   time.Second,
+					RequestTimeout:  10 * time.Second,
+					ShutdownTimeout: 10 * time.Second,
+				},
+			},
 		},
 		Policies: PoliciesConfig{
 			Data:        []string{},
@@ -192,6 +233,16 @@ func Load(cfgFile string) (Config, error) {
 	v.SetDefault("tracing.max_read_bytes", d.Tracing.MaxReadBytes)
 	v.SetDefault("tracing.sink.type", d.Tracing.Sink.Type)
 	v.SetDefault("tracing.sink.path", d.Tracing.Sink.Path)
+	c := d.Tracing.Sink.Cardea
+	v.SetDefault("tracing.sink.cardea.endpoint", c.Endpoint)
+	v.SetDefault("tracing.sink.cardea.api_key_env", c.APIKeyEnv)
+	v.SetDefault("tracing.sink.cardea.queue_size", c.QueueSize)
+	v.SetDefault("tracing.sink.cardea.queue_max_bytes", c.QueueMaxBytes)
+	v.SetDefault("tracing.sink.cardea.batch_max_records", c.BatchMaxRecords)
+	v.SetDefault("tracing.sink.cardea.batch_max_bytes", c.BatchMaxBytes)
+	v.SetDefault("tracing.sink.cardea.batch_max_delay", c.BatchMaxDelay)
+	v.SetDefault("tracing.sink.cardea.request_timeout", c.RequestTimeout)
+	v.SetDefault("tracing.sink.cardea.shutdown_timeout", c.ShutdownTimeout)
 
 	v.SetEnvPrefix(EnvPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -283,8 +334,15 @@ func Load(cfgFile string) (Config, error) {
 }
 
 func validateTracing(t TracingConfig, agents map[string]bool) error {
-	if t.Sink.Type != "logging" {
-		return fmt.Errorf("tracing.sink.type must be \"logging\", got %q", t.Sink.Type)
+	switch t.Sink.Type {
+	case "logging", "cardea", "logging+cardea":
+	default:
+		return fmt.Errorf("tracing.sink.type must be \"logging\", \"cardea\" or \"logging+cardea\", got %q", t.Sink.Type)
+	}
+	if t.Sink.UsesCardea() {
+		if err := validateCardea(t.Sink.Cardea); err != nil {
+			return err
+		}
 	}
 	if t.MaxReadBytes <= 0 {
 		return fmt.Errorf("tracing.max_read_bytes must be positive, got %d", t.MaxReadBytes)
@@ -330,4 +388,63 @@ func validateTracing(t TracingConfig, agents map[string]bool) error {
 		}
 	}
 	return nil
+}
+
+const maxBatchBytes = 8 << 20
+
+func validateCardea(c CardeaSinkConfig) error {
+	if err := validateEndpoint(c.Endpoint); err != nil {
+		return err
+	}
+	switch {
+	case c.APIKeyEnv == "":
+		return fmt.Errorf("tracing.sink.cardea.api_key_env is required")
+	case c.BatchMaxRecords < 1:
+		return fmt.Errorf("tracing.sink.cardea.batch_max_records must be at least 1, got %d", c.BatchMaxRecords)
+	case c.BatchMaxBytes < 1 || c.BatchMaxBytes > maxBatchBytes:
+		return fmt.Errorf("tracing.sink.cardea.batch_max_bytes must be between 1 and %d, got %d", maxBatchBytes, c.BatchMaxBytes)
+	case c.QueueSize < c.BatchMaxRecords:
+		return fmt.Errorf("tracing.sink.cardea.queue_size (%d) must be at least batch_max_records (%d)", c.QueueSize, c.BatchMaxRecords)
+	case c.QueueMaxBytes < int64(c.BatchMaxBytes):
+		return fmt.Errorf("tracing.sink.cardea.queue_max_bytes (%d) must be at least batch_max_bytes (%d)", c.QueueMaxBytes, c.BatchMaxBytes)
+	case c.BatchMaxDelay <= 0:
+		return fmt.Errorf("tracing.sink.cardea.batch_max_delay must be positive, got %s", c.BatchMaxDelay)
+	case c.RequestTimeout <= 0:
+		return fmt.Errorf("tracing.sink.cardea.request_timeout must be positive, got %s", c.RequestTimeout)
+	case c.ShutdownTimeout < 0:
+		return fmt.Errorf("tracing.sink.cardea.shutdown_timeout must not be negative, got %s", c.ShutdownTimeout)
+	}
+	return nil
+}
+
+// validateEndpoint never puts the endpoint in its errors: it may carry
+// credentials in its userinfo.
+func validateEndpoint(endpoint string) error {
+	if endpoint == "" {
+		return fmt.Errorf("tracing.sink.cardea.endpoint is required")
+	}
+	u, err := url.Parse(endpoint)
+	switch {
+	case err != nil:
+		return fmt.Errorf("tracing.sink.cardea.endpoint is not a valid URL")
+	case u.Hostname() == "":
+		return fmt.Errorf("tracing.sink.cardea.endpoint must have a host")
+	case u.User != nil:
+		return fmt.Errorf("tracing.sink.cardea.endpoint must not contain userinfo")
+	case u.Fragment != "" || strings.Contains(endpoint, "#"):
+		return fmt.Errorf("tracing.sink.cardea.endpoint must not contain a fragment")
+	case u.Scheme == "https":
+		return nil
+	case u.Scheme == "http" && isLoopback(u.Hostname()):
+		return nil
+	}
+	return fmt.Errorf("tracing.sink.cardea.endpoint must use https (http is allowed only for localhost)")
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

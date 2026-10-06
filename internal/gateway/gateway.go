@@ -21,7 +21,7 @@ type Gateway struct {
 	cfg      config.Config
 	logger   *zap.Logger
 	provider provider.Provider
-	sink     *trace.LogSink
+	sink     trace.CloseableSink
 	engine   *policy.Engine
 	server   *http.Server
 }
@@ -111,9 +111,9 @@ func (g *Gateway) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // spec adds its constructor at its position here. The returned sink is
 // nil exactly when tracing is disabled, and the engine exactly when the
 // policies stage is.
-func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, *trace.LogSink, *policy.Engine, error) {
+func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace.CloseableSink, *policy.Engine, error) {
 	var stages []pipeline.Stage
-	var sink *trace.LogSink
+	var sink trace.CloseableSink
 	if cfg.Pipeline.Stages.Identification {
 		registry, err := identity.NewRegistry(cfg.Agents)
 		if err != nil {
@@ -126,7 +126,7 @@ func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, *trac
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("building tracer: %w", err)
 		}
-		sink, err = trace.NewLogSink(cfg.Tracing.Sink.Path)
+		sink, err = buildSink(cfg.Tracing, logger)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -148,4 +148,31 @@ func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, *trac
 		stages = append(stages, &policiesStage{engine: engine, logger: logger})
 	}
 	return stages, sink, engine, nil
+}
+
+// buildSink returns the sink cfg.Sink selects: the local log, the Cardea
+// sink, or both in a MultiSink. On error nothing it opened stays open.
+func buildSink(cfg config.TracingConfig, logger *zap.Logger) (trace.CloseableSink, error) {
+	var sinks []trace.CloseableSink
+	if cfg.Sink.UsesCardea() {
+		cs, err := trace.NewCardeaSink(cfg.Sink.Cardea, logger)
+		if err != nil {
+			return nil, fmt.Errorf("building cardea sink: %w", err)
+		}
+		sinks = append(sinks, cs)
+	}
+	if cfg.Sink.UsesLogging() {
+		ls, err := trace.NewLogSink(cfg.Sink.Path)
+		if err != nil {
+			for _, s := range sinks {
+				_ = s.Close()
+			}
+			return nil, err
+		}
+		sinks = append(sinks, ls)
+	}
+	if len(sinks) == 1 {
+		return sinks[0], nil
+	}
+	return trace.NewMultiSink(sinks...), nil
 }

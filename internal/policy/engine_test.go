@@ -566,8 +566,23 @@ func TestEvaluate_CallerCancellationIsKindInternal(t *testing.T) {
 
 func TestEvaluate_TooManyAbandonedEvaluationsIsOverloaded(t *testing.T) {
 	const abandoned = 16 // maxAbandoned
-	body := slowBody(4)
-	e := timeoutEngine(t, slowRule, 20*time.Millisecond)
+	e := timeoutEngine(t, `deny contains "r" if { false }`, 20*time.Millisecond)
+
+	// Stand in for a built-in OPA cannot interrupt: it ignores the context
+	// and returns only when released.
+	release := make(chan struct{})
+	e.eval = func(ctx context.Context, q rego.PreparedEvalQuery, input map[string]any) (rego.ResultSet, error) {
+		<-release
+		return defaultEval(ctx, q, input)
+	}
+	released := false
+	releaseAll := func() {
+		if !released {
+			released = true
+			close(release)
+		}
+	}
+	t.Cleanup(releaseAll)
 
 	var wg sync.WaitGroup
 	kinds := make([]string, abandoned)
@@ -575,7 +590,7 @@ func TestEvaluate_TooManyAbandonedEvaluationsIsOverloaded(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := e.Evaluate(context.Background(), msgReq(body))
+			_, err := e.Evaluate(context.Background(), msgReq(`{"model":"m","messages":[]}`))
 			var ee *EvalError
 			if errors.As(err, &ee) {
 				kinds[i] = ee.Kind
@@ -584,15 +599,15 @@ func TestEvaluate_TooManyAbandonedEvaluationsIsOverloaded(t *testing.T) {
 	}
 	wg.Wait()
 	for i, k := range kinds {
-		if k != "timeout" && k != "overloaded" {
-			t.Skipf("evaluation %d ended with kind %q; the rule finished too fast to hold %d evaluations open", i, k, abandoned)
+		if k != "timeout" {
+			t.Fatalf("evaluation %d ended with kind %q, want timeout", i, k)
 		}
 	}
 
 	start := time.Now()
 	_, err := e.Evaluate(context.Background(), msgReq(`{"model":"m","messages":[]}`))
 	if err == nil {
-		t.Skip("abandoned evaluations had already ended; machine too fast")
+		t.Fatalf("Evaluate = nil error with %d evaluations still running, want overloaded", abandoned)
 	}
 	if k := evalKind(t, err); k != "overloaded" {
 		t.Fatalf("Kind = %q with %d evaluations still running, want overloaded", k, abandoned)
@@ -602,7 +617,8 @@ func TestEvaluate_TooManyAbandonedEvaluationsIsOverloaded(t *testing.T) {
 	}
 
 	// The count falls back when the abandoned evaluations end.
-	deadline := time.Now().Add(2 * time.Minute)
+	releaseAll()
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		_, err = e.Evaluate(context.Background(), msgReq(`{"model":"m","messages":[]}`))
 		if err == nil {
@@ -612,9 +628,9 @@ func TestEvaluate_TooManyAbandonedEvaluationsIsOverloaded(t *testing.T) {
 			t.Fatalf("Kind = %q while draining, want overloaded or success", k)
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("still overloaded two minutes after the abandoned evaluations should have ended")
+			t.Fatal("still overloaded after the abandoned evaluations were released")
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -876,7 +892,7 @@ func TestReload_DataEditChangesDecision(t *testing.T) {
 
 func TestReload_EvaluationInFlightFinishesUnderTheOldSnapshot(t *testing.T) {
 	dir := t.TempDir()
-	path := writeFile(t, dir, "policy.rego", regoHeader+strings.Replace(slowRule, `"slow"`, `"old"`, 1))
+	path := writeFile(t, dir, "policy.rego", regoHeader+`deny contains "old" if { true }`)
 	cfg := cfgFor(path)
 	cfg.EvalTimeout = 60 * time.Second
 	e, err := New(cfg, "anthropic", zaptest.NewLogger(t))
@@ -885,17 +901,26 @@ func TestReload_EvaluationInFlightFinishesUnderTheOldSnapshot(t *testing.T) {
 	}
 	oldRev := e.Revision()
 
+	// Hold the evaluation inside the engine, after it has picked its
+	// snapshot, until the reload is done.
+	inFlight := make(chan struct{})
+	release := make(chan struct{})
+	e.eval = func(ctx context.Context, q rego.PreparedEvalQuery, input map[string]any) (rego.ResultSet, error) {
+		close(inFlight)
+		<-release
+		return defaultEval(ctx, q, input)
+	}
+
 	type out struct {
 		res Result
 		err error
 	}
 	done := make(chan out, 1)
-	started := time.Now()
 	go func() {
-		res, err := e.Evaluate(context.Background(), msgReq(slowBody(4)))
+		res, err := e.Evaluate(context.Background(), msgReq(`{"model":"m","messages":[]}`))
 		done <- out{res, err}
 	}()
-	time.Sleep(20 * time.Millisecond)
+	<-inFlight
 
 	writeFile(t, dir, "policy.rego", regoHeader+`deny contains "new" if { true }`)
 	if err := e.Reload("signal"); err != nil {
@@ -904,10 +929,8 @@ func TestReload_EvaluationInFlightFinishesUnderTheOldSnapshot(t *testing.T) {
 	if e.Revision() == oldRev {
 		t.Fatal("revision did not change after reload")
 	}
+	close(release)
 	o := <-done
-	if time.Since(started) < 200*time.Millisecond {
-		t.Skip("the evaluation finished before the reload; machine too fast to test the overlap")
-	}
 	if o.err != nil {
 		t.Fatalf("in-flight Evaluate: %v", o.err)
 	}

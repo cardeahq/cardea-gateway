@@ -74,6 +74,27 @@ Run the gateway directly: `go run ./cmd/agentkeeper serve [--config path.yaml]`.
   policy and data files and the input document; `internal/gateway/policies.go`
   adapts it to a stage. `SIGHUP` (or `policies.watch`) reloads the policy.
 
+- `schemas/` — JSON Schemas of the trace record (`trace-record.v1`) and of
+  one line of a Cardea batch (`cardea-intake-line.v1`). Hand-written, the
+  public contract with the platform and operators' tooling: when a record
+  field changes in `internal/trace/record.go`, change the schema in the
+  same commit (`internal/trace/schema_test.go` fails the build if they
+  drift).
+
+- `internal/trace` — builds the call-trace records (specs/0003) and hands
+  each one to the trace sink. `LogSink` appends JSON Lines to stdout or a
+  file; `CardeaSink` (specs/0005) queues records and a background
+  goroutine delivers them in gzip NDJSON batches to the Cardea platform
+  over HTTPS, numbering them per instance so loss shows as a gap;
+  `MultiSink` writes to both when `tracing.sink.type` is `logging+cardea`.
+  `Write` never touches the network. **A sink never refuses a call:** a
+  sink error is logged at error level and the record is lost (specs/0005
+  amends 0003); only a failure of the tracing stage itself, such as an
+  unreadable `tool_result`, still denies a request. The Cardea sink needs
+  `tracing.sink.cardea.endpoint` and `api_key_env` (the name of the env
+  var holding the API key, never the key itself), neither with a default;
+  there is no tenant in the Gateway, the platform derives it from the key.
+
 Data flow for `agentkeeper serve`: `cli.serve` loads `config.Config` →
 builds a `zap.Logger` from it → builds the configured `provider.Provider`
 → constructs a `gateway.Gateway` from all three → `Run`s it until

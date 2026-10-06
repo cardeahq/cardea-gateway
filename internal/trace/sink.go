@@ -8,10 +8,17 @@ import (
 	"sync"
 )
 
-// Sink carries records downstream. It must be safe for concurrent use; a
-// nil error means the record was accepted.
+// Sink carries records downstream. It must be safe for concurrent use. A
+// non-nil error means the record was not accepted and is lost; the caller
+// must not refuse a call because of it.
 type Sink interface {
 	Write(r Record) error
+}
+
+// CloseableSink is a Sink that holds resources until closed.
+type CloseableSink interface {
+	Sink
+	Close() error
 }
 
 // LogSink writes each record as one line of JSON.
