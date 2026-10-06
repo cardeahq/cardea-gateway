@@ -118,7 +118,7 @@ func TestBuildStages_RespectsConfigBooleans(t *testing.T) {
 				},
 				Tracing: fileSinkTracing(t),
 			}
-			stages, sink, err := buildStages(cfg, zaptest.NewLogger(t))
+			stages, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -140,7 +140,7 @@ func TestBuildStages_TracingStageIsNamedAfterItsConfigKey(t *testing.T) {
 		},
 		Tracing: fileSinkTracing(t),
 	}
-	stages, sink, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}

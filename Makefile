@@ -19,6 +19,13 @@ run:
 test:
 	go test ./...
 
+# The policy and gateway packages run evaluations in goroutines and swap
+# policies at runtime. The policy package takes about two minutes under
+# -race, so this is not part of `make check`.
+.PHONY: test-race
+test-race:
+	go test -race ./internal/policy/... ./internal/gateway/...
+
 .PHONY: vet
 vet:
 	go vet ./...

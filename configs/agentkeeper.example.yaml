@@ -33,6 +33,7 @@ pipeline:
   stages:
     identification: false # off by default — see note below
     tracing: true # records every request and response; see tracing below
+    policies: true # allows everything until policies.path is set; see policies below
 
 # Agents agentkeeper recognizes once identification is enabled. Each
 # entry needs api_key_env, jwt_secret_env, or both. Credential values are
@@ -79,3 +80,16 @@ tracing:
   #   sources:
   #     - header: X-Session-Id
   #     - baggage: session.id
+
+# Policy rules: a Rego file decides whether each request is forwarded.
+# Rules live in `package cardea.policy` and add rule identifiers to the
+# set `deny`; any identifier denies the call (403). Evaluation failures
+# deny with 503. The file is read at startup (a bad policy stops serve)
+# and again on SIGHUP or, with watch: true, on file change; a failed reload
+# keeps the previous policy.
+policies:
+  path: "" # the .rego policy file; "" = no policy
+  data: [] # .json / .yaml files or directories, exposed to rules as `data`
+  watch: false # reload when a policy or data file changes
+  watch_settle: 500ms # wait this long after the last change before reloading
+  eval_timeout: 100ms # longest one evaluation may take

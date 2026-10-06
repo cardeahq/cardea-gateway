@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
@@ -22,6 +23,7 @@ type Config struct {
 	Pipeline PipelineConfig `mapstructure:"pipeline"`
 	Agents   []AgentConfig  `mapstructure:"agents"`
 	Tracing  TracingConfig  `mapstructure:"tracing"`
+	Policies PoliciesConfig `mapstructure:"policies"`
 }
 
 type ServerConfig struct {
@@ -59,6 +61,22 @@ type PipelineConfig struct {
 type StagesConfig struct {
 	Identification bool `mapstructure:"identification"`
 	Tracing        bool `mapstructure:"tracing"`
+	Policies       bool `mapstructure:"policies"`
+}
+
+type PoliciesConfig struct {
+	// Path is the .rego policy file. Empty: no policy.
+	Path string `mapstructure:"path"`
+	// Data are JSON or YAML files, or directories of them, exposed to
+	// rules as `data`.
+	Data []string `mapstructure:"data"`
+	// Watch turns on reload on file change.
+	Watch bool `mapstructure:"watch"`
+	// WatchSettle is how long to wait after the last change before
+	// reloading.
+	WatchSettle time.Duration `mapstructure:"watch_settle"`
+	// EvalTimeout is the longest one evaluation may take.
+	EvalTimeout time.Duration `mapstructure:"eval_timeout"`
 }
 
 // AgentConfig is one operator-registered agent. At least one of
@@ -131,6 +149,7 @@ func defaults() Config {
 			Stages: StagesConfig{
 				Identification: false,
 				Tracing:        true,
+				Policies:       true,
 			},
 		},
 		Agents: nil,
@@ -138,6 +157,11 @@ func defaults() Config {
 			FingerprintKeyEnv: "TRACE_FINGERPRINT_KEY",
 			MaxReadBytes:      16777216,
 			Sink:              TraceSinkConfig{Type: "logging", Path: ""},
+		},
+		Policies: PoliciesConfig{
+			Data:        []string{},
+			WatchSettle: 500 * time.Millisecond,
+			EvalTimeout: 100 * time.Millisecond,
 		},
 	}
 }
@@ -158,6 +182,12 @@ func Load(cfgFile string) (Config, error) {
 	v.SetDefault("pipeline.max_body_bytes", d.Pipeline.MaxBodyBytes)
 	v.SetDefault("pipeline.stages.identification", d.Pipeline.Stages.Identification)
 	v.SetDefault("pipeline.stages.tracing", d.Pipeline.Stages.Tracing)
+	v.SetDefault("pipeline.stages.policies", d.Pipeline.Stages.Policies)
+	v.SetDefault("policies.path", d.Policies.Path)
+	v.SetDefault("policies.data", d.Policies.Data)
+	v.SetDefault("policies.watch", d.Policies.Watch)
+	v.SetDefault("policies.watch_settle", d.Policies.WatchSettle)
+	v.SetDefault("policies.eval_timeout", d.Policies.EvalTimeout)
 	v.SetDefault("tracing.fingerprint_key_env", d.Tracing.FingerprintKeyEnv)
 	v.SetDefault("tracing.max_read_bytes", d.Tracing.MaxReadBytes)
 	v.SetDefault("tracing.sink.type", d.Tracing.Sink.Type)
@@ -196,6 +226,14 @@ func Load(cfgFile string) (Config, error) {
 		return Config{}, fmt.Errorf("unmarshalling pipeline.stages: %w", err)
 	}
 
+	var policies PoliciesConfig
+	err = v.UnmarshalKey("policies", &policies, func(dc *mapstructure.DecoderConfig) {
+		dc.ErrorUnused = true
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("unmarshalling policies: %w", err)
+	}
+
 	var agents []AgentConfig
 	err = v.UnmarshalKey("agents", &agents, func(dc *mapstructure.DecoderConfig) {
 		dc.ErrorUnused = true
@@ -214,6 +252,13 @@ func Load(cfgFile string) (Config, error) {
 
 	if cfg.Pipeline.MaxBodyBytes <= 0 {
 		return Config{}, fmt.Errorf("pipeline.max_body_bytes must be positive, got %d", cfg.Pipeline.MaxBodyBytes)
+	}
+
+	if cfg.Policies.EvalTimeout <= 0 {
+		return Config{}, fmt.Errorf("policies.eval_timeout must be positive, got %s", cfg.Policies.EvalTimeout)
+	}
+	if cfg.Policies.WatchSettle <= 0 {
+		return Config{}, fmt.Errorf("policies.watch_settle must be positive, got %s", cfg.Policies.WatchSettle)
 	}
 
 	seenAgentIDs := make(map[string]bool, len(cfg.Agents))

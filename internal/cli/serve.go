@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -44,6 +45,21 @@ func newServeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// Registered even with no policy: SIGHUP's default action ends the process.
+			hup := make(chan os.Signal, 1)
+			signal.Notify(hup, syscall.SIGHUP)
+			defer signal.Stop(hup)
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-hup:
+						_ = gw.ReloadPolicy() // a failure is already logged by the engine
+					}
+				}
+			}()
 			return gw.Run(ctx)
 		},
 	}

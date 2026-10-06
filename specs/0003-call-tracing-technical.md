@@ -417,10 +417,19 @@ type ResponseOutcome struct {
 // Decision is one of "allowed", "denied", "failed", "not_run"; timings
 // are nil for "not_run".
 type RequestStage struct {
-	Name       string     `json:"name"`
-	StartedAt  *Timestamp `json:"started_at"`
-	DurationUS *int64     `json:"duration_us"`
-	Decision   string     `json:"decision"`
+	Name       string       `json:"name"`
+	StartedAt  *Timestamp   `json:"started_at"`
+	DurationUS *int64       `json:"duration_us"`
+	Decision   string       `json:"decision"`
+	Detail     *StageDetail `json:"detail"` // nil encodes null; only policies sets it (specs/0004)
+}
+
+// StageDetail is what a stage adds to its entry in the request record.
+// Today only the policies stage uses it: the policy revision in force and
+// the identifiers of the rules that fired (empty when none did).
+type StageDetail struct {
+	Revision string   `json:"revision"`
+	Rules    []string `json:"rules"`
 }
 
 // Observation is one of "completed", "failed".
@@ -576,7 +585,9 @@ func New(logger *zap.Logger, maxBodyBytes int64, sink trace.Sink, stages ...Stag
 - New file `records.go`: `buildRequestRecord` and `buildResponseRecord`,
   which turn the `Call`, the kept stage results and the tap's
   `ResponseInfo` into `trace` records. This is the only place pipeline
-  facts meet the schema.
+  facts meet the schema. `buildRequestRecord` also copies a stage's
+  `detail` (specs/0004) into `RequestStage.Detail`; stages that set none
+  encode `"detail": null`.
 - Outcome mapping for the request record:
   - `forwarded`: no denial.
   - `failed`: a stage error or panic, or a request record the sink
@@ -889,7 +900,9 @@ records calls and can be told to fail):
   runs: assert the order of events in a shared log (criterion 2). The
   response record is written after every observer has returned.
 - **Stage results.** Allowed / denied / not_run across three stages,
-  with `null` timings for `not_run` (criterion 3). An observer panic
+  with `null` timings for `not_run` (criterion 3). Every request-record
+  stage entry carries `"detail": null` unless the stage attached a detail
+  (specs/0004), and a golden request record includes the field. An observer panic
   gives `observation: "failed"` with `delivered` (criterion 28).
 - **Sink failures:**
   - A failing sink denies with 503 and never calls upstream, and the next

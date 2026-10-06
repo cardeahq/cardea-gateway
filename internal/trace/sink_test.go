@@ -131,14 +131,14 @@ func TestLogSink_EveryFieldPresentWithNullAndEmptyList(t *testing.T) {
 	assertKeys(t, "request.session", asObject(t, "session", req["session"]), "id", "status", "source", "source_name")
 	assertKeys(t, "request.outcome", asObject(t, "outcome", req["outcome"]), "result", "status", "stage", "reason")
 	stage := asObject(t, "request.stages[0]", asArray(t, "request.stages", req["stages"])[0])
-	assertKeys(t, "request.stages[0]", stage, "name", "started_at", "duration_us", "decision")
+	assertKeys(t, "request.stages[0]", stage, "name", "started_at", "duration_us", "decision", "detail")
 
 	for _, k := range []string{"agent_id", "model", "size_bytes"} {
 		if v, ok := req[k]; !ok || v != nil {
 			t.Fatalf("request.%s = %#v, want null", k, v)
 		}
 	}
-	for _, k := range []string{"started_at", "duration_us"} {
+	for _, k := range []string{"started_at", "duration_us", "detail"} {
 		if v := stage[k]; v != nil {
 			t.Fatalf("not_run stage %s = %#v, want null", k, v)
 		}

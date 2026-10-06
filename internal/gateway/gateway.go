@@ -12,6 +12,7 @@ import (
 	"github.com/agentkeeper/agentkeeper/internal/config"
 	"github.com/agentkeeper/agentkeeper/internal/identity"
 	"github.com/agentkeeper/agentkeeper/internal/pipeline"
+	"github.com/agentkeeper/agentkeeper/internal/policy"
 	"github.com/agentkeeper/agentkeeper/internal/provider"
 	"github.com/agentkeeper/agentkeeper/internal/trace"
 )
@@ -21,6 +22,7 @@ type Gateway struct {
 	logger   *zap.Logger
 	provider provider.Provider
 	sink     *trace.LogSink
+	engine   *policy.Engine
 	server   *http.Server
 }
 
@@ -32,11 +34,12 @@ func New(cfg config.Config, logger *zap.Logger, prov provider.Provider) (*Gatewa
 		provider: prov,
 	}
 
-	stages, sink, err := buildStages(cfg, logger)
+	stages, sink, engine, err := buildStages(cfg, logger)
 	if err != nil {
 		return nil, err
 	}
 	g.sink = sink
+	g.engine = engine
 	var pipelineSink trace.Sink
 	if sink != nil {
 		pipelineSink = sink
@@ -53,11 +56,28 @@ func New(cfg config.Config, logger *zap.Logger, prov provider.Provider) (*Gatewa
 	return g, nil
 }
 
+// ReloadPolicy reloads the policy from disk (the SIGHUP path). With no
+// policy configured it logs that and returns nil.
+func (g *Gateway) ReloadPolicy() error {
+	if g.engine == nil || g.cfg.Policies.Path == "" {
+		g.logger.Info("no policy configured; nothing to reload")
+		return nil
+	}
+	return g.engine.Reload("signal")
+}
+
 // Run blocks until ctx is cancelled or the server fails, then closes the
 // trace sink.
 func (g *Gateway) Run(ctx context.Context) error {
 	if g.sink != nil {
 		defer func() { _ = g.sink.Close() }()
+	}
+	if g.engine != nil {
+		go func() {
+			if err := g.engine.Watch(ctx); err != nil {
+				g.logger.Error("policy file watching stopped; signal reload still works", zap.Error(err))
+			}
+		}()
 	}
 	ln, err := net.Listen("tcp", g.server.Addr)
 	if err != nil {
@@ -89,27 +109,43 @@ func (g *Gateway) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // buildStages walks the RFC's fixed stage order and appends the
 // constructor for each stage whose config boolean is true. A new stage
 // spec adds its constructor at its position here. The returned sink is
-// nil exactly when tracing is disabled.
-func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, *trace.LogSink, error) {
+// nil exactly when tracing is disabled, and the engine exactly when the
+// policies stage is.
+func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, *trace.LogSink, *policy.Engine, error) {
 	var stages []pipeline.Stage
 	var sink *trace.LogSink
 	if cfg.Pipeline.Stages.Identification {
 		registry, err := identity.NewRegistry(cfg.Agents)
 		if err != nil {
-			return nil, nil, fmt.Errorf("building agent registry: %w", err)
+			return nil, nil, nil, fmt.Errorf("building agent registry: %w", err)
 		}
 		stages = append(stages, &identityStage{registry: registry})
 	}
 	if cfg.Pipeline.Stages.Tracing {
 		tracer, err := trace.NewTracer(cfg.Tracing, logger)
 		if err != nil {
-			return nil, nil, fmt.Errorf("building tracer: %w", err)
+			return nil, nil, nil, fmt.Errorf("building tracer: %w", err)
 		}
 		sink, err = trace.NewLogSink(cfg.Tracing.Sink.Path)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		stages = append(stages, &tracingStage{tracer: tracer})
 	}
-	return stages, sink, nil
+	var engine *policy.Engine
+	if cfg.Pipeline.Stages.Policies {
+		var err error
+		engine, err = policy.New(cfg.Policies, cfg.Provider.Name, logger)
+		if err != nil {
+			if sink != nil {
+				_ = sink.Close()
+			}
+			return nil, nil, nil, fmt.Errorf("building policy engine: %w", err)
+		}
+		if cfg.Policies.Path != "" && !cfg.Pipeline.Stages.Identification {
+			logger.Warn("a policy is configured but identification is off: rules cannot tell agents apart")
+		}
+		stages = append(stages, &policiesStage{engine: engine, logger: logger})
+	}
+	return stages, sink, engine, nil
 }

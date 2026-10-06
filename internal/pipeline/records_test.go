@@ -1011,3 +1011,134 @@ func TestRecords_NilSinkWritesNoRecordsAndStillRelays(t *testing.T) {
 		t.Fatalf("caller got %d with %d bytes, want 200 and the full stream", rec.Code, rec.Body.Len())
 	}
 }
+
+// --- stage detail (specs/0003, as amended by 0004) -----------------------------
+
+// detailStage is a stage that attaches a detail to its decision.
+type detailStage struct {
+	name   string
+	deny   bool
+	detail trace.StageDetail
+}
+
+func (s *detailStage) Name() string { return s.name }
+func (s *detailStage) Request(context.Context, *Call) (Decision, error) {
+	d := Allow()
+	if s.deny {
+		d = Deny(http.StatusForbidden, "request denied by policy", "rules="+strings.Join(s.detail.Rules, ","))
+	}
+	return d.WithDetail(s.detail), nil
+}
+
+func TestRequestRecord_StageDetail(t *testing.T) {
+	tests := []struct {
+		name       string
+		stage      *detailStage
+		wantStatus int
+		wantDec    string
+		wantRules  []any
+	}{
+		{
+			name:       "detail reaches the record on a denial",
+			stage:      &detailStage{name: "policies", deny: true, detail: trace.StageDetail{Revision: "abc123def456", Rules: []string{"a", "b"}}},
+			wantStatus: http.StatusForbidden,
+			wantDec:    "denied",
+			wantRules:  []any{"a", "b"},
+		},
+		{
+			name:       "detail reaches the record on an allow, with empty rules encoded as []",
+			stage:      &detailStage{name: "policies", detail: trace.StageDetail{Revision: "abc123def456", Rules: []string{}}},
+			wantStatus: http.StatusOK,
+			wantDec:    "allowed",
+			wantRules:  []any{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sink := &fakeSink{}
+			p := New(zaptest.NewLogger(t), 1<<20, sink, tt.stage)
+			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+			rec := doRequest(t, p, next, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}")))
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+
+			stages := stagesOf(t, sink.one(t, "request"))
+			if len(stages) != 1 {
+				t.Fatalf("%d stage entries, want 1", len(stages))
+			}
+			st := stages[0]
+			if st["decision"] != tt.wantDec {
+				t.Fatalf("decision = %v, want %s", st["decision"], tt.wantDec)
+			}
+			detail, ok := st["detail"].(map[string]any)
+			if !ok {
+				t.Fatalf("detail = %#v, want an object", st["detail"])
+			}
+			if detail["revision"] != "abc123def456" {
+				t.Fatalf("detail.revision = %v, want abc123def456", detail["revision"])
+			}
+			rules, ok := detail["rules"].([]any)
+			if !ok {
+				t.Fatalf("detail.rules = %#v, want an array (never null)", detail["rules"])
+			}
+			if len(rules) != len(tt.wantRules) {
+				t.Fatalf("detail.rules = %v, want %v", rules, tt.wantRules)
+			}
+			for i := range rules {
+				if rules[i] != tt.wantRules[i] {
+					t.Fatalf("detail.rules = %v, want %v", rules, tt.wantRules)
+				}
+			}
+		})
+	}
+}
+
+func TestRequestRecord_StageWithoutDetailEncodesNull(t *testing.T) {
+	sink := &fakeSink{}
+	p := New(zaptest.NewLogger(t), 1<<20, sink, allowStage("identification", nil), &detailStage{name: "policies", detail: trace.StageDetail{Revision: "r", Rules: []string{}}}, denyStage("later", http.StatusForbidden, "no", "no", nil))
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {})
+	doRequest(t, p, next, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}")))
+
+	stages := stagesOf(t, sink.one(t, "request"))
+	if len(stages) != 3 {
+		t.Fatalf("%d stage entries, want 3", len(stages))
+	}
+	for _, i := range []int{0, 2} {
+		v, present := stages[i]["detail"]
+		if !present || v != nil {
+			t.Fatalf("stage %v: detail = %#v (present=%v), want an explicit null", stages[i]["name"], v, present)
+		}
+	}
+	if stages[1]["detail"] == nil {
+		t.Fatal("the stage that attached a detail lost it")
+	}
+}
+
+func TestRequestRecord_NotRunStageHasNullDetail(t *testing.T) {
+	sink := &fakeSink{}
+	p := New(zaptest.NewLogger(t), 1<<20, sink, denyStage("identification", http.StatusUnauthorized, "no", "no", nil), &detailStage{name: "policies", detail: trace.StageDetail{Revision: "r"}})
+	doRequest(t, p, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}")))
+
+	stages := stagesOf(t, sink.one(t, "request"))
+	if stages[1]["decision"] != "not_run" {
+		t.Fatalf("policies decision = %v, want not_run", stages[1]["decision"])
+	}
+	if v, present := stages[1]["detail"]; !present || v != nil {
+		t.Fatalf("not_run stage detail = %#v (present=%v), want an explicit null", v, present)
+	}
+}
+
+func TestDecision_WithDetailStillDeniesAndStillAllows(t *testing.T) {
+	var nextCalled atomic.Bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { nextCalled.Store(true) })
+
+	p := New(zaptest.NewLogger(t), 1<<20, nil, &detailStage{name: "policies", deny: true, detail: trace.StageDetail{Revision: "r", Rules: []string{"x"}}})
+	if rec := doRequest(t, p, next, httptest.NewRequest(http.MethodPost, "/", nil)); rec.Code != http.StatusForbidden || nextCalled.Load() {
+		t.Fatalf("a denial with detail: status=%d forwarded=%v, want 403 and not forwarded", rec.Code, nextCalled.Load())
+	}
+	p = New(zaptest.NewLogger(t), 1<<20, nil, &detailStage{name: "policies", detail: trace.StageDetail{Revision: "r", Rules: []string{}}})
+	if rec := doRequest(t, p, next, httptest.NewRequest(http.MethodPost, "/", nil)); rec.Code != http.StatusOK || !nextCalled.Load() {
+		t.Fatalf("an allow with detail: status=%d forwarded=%v, want 200 and forwarded", rec.Code, nextCalled.Load())
+	}
+}
