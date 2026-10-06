@@ -197,7 +197,10 @@ into this file, so it happens once instead of once per stage.
 ```
 
 A stage failure (error or recovered panic) uses `type:
-"agentkeeper_unavailable"` with status 503 instead. Both cases set
+"agentkeeper_unavailable"` with status 503 instead. A deliberate denial
+(`agentkeeper_denied`) also sets `X-Should-Retry: false`, the header the
+Anthropic and OpenAI SDKs honor to skip their automatic retry (functional
+rules 7 and 9); a failure sets none, so SDK defaults apply. Both cases set
 `Content-Type: application/json` and `X-Agentkeeper-Request-Id:
 <Call.ID>`; `Denial.Reason` never appears in the body.
 
@@ -311,6 +314,9 @@ allow / deny / error / panic / observer variants):
 - Denial rendering: correct status, JSON shape, `X-Agentkeeper-Request-Id`
   header, and an explicit assertion that `Denial.Reason` never appears in
   the body.
+- Do-not-retry signal: a denial (including the pipeline's own 413 and 400)
+  carries `X-Should-Retry: false`; a stage failure carries no
+  `X-Should-Retry` header.
 - Request IDs: generated, unique per call, and an inbound
   `X-Agentkeeper-Request-Id` is neither honored nor echoed back.
 - Body handling: read once; `r.Body` is still fully and identically

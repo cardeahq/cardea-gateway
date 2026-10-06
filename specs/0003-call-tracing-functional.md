@@ -28,7 +28,7 @@ with every call, each agent in its own place: a header, a field of the
 request body, a standard tracing header. Agentkeeper ignores it today.
 
 This feature observes and records. Deciding whether a tool call may run
-is a separate governance step with its own spec.
+is a separate governance step with its own spec (specs/0004).
 
 ## Goals
 
@@ -440,8 +440,8 @@ request, before it is forwarded or refused (rule 5).
     "reason": null
   },
   "stages": [
-    { "name": "identification", "started_at": "2026-09-27T14:03:11.402200Z", "duration_us": 41, "decision": "allowed" },
-    { "name": "tracing", "started_at": "2026-09-27T14:03:11.402245Z", "duration_us": 388, "decision": "allowed" }
+    { "name": "identification", "started_at": "2026-09-27T14:03:11.402200Z", "duration_us": 41, "decision": "allowed", "detail": null },
+    { "name": "tracing", "started_at": "2026-09-27T14:03:11.402245Z", "duration_us": 388, "decision": "allowed", "detail": null }
   ],
   "tool_results": [
     {
@@ -477,7 +477,9 @@ Field meanings, where the example does not make them obvious:
   reason, which appears here and never in a response. For `forwarded`,
   all three are `null`: the response record says how it went.
 - `stages[].decision` — `allowed`, `denied`, `failed` or `not_run`
-  (rule 12). `not_run` stages have `null` timings.
+  (rule 12). `not_run` stages have `null` timings. `stages[].detail` is
+  `null` except for policies (specs/0004), which puts the policy revision
+  and the identifiers of the rules that fired there.
 - `tool_results[]` — the new tool results of this request (rule 10).
   `tool_call_id` is the identifier of the tool call each one answers, as
   the agent sent it; the record says nothing about whether that tool
@@ -779,10 +781,10 @@ It changes two things 0001 fixes, and 0001 is amended with it:
 
 ## Open questions
 
-- How the tool-call decision spec (possibly OPA) plugs in. Responses are
-  always accepted, so it cannot hold or deny a tool call in the response
-  that carries it; it has to act elsewhere — for example on the request
-  that carries the tool's result. Decided by that spec.
+- ~~How the tool-call decision spec (possibly OPA) plugs in.~~ Settled by
+  specs/0004: policies decide on requests only — including the tool calls
+  and tool results the conversation already carries. Responses stay
+  always accepted.
 - Whether a later policy needs links at request time — for example,
   denying a tool result agentkeeper never relayed, or capping the tool
   calls of one task. That would bring back state between calls, and
