@@ -44,7 +44,7 @@ func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, 
 		}
 	}
 	for _, r := range results {
-		st := trace.RequestStage{Name: r.name, Decision: r.decision}
+		st := trace.RequestStage{Name: r.name, Decision: r.decision, Detail: r.detail}
 		if r.decision != "not_run" {
 			ts := trace.Timestamp(r.started)
 			us := r.duration.Microseconds()

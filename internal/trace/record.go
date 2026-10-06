@@ -84,10 +84,18 @@ type ResponseOutcome struct {
 // Decision is one of "allowed", "denied", "failed", "not_run"; timings
 // are nil for "not_run".
 type RequestStage struct {
-	Name       string     `json:"name"`
-	StartedAt  *Timestamp `json:"started_at"`
-	DurationUS *int64     `json:"duration_us"`
-	Decision   string     `json:"decision"`
+	Name       string       `json:"name"`
+	StartedAt  *Timestamp   `json:"started_at"`
+	DurationUS *int64       `json:"duration_us"`
+	Decision   string       `json:"decision"`
+	Detail     *StageDetail `json:"detail"` // nil encodes null: the stage reported none
+}
+
+// StageDetail is what a stage reports about its own decision. Rules is
+// never nil when set, so it encodes as [].
+type StageDetail struct {
+	Revision string   `json:"revision"`
+	Rules    []string `json:"rules"`
 }
 
 // Observation is one of "completed", "failed".

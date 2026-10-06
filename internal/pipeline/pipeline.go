@@ -75,6 +75,7 @@ type Decision struct {
 	agentID string
 	trace   *trace.RequestInfo
 	tap     *trace.ResponseTap
+	detail  *trace.StageDetail
 }
 
 func Allow() Decision {
@@ -83,6 +84,13 @@ func Allow() Decision {
 
 func Deny(status int, message, reason string) Decision {
 	return Decision{status: status, message: message, reason: reason}
+}
+
+// WithDetail returns d with detail attached; it is carried to the stage's
+// entry in the request record, for allows and denies alike.
+func (d Decision) WithDetail(detail trace.StageDetail) Decision {
+	d.detail = &detail
+	return d
 }
 
 // AllowAs allows the call and attaches agentID as its identity. A later
@@ -131,6 +139,7 @@ type stageResult struct {
 	started  time.Time
 	duration time.Duration
 	decision string
+	detail   *trace.StageDetail
 }
 
 // observation is one stage's observation of the response, kept for the
@@ -201,21 +210,27 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 				}
 				if !decision.allow {
 					res.decision = "denied"
+					res.detail = decision.detail
 					results = append(results, res)
 					status := decision.status
 					if status == 0 {
 						status = http.StatusInternalServerError
 					}
 					denial = &Denial{Stage: s.Name(), Status: status, Message: decision.message, Reason: decision.reason}
-					p.logger.Warn("call denied",
+					fields := []zap.Field{
 						zap.String("stage", s.Name()),
 						zap.String("request_id", c.ID),
 						zap.Int("status", status),
 						zap.String("reason", decision.reason),
-					)
+					}
+					if c.AgentID != "" {
+						fields = append(fields, zap.String("agent_id", c.AgentID))
+					}
+					p.logger.Warn("call denied", fields...)
 					break
 				}
 				res.decision = "allowed"
+				res.detail = decision.detail
 				results = append(results, res)
 				if decision.agentID != "" && c.AgentID == "" {
 					c.AgentID = decision.agentID

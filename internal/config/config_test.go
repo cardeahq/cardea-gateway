@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func writeConfigFile(t *testing.T, contents string) string {
@@ -351,5 +352,140 @@ func TestLoad_TracingRejections(t *testing.T) {
 				t.Fatalf("Load = nil error, want an error; Tracing = %+v", cfg.Tracing)
 			}
 		})
+	}
+}
+
+// --- policies (specs/0004) -----------------------------------------------------
+
+func TestLoad_PoliciesDefaults(t *testing.T) {
+	cfg, err := Load(writeConfigFile(t, ""))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Pipeline.Stages.Policies {
+		t.Fatal("Pipeline.Stages.Policies = false, want true: every stage boolean defaults to true (an unregistered key would silently pull the stage out of the path)")
+	}
+	p := cfg.Policies
+	if p.Path != "" {
+		t.Fatalf("Policies.Path = %q, want empty (no policy)", p.Path)
+	}
+	if len(p.Data) != 0 {
+		t.Fatalf("Policies.Data = %v, want empty", p.Data)
+	}
+	if p.Watch {
+		t.Fatal("Policies.Watch = true, want false")
+	}
+	if p.WatchSettle != 500*time.Millisecond {
+		t.Fatalf("Policies.WatchSettle = %v, want 500ms", p.WatchSettle)
+	}
+	if p.EvalTimeout != 100*time.Millisecond {
+		t.Fatalf("Policies.EvalTimeout = %v, want 100ms", p.EvalTimeout)
+	}
+}
+
+func TestDefaults_Policies(t *testing.T) {
+	d := defaults()
+	if !d.Pipeline.Stages.Policies {
+		t.Fatal("defaults().Pipeline.Stages.Policies = false, want true")
+	}
+	if d.Policies.WatchSettle != 500*time.Millisecond || d.Policies.EvalTimeout != 100*time.Millisecond {
+		t.Fatalf("defaults().Policies = %+v, want 500ms settle and 100ms eval timeout", d.Policies)
+	}
+}
+
+func TestLoad_PoliciesFromFile(t *testing.T) {
+	path := writeConfigFile(t, `
+pipeline:
+  stages:
+    policies: false
+policies:
+  path: /etc/cardea/policy.rego
+  data: [/etc/cardea/data, /etc/cardea/extra.json]
+  watch: true
+  watch_settle: 2s
+  eval_timeout: 250ms
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Pipeline.Stages.Policies {
+		t.Fatal("Pipeline.Stages.Policies = true, want the explicit false honored")
+	}
+	want := PoliciesConfig{
+		Path:        "/etc/cardea/policy.rego",
+		Data:        []string{"/etc/cardea/data", "/etc/cardea/extra.json"},
+		Watch:       true,
+		WatchSettle: 2 * time.Second,
+		EvalTimeout: 250 * time.Millisecond,
+	}
+	if !reflect.DeepEqual(cfg.Policies, want) {
+		t.Fatalf("Policies = %+v, want %+v", cfg.Policies, want)
+	}
+}
+
+func TestLoad_PoliciesEnvVarOverrides(t *testing.T) {
+	t.Setenv("AGENTKEEPER_PIPELINE_STAGES_POLICIES", "false")
+	t.Setenv("AGENTKEEPER_POLICIES_PATH", "/env/policy.rego")
+	t.Setenv("AGENTKEEPER_POLICIES_DATA", "/env/a.json,/env/b")
+	t.Setenv("AGENTKEEPER_POLICIES_WATCH", "true")
+	t.Setenv("AGENTKEEPER_POLICIES_WATCH_SETTLE", "1s")
+	t.Setenv("AGENTKEEPER_POLICIES_EVAL_TIMEOUT", "30ms")
+
+	cfg, err := Load(writeConfigFile(t, ""))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Pipeline.Stages.Policies {
+		t.Fatal("AGENTKEEPER_PIPELINE_STAGES_POLICIES=false was ignored")
+	}
+	want := PoliciesConfig{
+		Path:        "/env/policy.rego",
+		Data:        []string{"/env/a.json", "/env/b"},
+		Watch:       true,
+		WatchSettle: time.Second,
+		EvalTimeout: 30 * time.Millisecond,
+	}
+	if !reflect.DeepEqual(cfg.Policies, want) {
+		t.Fatalf("Policies = %+v, want %+v", cfg.Policies, want)
+	}
+}
+
+func TestLoad_PoliciesEnvVarOverridesFile(t *testing.T) {
+	path := writeConfigFile(t, "policies:\n  path: /file/policy.rego\n")
+	t.Setenv("AGENTKEEPER_POLICIES_PATH", "/env/policy.rego")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Policies.Path != "/env/policy.rego" {
+		t.Fatalf("Policies.Path = %q, want the env var to win", cfg.Policies.Path)
+	}
+}
+
+func TestLoad_PoliciesRejections(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{"unknown key under policies", "policies:\n  pth: /x.rego\n"},
+		{"eval_timeout zero", "policies:\n  eval_timeout: 0s\n"},
+		{"eval_timeout negative", "policies:\n  eval_timeout: -1s\n"},
+		{"watch_settle zero", "policies:\n  watch_settle: 0s\n"},
+		{"watch_settle negative", "policies:\n  watch_settle: -5ms\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Load(writeConfigFile(t, tt.yaml)); err == nil {
+				t.Fatalf("Load(%q) = nil error, want error", tt.yaml)
+			}
+		})
+	}
+}
+
+func TestLoad_NonexistentPolicyPathIsNotRejectedByLoad(t *testing.T) {
+	// policy.New owns that check, since loading needs the filesystem anyway.
+	if _, err := Load(writeConfigFile(t, "policies:\n  path: /no/such/policy.rego\n")); err != nil {
+		t.Fatalf("Load: %v, want nil: a missing policy file is policy.New's error", err)
 	}
 }

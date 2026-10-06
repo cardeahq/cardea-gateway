@@ -840,3 +840,97 @@ func TestPipeline_AllStagesDisabled_PassesThroughByteIdenticalWithNoStageInvoked
 		t.Fatalf("X-Upstream header = %q, want %q", got, "yes")
 	}
 }
+
+// --- X-Should-Retry (specs/0001, as amended by 0004) ---------------------------
+
+func TestPipeline_ShouldRetryHeader(t *testing.T) {
+	tests := []struct {
+		name       string
+		stage      func() Stage
+		body       io.Reader
+		maxBody    int64
+		wantStatus int
+		wantHeader []string // nil: the header must be absent
+	}{
+		{
+			name: "a deliberate denial says do not retry",
+			stage: func() Stage {
+				return denyStage("policies", http.StatusForbidden, "request denied by policy", "rules=r", nil)
+			},
+			wantStatus: http.StatusForbidden,
+			wantHeader: []string{"false"},
+		},
+		{
+			name: "identification's 401 says do not retry",
+			stage: func() Stage {
+				return denyStage("identification", http.StatusUnauthorized, "unauthorized", "no key", nil)
+			},
+			wantStatus: http.StatusUnauthorized,
+			wantHeader: []string{"false"},
+		},
+		{
+			name:       "the pipeline's own 413 says do not retry",
+			stage:      func() Stage { return allowStage("policies", nil) },
+			body:       strings.NewReader(strings.Repeat("x", 11)),
+			maxBody:    10,
+			wantStatus: http.StatusRequestEntityTooLarge,
+			wantHeader: []string{"false"},
+		},
+		{
+			name:       "the pipeline's own 400 says do not retry",
+			stage:      func() Stage { return allowStage("policies", nil) },
+			body:       errorReader{},
+			wantStatus: http.StatusBadRequest,
+			wantHeader: []string{"false"},
+		},
+		{
+			name:       "a stage failure carries no X-Should-Retry",
+			stage:      func() Stage { return errStage("policies", errors.New("evaluation failed"), nil) },
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name: "a stage panic carries no X-Should-Retry",
+			stage: func() Stage {
+				return &fakeStage{name: "policies", panicRequest: true}
+			},
+			wantStatus: http.StatusServiceUnavailable,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			max := tt.maxBody
+			if max == 0 {
+				max = 1 << 20
+			}
+			p := New(zaptest.NewLogger(t), max, nil, tt.stage())
+			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Fatal("next must not be called")
+			})
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", tt.body)
+			rec := doRequest(t, p, next, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			got, present := rec.Header()["X-Should-Retry"]
+			if tt.wantHeader == nil {
+				if present {
+					t.Fatalf("X-Should-Retry = %v, want the header absent on a failure", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0] != tt.wantHeader[0] {
+				t.Fatalf("X-Should-Retry = %v, want %v", got, tt.wantHeader)
+			}
+		})
+	}
+}
+
+func TestPipeline_AllowedCallHasNoShouldRetryHeaderFromTheGateway(t *testing.T) {
+	p := New(zaptest.NewLogger(t), 1<<20, nil, allowStage("policies", nil))
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	rec := doRequest(t, p, next, httptest.NewRequest(http.MethodPost, "/v1/messages", nil))
+	if v, ok := rec.Header()["X-Should-Retry"]; ok {
+		t.Fatalf("X-Should-Retry = %v on a forwarded call, want none: the provider's headers are relayed untouched", v)
+	}
+}

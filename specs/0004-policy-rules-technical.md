@@ -257,7 +257,12 @@ type snapshot struct {
    }
    done := make(chan outcome, 1) // buffered: an abandoned goroutine can still send and exit
    go func() {
-   	rs, err := snap.query.Eval(ctx, rego.EvalInput(input))
+   	defer func() {
+   		if recover() != nil { // never log the panic value: it can hold input
+   			done <- outcome{err: errEvalPanic}
+   		}
+   	}()
+   	rs, err := e.eval(ctx, snap.query, input) // snap.query.Eval, via a test seam
    	done <- outcome{rs, err}
    }()
    select {
@@ -269,6 +274,12 @@ type snapshot struct {
    	// deadline: kind "timeout"; the caller's own cancellation: kind "internal"
    }
    ```
+
+   `e.eval` is an unexported field defaulting to `PreparedEvalQuery.Eval`;
+   tests replace it to inject a panic, a block or an error. A recovered
+   panic is kind `"internal"` (never the panic value, which can contain
+   request data), and the abandoned counter still falls back because the
+   goroutine ends through the same path.
 
    `cancel` runs as soon as `Evaluate` returns, so OPA stops the abandoned
    evaluation at its next step; only a single built-in call that is already
@@ -491,6 +502,11 @@ protection is unchanged.
 `records.go`: `buildRequestRecord` copies `r.detail` into
 `RequestStage.Detail`.
 
+`pipeline.go`: the `call denied` warning gains an `agent_id` field when
+`c.AgentID != ""` (functional *What the operator sees*: the denial line
+names the agent when identified). It never carries the credential, only the
+registered id identification resolved.
+
 `errors.go`: `writeDenial` sets `X-Should-Retry: false` when `unavailable`
 is false, and no `X-Should-Retry` header when it is true. This covers every
 deliberate denial, including identification's 401 and the pipeline's own
@@ -585,7 +601,7 @@ gets the `policies` block above and `policies: true` under
 | OPA returns an error, or the result is not a set of strings | `*EvalError{internal}` or `{malformed_decision}`; same handling |
 | `messages` or `count_tokens` body is not valid JSON, repeats a key in any object, or `messages` is not an array | `*EvalError{input}`; same handling |
 | A rule id does not match the id pattern | Denied anyway; that id is replaced by `invalid-rule-id` |
-| Evaluation panics | Recovered by the pipeline (specs/0001) into the same 503 |
+| Evaluation panics | Recovered in the evaluation goroutine itself, into `*EvalError{internal}` and the same 503. The pipeline's own recover covers only the stage's goroutine, and an unrecovered panic in another goroutine ends the process |
 | `SIGHUP` with no policy configured | Logged at info; nothing changes |
 | `fsnotify` cannot watch a path | `Watch` returns an error; logged at error; the Gateway keeps serving, and signal reload still works |
 
@@ -631,6 +647,12 @@ reference policy text only. `print` is disabled, and `http.send`,
   reserved key `cardea`; package-name typo and a file with no `deny` rejected, naming the file; data
   directory with `_test`-style or unrelated files ignored; revision stable
   across data directory order and changes with a one-byte edit.
+- **Panic.** With `e.eval` replaced by a function that panics (with a
+  marker string in the panic value): `Evaluate` returns
+  `*EvalError{internal}`, the process survives, the marker appears in no
+  error text or log, the next `Evaluate` succeeds, and the abandoned count
+  is unchanged. Also a panic after the deadline (abandoned goroutine) does
+  not crash the test binary and the count falls back.
 - **Failure.** Timeout with a deliberately expensive rule and a 1 ms limit
   gives `timeout`; a rule that blocks inside a built-in (a test hook
   built-in, or a very large regex input) still returns `timeout` at about

@@ -27,6 +27,9 @@ func writeDenial(w http.ResponseWriter, requestID string, d *Denial, unavailable
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Agentkeeper-Request-Id", requestID)
+	if !unavailable {
+		w.Header().Set("X-Should-Retry", "false")
+	}
 	w.WriteHeader(d.Status)
 	_ = json.NewEncoder(w).Encode(env)
 }

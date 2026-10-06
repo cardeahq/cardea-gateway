@@ -17,6 +17,7 @@ Module: `github.com/agentkeeper/agentkeeper`. Requires Go 1.26+.
 make build   # build bin/agentkeeper, with version info injected via -ldflags
 make run     # go run ./cmd/agentkeeper
 make test    # go test ./...
+make test-race # go test -race for internal/policy and internal/gateway (slow, ~2 min)
 make lint    # golangci-lint run ./...
 make fmt     # gofmt -l -w .
 make tidy    # go mod tidy
@@ -66,6 +67,12 @@ Run the gateway directly: `go run ./cmd/agentkeeper serve [--config path.yaml]`.
   one implemented so far. Future provider *switching* (as opposed to
   fixed per-deployment config) is expected to be rule-driven, not
   caller-driven.
+
+- `internal/pipeline` — runs each proxied call through the fixed stage order
+  (identification, tracing, policies); each stage is enabled by
+  `pipeline.stages.<name>`. `internal/policy` owns embedded OPA, the Rego
+  policy and data files and the input document; `internal/gateway/policies.go`
+  adapts it to a stage. `SIGHUP` (or `policies.watch`) reloads the policy.
 
 Data flow for `agentkeeper serve`: `cli.serve` loads `config.Config` →
 builds a `zap.Logger` from it → builds the configured `provider.Provider`

@@ -339,7 +339,7 @@ func loopResponder(w http.ResponseWriter, body []byte) {
 
 func TestBuildStages_TracingFollowsIdentification(t *testing.T) {
 	cfg := withAgents(t, tracingGatewayConfig(t, "http://127.0.0.1:1"))
-	stages, sink, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestBuildStages_TracingOffGivesNoSinkAndNoRecords(t *testing.T) {
 	cfg := tracingGatewayConfig(t, url)
 	cfg.Pipeline.Stages.Tracing = false
 
-	stages, sink, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
