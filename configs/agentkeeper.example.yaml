@@ -63,8 +63,22 @@ tracing:
   # Past it, the tool call (or response) is recorded as unread.
   max_read_bytes: 16777216 # 16 MiB
   sink:
-    type: logging # the only sink in this version
+    type: logging # logging | cardea | logging+cardea
     path: "" # "" = stdout (application logs go to stderr); otherwise a file agentkeeper appends to
+    # Read only when type includes cardea. The API key is never written
+    # here: api_key_env names the env var that holds it. The key alone
+    # identifies your organization. A sink failure is logged and never
+    # denies a call.
+    cardea:
+      endpoint: "" # required: full URL; https, or http on localhost
+      api_key_env: "" # required: name of the env var holding the API key
+      queue_size: 10000 # records held; when full, new records are dropped
+      queue_max_bytes: 67108864 # 64 MiB
+      batch_max_records: 500
+      batch_max_bytes: 1048576
+      batch_max_delay: 1s
+      request_timeout: 10s
+      shutdown_timeout: 10s # time to deliver held records on exit; 0 skips
   # Where each agent carries its own session identifier, tried in order.
   # A source is one of header, body_field (dot-separated path into the
   # JSON body) or baggage (a key of the W3C baggage header), with an

@@ -250,17 +250,8 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 		if p.sink != nil {
 			rec := buildRequestRecord(c, results, denial, stageErr != nil, bodyRead)
 			if err := p.sink.Write(rec); err != nil {
-				p.logger.Error("trace sink refused the request record",
+				p.logger.Error("trace sink did not accept the request record; the record is lost",
 					zap.String("call_id", c.ID), zap.String("stage", "tracing"), zap.String("record", "request"), zap.Error(err))
-				if denial == nil {
-					stageErr = err
-					denial = &Denial{
-						Stage:   "tracing",
-						Status:  http.StatusServiceUnavailable,
-						Message: "governance unavailable",
-						Reason:  "trace sink: " + err.Error(),
-					}
-				}
 			}
 		}
 
@@ -314,7 +305,7 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 			}
 			resp := buildResponseRecord(c, rec, info, observations, forwardedAt, ended)
 			if err := p.sink.Write(resp); err != nil {
-				p.logger.Error("trace sink refused the response record; the record is lost",
+				p.logger.Error("trace sink did not accept the response record; the record is lost",
 					zap.String("call_id", c.ID), zap.String("stage", "tracing"), zap.String("record", "response"), zap.Error(err))
 			}
 		} else if rec != nil {

@@ -718,8 +718,61 @@ func TestRecords_ObserverPanicIsObservationFailedAndStillDelivered(t *testing.T)
 
 // --- Sink failures -------------------------------------------------------------------------
 
-func TestRecords_SinkRefusingRequestRecordDeniesAndRecovers(t *testing.T) {
+// errorEntryFor returns the error-level entry whose call_id field is callID
+// and whose record field is recordType, if any (specs/0005 keeps these two
+// fields on the pipeline's "record lost" line).
+func errorEntryFor(logs *observer.ObservedLogs, callID, recordType string) (observer.LoggedEntry, bool) {
+	for _, e := range logs.FilterLevelExact(zapcore.ErrorLevel).All() {
+		ctx := e.ContextMap()
+		if fmt.Sprint(ctx["call_id"]) == callID && fmt.Sprint(ctx["record"]) == recordType {
+			return e, true
+		}
+	}
+	return observer.LoggedEntry{}, false
+}
+
+// Amended by 0005: a sink that refuses the request record no longer denies
+// the call.
+func TestRecords_SinkRefusingRequestRecordDoesNotDenyTheCall(t *testing.T) {
 	logger, logs := observedLogger()
+	sink := &fakeSink{fail: func(string) error { return errSinkDown }}
+	p := New(logger, 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	var upstreamCalls atomic.Int32
+	events := toolStream()
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		sseUpstream(events).ServeHTTP(w, r)
+	})
+
+	rec := doRequest(t, p, next, postBody(streamedBody))
+	if upstreamCalls.Load() != 1 {
+		t.Fatalf("upstream was called %d times, want 1: a sink failure must not stop the call", upstreamCalls.Load())
+	}
+	if rec.Code != http.StatusOK || rec.Body.String() != strings.Join(events, "") {
+		t.Fatalf("caller got %d with %d bytes, want 200 and the provider's full response", rec.Code, rec.Body.Len())
+	}
+	// The sink refuses every record, so the call id comes from the error line
+	// itself: exactly one error-level line names the lost request record.
+	var e observer.LoggedEntry
+	found := 0
+	for _, entry := range logs.FilterLevelExact(zapcore.ErrorLevel).All() {
+		if fmt.Sprint(entry.ContextMap()["record"]) == "request" {
+			e, found = entry, found+1
+		}
+	}
+	if found != 1 {
+		t.Fatalf("%d error-level lines name the lost request record, want 1: %v", found, logs.All())
+	}
+	if id := fmt.Sprint(e.ContextMap()["call_id"]); id == "" || id == "<nil>" {
+		t.Fatalf("error line carries no call_id: %v", e.ContextMap())
+	}
+	if !strings.Contains(fmt.Sprint(e.ContextMap()["error"]), errSinkDown.Error()) {
+		t.Fatalf("error line does not carry the sink's error in its error field: %v", e.ContextMap())
+	}
+}
+
+func TestRecords_SinkThatKeepsRefusingNeverDeniesAnyCall(t *testing.T) {
+	logger, _ := observedLogger()
 	sink := &fakeSink{fail: func(string) error { return errSinkDown }}
 	p := New(logger, 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	var upstreamCalls atomic.Int32
@@ -727,31 +780,67 @@ func TestRecords_SinkRefusingRequestRecordDeniesAndRecovers(t *testing.T) {
 		upstreamCalls.Add(1)
 		sseUpstream(toolStream()).ServeHTTP(w, r)
 	})
+	for i := range 3 {
+		if rec := doRequest(t, p, next, postBody(streamedBody)); rec.Code != http.StatusOK {
+			t.Fatalf("call %d: status = %d, want 200 while the sink refuses every record", i+1, rec.Code)
+		}
+	}
+	if upstreamCalls.Load() != 3 {
+		t.Fatalf("upstream calls = %d, want 3", upstreamCalls.Load())
+	}
+}
+
+func TestRecords_SinkThatRecoversRecordsTheNextCall(t *testing.T) {
+	logger, _ := observedLogger()
+	sink := &fakeSink{fail: func(string) error { return errSinkDown }}
+	p := New(logger, 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	next := sseUpstream(toolStream())
+
+	if rec := doRequest(t, p, next, postBody(streamedBody)); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	sink.setFail(nil)
+	if rec := doRequest(t, p, next, postBody(streamedBody)); rec.Code != http.StatusOK {
+		t.Fatalf("after the sink recovered: status %d, want 200", rec.Code)
+	}
+	sink.one(t, "request")
+	sink.one(t, "response")
+}
+
+func TestRecords_SinkRefusingOnlyTheRequestRecordStillGetsTheResponseRecord(t *testing.T) {
+	logger, _ := observedLogger()
+	sink := &fakeSink{fail: func(kind string) error {
+		if kind == "request" {
+			return errSinkDown
+		}
+		return nil
+	}}
+	p := New(logger, 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	rec := doRequest(t, p, sseUpstream(toolStream()), postBody(streamedBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	sink.one(t, "response")
+	if n := len(sink.byType("request")); n != 0 {
+		t.Fatalf("sink holds %d request records, want none: it refused them", n)
+	}
+}
+
+func TestRecords_TracingStageErrorStillDeniesEvenWhenTheSinkAlsoFails(t *testing.T) {
+	logger, _ := observedLogger()
+	sink := &fakeSink{fail: func(string) error { return errSinkDown }}
+	p := New(logger, 1<<20, sink, errStage("tracing", errors.New("unreadable tool_result"), nil))
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("upstream must not be called") })
 
 	rec := doRequest(t, p, next, postBody(streamedBody))
-	if upstreamCalls.Load() != 0 {
-		t.Fatal("upstream was called although the request record could not be written")
-	}
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", rec.Code)
+		t.Fatalf("status = %d, want 503: a failure of tracing itself still denies the call", rec.Code)
 	}
 	var env errorEnvelope
 	_ = json.Unmarshal(rec.Body.Bytes(), &env)
 	if env.Error.Type != "agentkeeper_unavailable" || env.Error.Stage != "tracing" || env.Error.Message != "governance unavailable" {
 		t.Fatalf("error = %+v, want agentkeeper_unavailable / tracing / governance unavailable", env.Error)
 	}
-	callID := rec.Header().Get("X-Agentkeeper-Request-Id")
-	if !errorLogNames(logs, callID) {
-		t.Fatalf("no error-level log names call %s: %v", callID, logs.All())
-	}
-
-	sink.setFail(nil)
-	rec2 := doRequest(t, p, next, postBody(streamedBody))
-	if rec2.Code != http.StatusOK || upstreamCalls.Load() != 1 {
-		t.Fatalf("after the sink recovered: status %d, upstream calls %d; want 200 and 1", rec2.Code, upstreamCalls.Load())
-	}
-	sink.one(t, "request")
-	sink.one(t, "response")
 }
 
 func TestRecords_SinkRefusingRequestRecordOfARefusedCallKeepsTheRefusal(t *testing.T) {
@@ -774,7 +863,7 @@ func TestRecords_SinkRefusingRequestRecordOfARefusedCallKeepsTheRefusal(t *testi
 	}
 }
 
-func TestRecords_SinkRefusingResponseRecordLogsItAndNextCallIsDenied(t *testing.T) {
+func TestRecords_SinkRefusingResponseRecordLogsItAndNextCallIsProxiedNormally(t *testing.T) {
 	logger, logs := observedLogger()
 	sink := &fakeSink{}
 	// Accept the first request record, then stop accepting anything.
@@ -786,20 +875,27 @@ func TestRecords_SinkRefusingResponseRecordLogsItAndNextCallIsDenied(t *testing.
 	}
 	p := New(logger, 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	events := toolStream()
-	upstream := sseUpstream(events)
+	var upstreamCalls atomic.Int32
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		sseUpstream(events).ServeHTTP(w, r)
+	})
 
 	rec := doRequest(t, p, upstream, postBody(streamedBody))
 	if rec.Code != http.StatusOK || rec.Body.String() != strings.Join(events, "") {
 		t.Fatalf("caller got %d with %d bytes, want 200 and the full response", rec.Code, rec.Body.Len())
 	}
 	callID, _ := sink.one(t, "request")["call_id"].(string)
-	if !errorLogNames(logs, callID) {
-		t.Fatalf("lost response record for %s is not named in an error-level log: %v", callID, logs.All())
+	if _, ok := errorEntryFor(logs, callID, "response"); !ok {
+		t.Fatalf("lost response record for %s is not named in an error-level line (call_id, record): %v", callID, logs.All())
 	}
 
 	rec2 := doRequest(t, p, upstream, postBody(streamedBody))
-	if rec2.Code != http.StatusServiceUnavailable {
-		t.Fatalf("next call status = %d, want 503 while the sink refuses records", rec2.Code)
+	if rec2.Code != http.StatusOK || rec2.Body.String() != strings.Join(events, "") {
+		t.Fatalf("next call: status %d, %d bytes, want 200 and the full response while the sink refuses records", rec2.Code, rec2.Body.Len())
+	}
+	if upstreamCalls.Load() != 2 {
+		t.Fatalf("upstream calls = %d, want 2", upstreamCalls.Load())
 	}
 }
 

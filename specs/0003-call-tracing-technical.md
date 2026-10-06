@@ -40,8 +40,9 @@ Anthropic wire format, sessions, fingerprints and the sink in a new
 - Every call gets a request record, and every forwarded call a response
   record, emitted from one place in `pipeline.Handler`, so no path can
   skip either.
-- The request record reaches the sink before `next.ServeHTTP` runs; a
-  sink failure denies the call (rule 5, *Failure behavior*).
+- The request record reaches the sink before `next.ServeHTTP` runs (rule
+  5). A sink failure is logged and never denies the call (*Failure
+  behavior*, amended by specs/0005).
 - Tool calls are read from the relayed stream as it passes, with no size
   cap and no change to what the agent receives (rules 3, 9).
 - No state survives a call (rule 1): every per-call value lives on the
@@ -94,11 +95,11 @@ same shape as `identityStage`.
    `AllowAs`'s agent ID.
 3. **If a sink is set, build the request record and hand it to the
    sink.** The record's `duration_us` runs from `Received` to this moment.
-   If the sink returns an error and the call was allowed, the call is now
-   failed: `Denial{Stage: "tracing", Status: 503, Message: "governance
-   unavailable", Reason: "trace sink: <err>"}`, logged at error level. If
-   the call was already refused, the refusal stands and the sink error is
-   only logged.
+   *Amended by specs/0005:* if the sink returns an error it is logged at
+   error level with `call_id` and the record type, and **nothing else
+   happens**: the call proceeds as if the sink had accepted the record,
+   whether it was allowed or already refused. (0003 originally failed an
+   allowed call with a 503 `tracing` denial here.)
 4. Dispatch. If allowed, stamp `forwardedAt`, then run `next` with the
    `bodyRecorder`, which **also feeds the tap**. Otherwise write the
    denial (unchanged).
@@ -590,9 +591,8 @@ func New(logger *zap.Logger, maxBodyBytes int64, sink trace.Sink, stages ...Stag
   encode `"detail": null`.
 - Outcome mapping for the request record:
   - `forwarded`: no denial.
-  - `failed`: a stage error or panic, or a request record the sink
-    refused (in the latter case the record never reaches the sink, but
-    the mapping is the same).
+  - `failed`: a stage error or panic. (A sink refusing the record no
+    longer produces `failed`; specs/0005 amended this.)
   - `denied`: every other denial, including the pipeline's own 400 and
     413.
 - Response record `stages[]` lists the tracing entry (the stage whose
@@ -787,8 +787,7 @@ startup: an operator who set one meant to use it.
 | --- | --- |
 | `tool_result` block in the last message unreadable | `Tracer.Request` errors; 503 `agentkeeper_unavailable`, stage `tracing`; request record `outcome.result: failed`; provider never called |
 | `tracingStage.Request` panics | Recovered by the pipeline (0001); same as above |
-| Sink refuses the request record, call allowed | 503 `agentkeeper_unavailable`, stage `tracing`; error log with `call_id`; provider never called |
-| Sink refuses the request record, call already refused | The refusal stands; error log with `call_id` |
+| Sink refuses the request record *(amended by 0005)* | Error log with `call_id`; the record is lost; the call proceeds (an allowed call is forwarded, a refused one stays refused). Originally a 503 denial |
 | Tap panics while handling an event | Relay unaffected; that event's tool call `recorded: false`; parsing continues with the next event; tracing `observation: failed`; error log with `call_id` |
 | Tap panics outside event handling | Relay unaffected; tap not called again; open tool calls `recorded: false`; later events not read; tracing `observation: failed`; error log |
 | gzip parser goroutine panics | Recovered in the goroutine; pipe drained so the relay never blocks; tracing `observation: failed`; error log |
@@ -797,7 +796,7 @@ startup: an operator who set one meant to use it.
 | Non-streamed body over `max_read_bytes` | No tool calls read; finding `tool_calls_unread`; tracing `observation: completed`; no error log |
 | Response encoding other than identity/gzip | No tool calls read; tracing `observation: failed`; error log |
 | Observer panics | Recovered (0001); that stage `observation: failed` |
-| Sink refuses the response record | Error log with `call_id`; the record is lost; the next call's request record hits the same sink |
+| Sink refuses the response record | Error log with `call_id`; the record is lost |
 | Provider unreachable, or agent leaves before the provider answers | 502 to the agent; response record `unanswered` |
 | Agent disconnects mid-stream | Relay stops (as today); tool calls not yet closed are `not_delivered` |
 | Session absent, malformed body, invalid value | No effect on the call; `session.status` is `absent` or `invalid` |
@@ -805,11 +804,13 @@ startup: an operator who set one meant to use it.
 | Fingerprint key shorter than 32 bytes; bad pattern; sink file not openable | `gateway.New` fails; `serve` exits before listening |
 | Unknown sink type; `max_read_bytes <= 0`; sessions entry malformed, duplicated default, unknown or repeated agent; source setting zero or two kinds | `config.Load` fails; `serve` exits before listening |
 
-Requests **fail closed**: a request that cannot be recorded never
-reaches the provider. Responses **never fail**: every response failure
-above leaves the relay byte-identical and shows up only in the record
-and the logs. Both come straight from the functional spec's *Failure
-behavior*.
+Requests **fail closed when tracing itself fails** (an unreadable
+`tool_result`, a panic in the stage): such a request never reaches the
+provider. *Amended by 0005:* a **sink** failure never fails a request: it
+is logged and the record is lost. Responses **never fail**: every response
+failure above leaves the relay byte-identical and shows up only in the
+record and the logs. Both come straight from the functional spec's
+*Failure behavior*.
 
 Nothing logged contains prompt content, argument or result values, a
 session value that failed validation, an API key or an `Authorization`
@@ -905,10 +906,12 @@ records calls and can be told to fail):
   (specs/0004), and a golden request record includes the field. An observer panic
   gives `observation: "failed"` with `delivered` (criterion 28).
 - **Sink failures:**
-  - A failing sink denies with 503 and never calls upstream, and the next
-    call succeeds once the sink recovers (criterion 11).
+  - *(Amended by specs/0005.)* A sink failing on the request record logs
+    an error with the `call_id` and the call is proxied normally; the
+    provider is called and the agent has the response (criterion 11).
   - A sink failing only on the response record logs the `call_id`, and
-    the agent has the full body (criterion 12).
+    the agent has the full body, and the next call is proxied normally
+    (criterion 12).
 - **Streaming unchanged.** The 0001 SSE test, rerun with a tap attached,
   shows byte-identical chunks delivered as produced (criterion 1). A
   panicking tap leaves the relay byte-identical (criterion 26).
