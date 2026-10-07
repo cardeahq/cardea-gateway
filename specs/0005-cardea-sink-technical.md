@@ -409,7 +409,7 @@ tracing:
 | --- | --- | --- | --- |
 | `tracing.sink.type` | string | `logging` | `CARDEA_GATEWAY_TRACING_SINK_TYPE` |
 | `tracing.sink.cardea.endpoint` | string | `""` (required with `cardea`) | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_ENDPOINT` |
-| `tracing.sink.cardea.api_key_env` | string | `""` (required with `cardea`) | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_API_KEY_ENV` |
+| `tracing.sink.cardea.api_key_env` | string | `"CARDEA_API_KEY"` | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_API_KEY_ENV` |
 | `tracing.sink.cardea.queue_size` | int | `10000` | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_QUEUE_SIZE` |
 | `tracing.sink.cardea.queue_max_bytes` | int64 | `67108864` | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_QUEUE_MAX_BYTES` |
 | `tracing.sink.cardea.batch_max_records` | int | `500` | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_BATCH_MAX_RECORDS` |
