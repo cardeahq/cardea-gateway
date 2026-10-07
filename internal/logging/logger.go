@@ -1,4 +1,4 @@
-// Package logging constructs the zap logger used throughout agentkeeper.
+// Package logging constructs the zap logger used throughout the Gateway.
 package logging
 
 import (
@@ -7,7 +7,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 func New(cfg config.LoggingConfig) (*zap.Logger, error) {

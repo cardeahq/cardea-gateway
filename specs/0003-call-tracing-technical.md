@@ -336,7 +336,7 @@ stdout carries only records (acceptance criterion 15).
 
 ### `internal/trace` — new
 
-Package doc: `// Package trace builds agentkeeper's call-trace records
+Package doc: `// Package trace builds the Gateway's call-trace records
 from the requests and responses it relays, and hands them to a sink.`
 
 `record.go`: the v1 schema. Every field is always emitted; pointers and
@@ -344,7 +344,7 @@ from the requests and responses it relays, and hands them to a sink.`
 `[]`.
 
 ```go
-const Schema = "agentkeeper.trace/v1"
+const Schema = "cardea-gateway.trace/v1"
 
 // Record is a RequestRecord or a ResponseRecord.
 type Record interface{ recordType() string }
@@ -742,7 +742,7 @@ tracing:
   max_read_bytes: 16777216 # 16 MiB
   sink:
     type: logging
-    path: "" # "" = stdout; otherwise a file agentkeeper appends to
+    path: "" # "" = stdout; otherwise a file the Gateway appends to
   sessions: []
   # - agents: ["agent-alpha"]
   #   sources:
@@ -756,17 +756,17 @@ tracing:
 
 | Field | Type | Default | Env var |
 | --- | --- | --- | --- |
-| `pipeline.stages.tracing` | bool | `true` | `AGENTKEEPER_PIPELINE_STAGES_TRACING` |
-| `tracing.fingerprint_key_env` | string | `"TRACE_FINGERPRINT_KEY"` | `AGENTKEEPER_TRACING_FINGERPRINT_KEY_ENV` |
-| `tracing.max_read_bytes` | int64 | `16777216` | `AGENTKEEPER_TRACING_MAX_READ_BYTES` |
-| `tracing.sink.type` | string | `"logging"` | `AGENTKEEPER_TRACING_SINK_TYPE` |
-| `tracing.sink.path` | string | `""` | `AGENTKEEPER_TRACING_SINK_PATH` |
+| `pipeline.stages.tracing` | bool | `true` | `CARDEA_GATEWAY_PIPELINE_STAGES_TRACING` |
+| `tracing.fingerprint_key_env` | string | `"TRACE_FINGERPRINT_KEY"` | `CARDEA_GATEWAY_TRACING_FINGERPRINT_KEY_ENV` |
+| `tracing.max_read_bytes` | int64 | `16777216` | `CARDEA_GATEWAY_TRACING_MAX_READ_BYTES` |
+| `tracing.sink.type` | string | `"logging"` | `CARDEA_GATEWAY_TRACING_SINK_TYPE` |
+| `tracing.sink.path` | string | `""` | `CARDEA_GATEWAY_TRACING_SINK_PATH` |
 | `tracing.sessions` | `[]SessionSourceList` | `[]` | not settable via env (list) |
 
 Each scalar needs an entry in `defaults()` and a `SetDefault` in `Load()`.
 `pipeline.stages.tracing` must be registered explicitly, since it
 defaults to `true` (0001's rule). All of it goes into
-`configs/agentkeeper.example.yaml`.
+`configs/cardea-gateway.example.yaml`.
 
 **The fingerprint key is optional.** With `TRACE_FINGERPRINT_KEY` unset,
 a fresh install starts normally, as the functional spec's defaults
@@ -785,7 +785,7 @@ startup: an operator who set one meant to use it.
 
 | Condition | Result |
 | --- | --- |
-| `tool_result` block in the last message unreadable | `Tracer.Request` errors; 503 `agentkeeper_unavailable`, stage `tracing`; request record `outcome.result: failed`; provider never called |
+| `tool_result` block in the last message unreadable | `Tracer.Request` errors; 503 `gateway_unavailable`, stage `tracing`; request record `outcome.result: failed`; provider never called |
 | `tracingStage.Request` panics | Recovered by the pipeline (0001); same as above |
 | Sink refuses the request record *(amended by 0005)* | Error log with `call_id`; the record is lost; the call proceeds (an allowed call is forwarded, a refused one stays refused). Originally a 503 denial |
 | Tap panics while handling an event | Relay unaffected; that event's tool call `recorded: false`; parsing continues with the next event; tracing `observation: failed`; error log with `call_id` |

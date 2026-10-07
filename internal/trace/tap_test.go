@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 // --- Anthropic SSE fixtures ---------------------------------------------------

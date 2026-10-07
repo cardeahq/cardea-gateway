@@ -9,7 +9,7 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 const okRule = `deny contains "r" if { input.model == "m" }`

@@ -43,7 +43,7 @@ in your report.
    - Simplest thing that passes the tests and satisfies the spec. No
      speculative abstractions, no configurability nobody asked for, no
      interface with one implementation "for later."
-   - Business logic under `internal/`; `cmd/agentkeeper` stays thin.
+   - Business logic under `internal/`; `cmd/gateway` stays thin.
    - One package-level doc comment per package. Otherwise no comments
      unless the code would genuinely surprise a reader.
    - Dependencies built inside `RunE`, never package-level singletons.
@@ -52,7 +52,7 @@ in your report.
    than the whole suite each time.
 4. New config fields need all of: the struct field with its `mapstructure`
    tag, a default in `defaults()` **and** a matching `v.SetDefault` in
-   `Load()`, and an entry in `configs/agentkeeper.example.yaml`. The first
+   `Load()`, and an entry in `configs/cardea-gateway.example.yaml`. The first
    two drift apart easily — check both.
 5. Secrets come from config/env and are never logged. Nothing you write
    may log prompt content, API keys, or `Authorization` headers.

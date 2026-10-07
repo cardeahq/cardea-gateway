@@ -1,6 +1,6 @@
-# agentkeeper
+# Cardea Gateway
 
-agentkeeper is an LLM gateway that shields and contains AI usage with
+Cardea Gateway is an LLM gateway that shields and contains AI usage with
 security, privacy, observability, and easy LLM provider switching. It sits
 between applications and LLM providers, enforcing user-defined rules —
 custom circuit breakers, token compaction, and more.
@@ -15,25 +15,25 @@ custom circuit breakers, token compaction, and more.
 make build
 ```
 
-This produces `bin/agentkeeper`.
+This produces `bin/gateway`.
 
 ## Run
 
 ```sh
 make run
 # or
-go run ./cmd/agentkeeper serve
+go run ./cmd/gateway serve
 ```
 
 ## Configuration
 
 Configuration is loaded (in increasing priority) from built-in defaults, a
-YAML config file, and `AGENTKEEPER_`-prefixed environment variables. See
-[`configs/agentkeeper.example.yaml`](configs/agentkeeper.example.yaml) for
+YAML config file, and `CARDEA_GATEWAY_`-prefixed environment variables. See
+[`configs/cardea-gateway.example.yaml`](configs/cardea-gateway.example.yaml) for
 all available keys. Point at a specific file with `--config`:
 
 ```sh
-agentkeeper serve --config ./agentkeeper.yaml
+gateway serve --config ./cardea-gateway.yaml
 ```
 
 ## Development
@@ -179,23 +179,23 @@ update the spec in the same change rather than leaving it stale.
 
 ## Usecases
 
-### Use agentkeeper with opencode
+### Use the Gateway with opencode
 
 [opencode](https://opencode.ai) talks to Anthropic like any other client, so
-pointing it at agentkeeper instead is just a matter of redirecting its
+pointing it at the Gateway instead is just a matter of redirecting its
 Anthropic provider's `baseURL`.
 
-1. Run agentkeeper with a real Anthropic API key in its own environment —
+1. Run the Gateway with a real Anthropic API key in its own environment —
    this key never needs to be shared with opencode or any other caller:
 
    ```sh
-   export ANTHROPIC_API_KEY=sk-ant-...   # in agentkeeper's environment only
-   agentkeeper serve --config ./agentkeeper.yaml
+   export ANTHROPIC_API_KEY=sk-ant-...   # in the Gateway's environment only
+   gateway serve --config ./cardea-gateway.yaml
    ```
 
    Listens on `:8080` by default.
 
-2. Point opencode's Anthropic provider at agentkeeper. Add this to your
+2. Point opencode's Anthropic provider at the Gateway. Add this to your
    project's `opencode.json` (or the global `~/.config/opencode/opencode.json`):
 
    ```json
@@ -212,32 +212,32 @@ Anthropic provider's `baseURL`.
    }
    ```
 
-   The `apiKey` value is a placeholder — agentkeeper strips whatever
+   The `apiKey` value is a placeholder — the Gateway strips whatever
    credential the caller sends and injects the real `ANTHROPIC_API_KEY`
    from its own environment (see `internal/provider/anthropic.go`), so
    opencode never needs a valid Anthropic key of its own.
 
 3. Use opencode normally. Every request it sends now flows through
-   agentkeeper — check the gateway's logs for the `token usage` lines to
+   the Gateway — check the gateway's logs for the `token usage` lines to
    see sent/received token counts per request.
 
-### Use agentkeeper with Claude Code
+### Use the Gateway with Claude Code
 
 Claude Code reads `ANTHROPIC_BASE_URL` at startup and sends every request
 there instead of `api.anthropic.com` — this is the same mechanism it uses
 for any organization-run LLM gateway.
 
-1. Run agentkeeper with a real Anthropic API key in its own environment —
+1. Run the Gateway with a real Anthropic API key in its own environment —
    this key never needs to be shared with Claude Code or any other caller:
 
    ```sh
-   export ANTHROPIC_API_KEY=sk-ant-...   # in agentkeeper's environment only
-   agentkeeper serve --config ./agentkeeper.yaml
+   export ANTHROPIC_API_KEY=sk-ant-...   # in the Gateway's environment only
+   gateway serve --config ./cardea-gateway.yaml
    ```
 
    Listens on `:8080` by default.
 
-2. Point Claude Code at agentkeeper by setting `ANTHROPIC_BASE_URL` and a
+2. Point Claude Code at the Gateway by setting `ANTHROPIC_BASE_URL` and a
    credential variable in the shell you launch it from:
 
    ```sh
@@ -246,7 +246,7 @@ for any organization-run LLM gateway.
    claude
    ```
 
-   `ANTHROPIC_AUTH_TOKEN` is a placeholder — agentkeeper strips whatever
+   `ANTHROPIC_AUTH_TOKEN` is a placeholder — the Gateway strips whatever
    credential the caller sends and injects the real `ANTHROPIC_API_KEY`
    from its own environment (see `internal/provider/anthropic.go`), so
    Claude Code never needs a valid Anthropic key of its own.
@@ -264,9 +264,9 @@ for any organization-run LLM gateway.
    }
    ```
 
-3. Confirm it's routing through agentkeeper: send Claude Code a message,
+3. Confirm it's routing through the Gateway: send Claude Code a message,
    then run `/status` — the `Anthropic base URL` line should show
-   `http://localhost:8080`. Check agentkeeper's logs for the `token usage`
+   `http://localhost:8080`. Check the Gateway's logs for the `token usage`
    lines to see sent/received token counts per request.
 
 ## License

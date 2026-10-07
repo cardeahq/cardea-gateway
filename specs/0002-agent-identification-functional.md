@@ -50,8 +50,8 @@ quietly-inconsistent behavior the staging pipeline exists to prevent.
 
 ## Users and scenarios
 
-**The operator** runs a fleet of sandboxed agents against agentkeeper.
-They register each one in agentkeeper's config with an `agent_id` and
+**The operator** runs a fleet of sandboxed agents against the Gateway.
+They register each one in the Gateway's config with an `agent_id` and
 either an API key or JWT verification material, then enable the
 identification stage. From that point, every call must carry a credential
 matching one of those entries. A stray or misconfigured agent whose
@@ -61,14 +61,14 @@ and hostile traffic without needing to reason about which specific
 failure occurred — that detail is in the log line, not exposed to whoever
 sent the bad request.
 
-**The agent developer** points their SDK at agentkeeper instead of the
+**The agent developer** points their SDK at the Gateway instead of the
 provider, exactly as the RFC's integration example shows: the credential
-agentkeeper issued them goes wherever their SDK would normally put a
+The Gateway issued them goes wherever their SDK would normally put a
 provider API key (`Authorization: Bearer <credential>`), not a real
 upstream key. A correctly credentialed call behaves exactly like calling
 the provider directly. A bad credential gets a generic, immediate error
 rather than silently reaching the provider or leaking whether the problem
-was their token or agentkeeper's configuration.
+was their token or the Gateway's configuration.
 
 ## Behavior
 
@@ -111,7 +111,7 @@ was their token or agentkeeper's configuration.
    match.
 9. Disabling the identification stage (per specs/0001's per-stage
    enable/disable) removes authentication entirely for that deployment:
-   every call proceeds without an `agent_id`, exactly as agentkeeper
+   every call proceeds without an `agent_id`, exactly as the Gateway
    behaves today. What a stage that depends on `agent_id` should do when
    identification is disabled is for that stage's own spec to decide (see
    *Open questions*).
@@ -125,7 +125,7 @@ was their token or agentkeeper's configuration.
 | Control               | What it does                                                                                                              | Default | At the extremes                                                                                                                                                                |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Enable identification | Turns the stage on or off, per specs/0001                                                                                 | Off     | Off: every call is anonymous, identical to today. On: every call must present a credential matching a registered agent — with zero agents registered, this denies all traffic. |
-| Agent registry        | The list of agents agentkeeper will recognize, each with an `agent_id` and either an API key or JWT verification material | Empty   | Empty + enabled: all calls denied. A large registry costs one more credential comparison per request but changes no other behavior.                                            |
+| Agent registry        | The list of agents the Gateway will recognize, each with an `agent_id` and either an API key or JWT verification material | Empty   | Empty + enabled: all calls denied. A large registry costs one more credential comparison per request but changes no other behavior.                                            |
 
 Identification defaults to **off**, unlike the staging pipeline's general
 default of "every stage on." The difference is deliberate: for every other
@@ -133,7 +133,7 @@ stage, being enabled with nothing configured to enforce means "allow
 everything" (specs/0001, rule 4) — but for identification, "enabled with
 nothing configured" means "no caller can ever be identified," which is
 indistinguishable from denying all traffic outright. An operator who
-upgrades agentkeeper must not discover, by way of an outage, that a new
+upgrades the Gateway must not discover, by way of an outage, that a new
 build silently started rejecting every call. Turning identification on is
 therefore a deliberate, visible act — the same one that also requires
 registering at least one agent — rather than something that happens to a
@@ -156,7 +156,7 @@ does not add a new failure mode beyond what specs/0001 already defines.
 
 Misconfiguration of the agent registry itself — for example, two entries
 sharing an `agent_id`, or an entry whose JWT verification material cannot
-be parsed — fails agentkeeper at startup, matching specs/0001's rule for a
+be parsed — fails the Gateway at startup, matching specs/0001's rule for a
 misconfigured stage.
 
 ## What the operator sees
@@ -207,7 +207,7 @@ misconfigured stage.
    distinguishes the four cases from one another, even though the
    response each caller received was identical.
 10. **Given** an agent registry with two entries sharing the same
-    `agent_id`, **when** agentkeeper starts, **then** it exits with an
+    `agent_id`, **when** The Gateway starts, **then** it exits with an
     error naming the conflict rather than starting.
 11. **Given** identification enabled and a valid credential, **when** the
     resulting log lines and audit-only reasons are inspected, **then** the

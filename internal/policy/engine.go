@@ -14,7 +14,7 @@ import (
 	"github.com/open-policy-agent/opa/v1/rego"
 	"go.uber.org/zap"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 // maxAbandoned bounds how many timed-out evaluations may still be running

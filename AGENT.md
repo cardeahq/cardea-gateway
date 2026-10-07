@@ -4,18 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-agentkeeper is an LLM gateway written in Go. It sits between applications and
+Cardea Gateway is an LLM gateway written in Go. It sits between applications and
 LLM providers to add security, privacy, observability, and easy provider
 switching. Behavior is driven by user-configurable rules (e.g. circuit
 breakers, token compaction) — the rule engine is not yet implemented.
 
-Module: `github.com/agentkeeper/agentkeeper`. Requires Go 1.26+.
+Module: `github.com/cardeahq/cardea-gateway`. Requires Go 1.26+.
 
 ## Commands
 
 ```sh
-make build   # build bin/agentkeeper, with version info injected via -ldflags
-make run     # go run ./cmd/agentkeeper
+make build   # build bin/gateway, with version info injected via -ldflags
+make run     # go run ./cmd/gateway
 make test    # go test ./...
 make test-race # go test -race for internal/policy and internal/gateway (slow, ~2 min)
 make lint    # golangci-lint run ./...
@@ -25,7 +25,7 @@ make tidy    # go mod tidy
 
 Run a single test package/test: `go test ./internal/config/... -run TestName -v`.
 
-Run the gateway directly: `go run ./cmd/agentkeeper serve [--config path.yaml]`.
+Run the gateway directly: `go run ./cmd/gateway serve [--config path.yaml]`.
 
 ## Architecture
 
@@ -34,26 +34,26 @@ Run the gateway directly: `go run ./cmd/agentkeeper serve [--config path.yaml]`.
   Flat layout, `NNNN-<feature>-{functional,technical}.md`, where `NNNN`
   numbers the feature rather than the document — both halves of a feature
   share it (see the `new-func-spec` and `new-tech-spec` skills).
-- `cmd/agentkeeper/main.go` — entrypoint; delegates immediately to `internal/cli`.
+- `cmd/gateway/main.go` — entrypoint; delegates immediately to `internal/cli`.
 - `internal/cli` — Cobra command tree (`root.go`, `serve.go`, `version.go`).
   Persistent `--config` flag lives on the root command; each subcommand's
   `RunE` calls `loadConfig()` and constructs its own logger/dependencies
   rather than relying on shared global state.
 - `internal/config` — the `Config` struct is the single source of truth for
   all configuration. `Load()` layers Viper sources in increasing priority:
-  built-in defaults → YAML file (`--config`, or `./agentkeeper.yaml` /
-  `$HOME/.config/agentkeeper` / `/etc/agentkeeper` if unset) → `AGENTKEEPER_`-
-  prefixed env vars (dots become underscores, e.g. `AGENTKEEPER_SERVER_LISTEN_ADDR`).
+  built-in defaults → YAML file (`--config`, or `./cardea-gateway.yaml` /
+  `$HOME/.config/cardea-gateway` / `/etc/cardea-gateway` if unset) → `CARDEA_GATEWAY_`-
+  prefixed env vars (dots become underscores, e.g. `CARDEA_GATEWAY_SERVER_LISTEN_ADDR`).
   New config fields must be added to the `Config` struct tree, given a
   default in `defaults()`/`Load()`, and documented in
-  `configs/agentkeeper.example.yaml`.
+  `configs/cardea-gateway.example.yaml`.
 - `internal/logging` — builds the zap logger from `config.LoggingConfig`
   (`level`: debug/info/warn/error; `format`: console/json). This is the only
   place zap config translation happens.
 - `internal/gateway` — the gateway server. Routes: `/healthz`, and `/`
   (everything else) forwarded as-is to the single configured provider's
   `Handler()`. There is no provider selector in the URL or request — the
-  caller cannot choose or see which upstream is in use; agentkeeper
+  caller cannot choose or see which upstream is in use; the Gateway
   decides that from config alone (see `internal/provider`). Request/
   response interception and rule evaluation will be added here. `Run(ctx)`
   blocks and shuts down gracefully on context cancellation (wired to
@@ -95,14 +95,14 @@ Run the gateway directly: `go run ./cmd/agentkeeper serve [--config path.yaml]`.
   var holding the API key, never the key itself), neither with a default;
   there is no tenant in the Gateway, the platform derives it from the key.
 
-Data flow for `agentkeeper serve`: `cli.serve` loads `config.Config` →
+Data flow for `gateway serve`: `cli.serve` loads `config.Config` →
 builds a `zap.Logger` from it → builds the configured `provider.Provider`
 → constructs a `gateway.Gateway` from all three → `Run`s it until
 interrupted.
 
 ## Conventions
 
-- Business logic lives under `internal/`; `cmd/agentkeeper` stays a thin
+- Business logic lives under `internal/`; `cmd/gateway` stays a thin
   entrypoint.
 - Write the simplest implementation that solves the task: no speculative
   abstractions, no configurability beyond what's actually needed, no
@@ -121,13 +121,13 @@ interrupted.
   follow it. If the implementation ends up diverging from the spec, update
   the spec in the same change rather than leaving it stale.
 
-## How to use AgentKeeper with OpenCode
+## How to use the Gateway with OpenCode
 
-1. Run agentkeeper with a Claude API key
+1. Run the Gateway with a Claude API key
 
 ```sh   
-export ANTHROPIC_API_KEY=sk-ant-...   # in agentkeeper's environment only
-agentkeeper serve --config ./agentkeeper.yaml
+export ANTHROPIC_API_KEY=sk-ant-...   # in the Gateway's environment only
+gateway serve --config ./cardea-gateway.yaml
 ```
 
 Listens on port 8080 by default.

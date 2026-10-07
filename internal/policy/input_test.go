@@ -342,7 +342,7 @@ func TestBuildInput_HeadersLowerCasedAndCredentialsRemoved(t *testing.T) {
 	const secret = "SECRET-CREDENTIAL-VALUE-5d2e"
 	r := inputReq(`{"model":"m","messages":[]}`)
 	r.Headers = http.Header{}
-	for _, h := range []string{"Authorization", "Proxy-Authorization", "X-Api-Key", "Api-Key", "Cookie", "Set-Cookie", "X-Agentkeeper-Request-Id"} {
+	for _, h := range []string{"Authorization", "Proxy-Authorization", "X-Api-Key", "Api-Key", "Cookie", "Set-Cookie", "X-Gateway-Request-Id"} {
 		r.Headers.Set(h, secret)
 	}
 	r.Headers.Add("X-Team", "blue")
@@ -358,7 +358,7 @@ func TestBuildInput_HeadersLowerCasedAndCredentialsRemoved(t *testing.T) {
 	if !reflect.DeepEqual(headers, want) {
 		t.Fatalf("call.headers = %v, want %v", headers, want)
 	}
-	for _, banned := range []string{"authorization", "proxy-authorization", "x-api-key", "api-key", "cookie", "set-cookie", "x-agentkeeper-request-id"} {
+	for _, banned := range []string{"authorization", "proxy-authorization", "x-api-key", "api-key", "cookie", "set-cookie", "x-gateway-request-id"} {
 		if _, ok := headers[banned]; ok {
 			t.Fatalf("header %q reached the input", banned)
 		}

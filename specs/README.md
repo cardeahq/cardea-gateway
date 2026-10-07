@@ -1,6 +1,6 @@
 # specs/
 
-Specifications for agentkeeper. These are the source of intent for the
+Specifications for the Gateway. These are the source of intent for the
 gateway's behavior — including features that aren't implemented yet. They
 are not code and not a task list; when the implementation diverges from a
 spec, the spec gets updated in the same change rather than left stale.
@@ -39,14 +39,14 @@ Every spec starts with a `**Date:**` line and a link to its counterpart.
 | | Functional | Technical |
 | --- | --- | --- |
 | Answers | *what* the feature does, and for whom | *how* it is built |
-| Audience | the operator deploying agentkeeper; the developer whose client calls it | whoever implements it |
+| Audience | the operator deploying the Gateway; the developer whose client calls it | whoever implements it |
 | Contains | scenarios, behavior rules, operator controls in plain words, Given/When/Then acceptance criteria | design, packages and types with real Go signatures, `config.Config` fields, failure modes, alternatives considered |
 | Never contains | Go types, package names, `internal/` paths | a restatement of the functional spec's behavior — link it instead |
 
 The functional spec comes first; the technical spec designs against it.
 
 Two invariants hold across features and shouldn't be re-opened in a spec:
-the caller cannot choose or see the upstream provider (agentkeeper decides
+the caller cannot choose or see the upstream provider (the Gateway decides
 from config alone), and behavior is rule-driven for the operator, not
 caller-driven.
 

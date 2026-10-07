@@ -17,16 +17,16 @@ type denialEnvelope struct {
 func writeDenial(w http.ResponseWriter, requestID string, d *Denial, unavailable bool) {
 	env := denialEnvelope{}
 	if unavailable {
-		env.Error.Type = "agentkeeper_unavailable"
+		env.Error.Type = "gateway_unavailable"
 	} else {
-		env.Error.Type = "agentkeeper_denied"
+		env.Error.Type = "gateway_denied"
 	}
 	env.Error.Stage = d.Stage
 	env.Error.Message = d.Message
 	env.Error.RequestID = requestID
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Agentkeeper-Request-Id", requestID)
+	w.Header().Set("X-Gateway-Request-Id", requestID)
 	if !unavailable {
 		w.Header().Set("X-Should-Retry", "false")
 	}

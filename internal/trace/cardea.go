@@ -20,7 +20,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 // ErrClosed is returned by Write after Close.
@@ -453,7 +453,7 @@ func (s *CardeaSink) send(ctx context.Context, b *batch) (int, http.Header, erro
 	req.Header.Set("X-Cardea-First-Seq", strconv.FormatUint(b.first, 10))
 	req.Header.Set("X-Cardea-Last-Seq", strconv.FormatUint(b.last, 10))
 	req.Header.Set("X-Cardea-Schema", Schema)
-	req.Header.Set("User-Agent", "agentkeeper-gateway")
+	req.Header.Set("User-Agent", "cardea-gateway")
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return 0, nil, err

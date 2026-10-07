@@ -311,9 +311,9 @@ func TestPipeline_DenialRendering(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("Content-Type = %q, want application/json", ct)
 	}
-	reqID := rec.Header().Get("X-Agentkeeper-Request-Id")
+	reqID := rec.Header().Get("X-Gateway-Request-Id")
 	if !requestIDPattern.MatchString(reqID) {
-		t.Fatalf("X-Agentkeeper-Request-Id = %q, want to match %s", reqID, requestIDPattern)
+		t.Fatalf("X-Gateway-Request-Id = %q, want to match %s", reqID, requestIDPattern)
 	}
 
 	raw := rec.Body.Bytes()
@@ -321,8 +321,8 @@ func TestPipeline_DenialRendering(t *testing.T) {
 	if err := json.Unmarshal(raw, &env); err != nil {
 		t.Fatalf("unmarshal denial body: %v; body = %s", err, raw)
 	}
-	if env.Error.Type != "agentkeeper_denied" {
-		t.Fatalf("type = %q, want agentkeeper_denied", env.Error.Type)
+	if env.Error.Type != "gateway_denied" {
+		t.Fatalf("type = %q, want gateway_denied", env.Error.Type)
 	}
 	if env.Error.Stage != "rate_limiting" {
 		t.Fatalf("stage = %q, want rate_limiting", env.Error.Stage)
@@ -356,14 +356,14 @@ func TestPipeline_UnavailableRendering_OnStageError(t *testing.T) {
 	if err := json.Unmarshal(raw, &env); err != nil {
 		t.Fatalf("unmarshal body: %v; body = %s", err, raw)
 	}
-	if env.Error.Type != "agentkeeper_unavailable" {
-		t.Fatalf("type = %q, want agentkeeper_unavailable", env.Error.Type)
+	if env.Error.Type != "gateway_unavailable" {
+		t.Fatalf("type = %q, want gateway_unavailable", env.Error.Type)
 	}
 	if env.Error.Stage != "policies" {
 		t.Fatalf("stage = %q, want policies", env.Error.Stage)
 	}
-	if reqID := rec.Header().Get("X-Agentkeeper-Request-Id"); !requestIDPattern.MatchString(reqID) {
-		t.Fatalf("X-Agentkeeper-Request-Id = %q, want to match %s", reqID, requestIDPattern)
+	if reqID := rec.Header().Get("X-Gateway-Request-Id"); !requestIDPattern.MatchString(reqID) {
+		t.Fatalf("X-Gateway-Request-Id = %q, want to match %s", reqID, requestIDPattern)
 	}
 	if bytes.Contains(raw, []byte(secret)) {
 		t.Fatalf("unavailable body leaked internal error detail: %s", raw)
@@ -388,8 +388,8 @@ func TestPipeline_UnavailableRendering_OnStagePanic(t *testing.T) {
 	if err := json.Unmarshal(raw, &env); err != nil {
 		t.Fatalf("unmarshal body: %v; body = %s", err, raw)
 	}
-	if env.Error.Type != "agentkeeper_unavailable" {
-		t.Fatalf("type = %q, want agentkeeper_unavailable", env.Error.Type)
+	if env.Error.Type != "gateway_unavailable" {
+		t.Fatalf("type = %q, want gateway_unavailable", env.Error.Type)
 	}
 	if env.Error.Stage != "monitoring" {
 		t.Fatalf("stage = %q, want monitoring", env.Error.Stage)
@@ -447,10 +447,10 @@ func TestPipeline_RequestID_GeneratedAndCallerCannotControlIt(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	req.Header.Set("X-Agentkeeper-Request-Id", "attacker-controlled-id")
+	req.Header.Set("X-Gateway-Request-Id", "attacker-controlled-id")
 	rec := doRequest(t, p, next, req)
 
-	respID := rec.Header().Get("X-Agentkeeper-Request-Id")
+	respID := rec.Header().Get("X-Gateway-Request-Id")
 	if respID == "attacker-controlled-id" {
 		t.Fatal("caller-supplied request id must not be echoed back")
 	}
@@ -555,8 +555,8 @@ func TestPipeline_BodyOverLimitDeniedBeforeAnyStageRuns(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("unmarshal body: %v", err)
 	}
-	if env.Error.Type != "agentkeeper_denied" {
-		t.Fatalf("type = %q, want agentkeeper_denied", env.Error.Type)
+	if env.Error.Type != "gateway_denied" {
+		t.Fatalf("type = %q, want gateway_denied", env.Error.Type)
 	}
 }
 
@@ -587,8 +587,8 @@ func TestPipeline_BodyReadFailureDenied(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("unmarshal body: %v", err)
 	}
-	if env.Error.Type != "agentkeeper_denied" {
-		t.Fatalf("type = %q, want agentkeeper_denied", env.Error.Type)
+	if env.Error.Type != "gateway_denied" {
+		t.Fatalf("type = %q, want gateway_denied", env.Error.Type)
 	}
 }
 
@@ -635,8 +635,8 @@ func TestPipeline_AllowedCallPassesThroughUnchanged(t *testing.T) {
 	if got := rec.Header().Get("X-Upstream"); got != "yes" {
 		t.Fatalf("X-Upstream header = %q, want %q (upstream headers must reach the caller unchanged)", got, "yes")
 	}
-	if got := rec.Header().Get("X-Agentkeeper-Request-Id"); got != "" {
-		t.Fatalf("X-Agentkeeper-Request-Id = %q, want empty on an allowed call", got)
+	if got := rec.Header().Get("X-Gateway-Request-Id"); got != "" {
+		t.Fatalf("X-Gateway-Request-Id = %q, want empty on an allowed call", got)
 	}
 }
 

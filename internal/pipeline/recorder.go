@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/agentkeeper/agentkeeper/internal/trace"
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 // bodyRecorder writes every byte through to the real ResponseWriter

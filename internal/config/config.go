@@ -1,4 +1,4 @@
-// Package config defines agentkeeper's configuration schema and loads it
+// Package config defines the Gateway's configuration schema and loads it
 // via Viper.
 package config
 
@@ -14,8 +14,8 @@ import (
 )
 
 // EnvPrefix is prepended to environment variable names, e.g.
-// AGENTKEEPER_SERVER_LISTENADDR maps to Server.ListenAddr.
-const EnvPrefix = "AGENTKEEPER"
+// CARDEA_GATEWAY_SERVER_LISTENADDR maps to Server.ListenAddr.
+const EnvPrefix = "CARDEA_GATEWAY"
 
 type Config struct {
 	Server   ServerConfig   `mapstructure:"server"`
@@ -208,7 +208,7 @@ func defaults() Config {
 }
 
 // Load applies, in increasing priority: built-in defaults, the config
-// file, then AGENTKEEPER_-prefixed environment variables.
+// file, then CARDEA_GATEWAY_-prefixed environment variables.
 func Load(cfgFile string) (Config, error) {
 	v := viper.New()
 
@@ -251,11 +251,11 @@ func Load(cfgFile string) (Config, error) {
 	if cfgFile != "" {
 		v.SetConfigFile(cfgFile)
 	} else {
-		v.SetConfigName("agentkeeper")
+		v.SetConfigName("cardea-gateway")
 		v.SetConfigType("yaml")
 		v.AddConfigPath(".")
-		v.AddConfigPath("$HOME/.config/agentkeeper")
-		v.AddConfigPath("/etc/agentkeeper")
+		v.AddConfigPath("$HOME/.config/cardea-gateway")
+		v.AddConfigPath("/etc/cardea-gateway")
 	}
 
 	if err := v.ReadInConfig(); err != nil {

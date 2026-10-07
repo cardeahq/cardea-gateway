@@ -98,8 +98,8 @@ func TestLogSink_OneLinePerRecordInOrder(t *testing.T) {
 		if m["record"] != want[i].record || m["call_id"] != want[i].callID {
 			t.Fatalf("line %d = %s/%s, want %s/%s", i, m["record"], m["call_id"], want[i].record, want[i].callID)
 		}
-		if m["schema"] != "agentkeeper.trace/v1" {
-			t.Fatalf("line %d schema = %v, want agentkeeper.trace/v1", i, m["schema"])
+		if m["schema"] != "cardea-gateway.trace/v1" {
+			t.Fatalf("line %d schema = %v, want cardea-gateway.trace/v1", i, m["schema"])
 		}
 		var compact bytes.Buffer
 		if err := json.Compact(&compact, []byte(line)); err != nil || compact.String() != line {
@@ -228,7 +228,7 @@ func TestLogSink_ConcurrentWritersNeverInterleave(t *testing.T) {
 
 func TestLogSink_AppendsToAnExistingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "records.jsonl")
-	const existing = `{"schema":"agentkeeper.trace/v1","record":"request","call_id":"ak_old"}` + "\n"
+	const existing = `{"schema":"cardea-gateway.trace/v1","record":"request","call_id":"ak_old"}` + "\n"
 	if err := os.WriteFile(path, []byte(existing), 0o640); err != nil {
 		t.Fatalf("seeding file: %v", err)
 	}

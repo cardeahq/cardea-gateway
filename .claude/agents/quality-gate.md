@@ -87,10 +87,10 @@ Against `CLAUDE.md`'s conventions, flag:
   comment.
 - Package-level singletons or globals instead of dependencies built in
   `RunE`.
-- Business logic that leaked into `cmd/agentkeeper`.
+- Business logic that leaked into `cmd/gateway`.
 - New config fields missing any leg of the triple: struct field with
   `mapstructure` tag, default in `defaults()` *and* `v.SetDefault` in
-  `Load()`, and an entry in `configs/agentkeeper.example.yaml`.
+  `Load()`, and an entry in `configs/cardea-gateway.example.yaml`.
 - Error handling: errors swallowed or logged-and-ignored where they should
   propagate; `RunE` returning after logging instead of returning the error.
 

@@ -23,10 +23,10 @@ import (
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
-	"github.com/agentkeeper/agentkeeper/internal/logging"
-	"github.com/agentkeeper/agentkeeper/internal/pipeline"
-	"github.com/agentkeeper/agentkeeper/internal/provider"
+	"github.com/cardeahq/cardea-gateway/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/logging"
+	"github.com/cardeahq/cardea-gateway/internal/pipeline"
+	"github.com/cardeahq/cardea-gateway/internal/provider"
 )
 
 var _ pipeline.Stage = (*tracingStage)(nil)
@@ -928,7 +928,7 @@ func TestTracing_StdoutCarriesOnlyRecordsByDefault(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &m); err != nil {
 			t.Fatalf("stdout line %d is not a JSON record: %s", i, line)
 		}
-		if m["schema"] != "agentkeeper.trace/v1" || (m["record"] != "request" && m["record"] != "response") {
+		if m["schema"] != "cardea-gateway.trace/v1" || (m["record"] != "request" && m["record"] != "response") {
 			t.Fatalf("stdout line %d is not a trace record: %s", i, line)
 		}
 	}

@@ -1,9 +1,9 @@
 ---
 name: simplify
-description: This skill should be used when the user asks to "simplify this", "clean this up", "reduce duplication", or wants reuse/efficiency/altitude cleanups applied to agentkeeper changes — not for hunting correctness bugs (use the code-review skill for that).
+description: This skill should be used when the user asks to "simplify this", "clean this up", "reduce duplication", or wants reuse/efficiency/altitude cleanups applied to the Gateway changes — not for hunting correctness bugs (use the code-review skill for that).
 ---
 
-# agentkeeper simplify
+# the Gateway simplify
 
 Review changed code for reuse, simplification, efficiency, and "altitude"
 cleanups (comments/names that don't earn their place), then apply the
@@ -11,7 +11,7 @@ fixes directly. This is a quality pass, not a bug hunt.
 
 ## Conventions to enforce
 
-- Business logic stays under `internal/`; `cmd/agentkeeper/main.go` stays
+- Business logic stays under `internal/`; `cmd/gateway/main.go` stays
   a one-line delegation to `cli.Execute()` — flag anything added there
   beyond wiring.
 - Every package keeps a package-level doc comment stating its
@@ -40,7 +40,7 @@ fixes directly. This is a quality pass, not a bug hunt.
   calls in `config.Load()` currently say the same thing twice by
   necessity (Viper needs both) — don't "simplify" by dropping one, but do
   flag if a third, different-valued default shows up anywhere else.
-- **Reintroducing caller-driven provider selection**: agentkeeper
+- **Reintroducing caller-driven provider selection**: the Gateway
   deliberately forwards every path to one operator-configured provider
   (no `/v1/{provider}/`, no per-request lookup). Don't "simplify" a
   future rules-engine change back into that shape — provider selection

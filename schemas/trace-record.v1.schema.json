@@ -74,7 +74,7 @@
         "tool_results", "findings"
       ],
       "properties": {
-        "schema": { "const": "agentkeeper.trace/v1" },
+        "schema": { "const": "cardea-gateway.trace/v1" },
         "record": { "const": "request" },
         "call_id": { "$ref": "#/$defs/callId" },
         "agent_id": {
@@ -194,7 +194,7 @@
       },
       "examples": [
         {
-          "schema": "agentkeeper.trace/v1",
+          "schema": "cardea-gateway.trace/v1",
           "record": "request",
           "call_id": "ak_7f3c2b1d9e8a4f60",
           "agent_id": "acme-bot",
@@ -232,7 +232,7 @@
         "findings"
       ],
       "properties": {
-        "schema": { "const": "agentkeeper.trace/v1" },
+        "schema": { "const": "cardea-gateway.trace/v1" },
         "record": { "const": "response" },
         "call_id": { "$ref": "#/$defs/callId" },
         "agent_id": { "$ref": "#/$defs/stringOrNull" },
@@ -362,7 +362,7 @@
       },
       "examples": [
         {
-          "schema": "agentkeeper.trace/v1",
+          "schema": "cardea-gateway.trace/v1",
           "record": "response",
           "call_id": "ak_7f3c2b1d9e8a4f60",
           "agent_id": "acme-bot",

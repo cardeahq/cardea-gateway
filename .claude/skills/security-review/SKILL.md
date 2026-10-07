@@ -1,11 +1,11 @@
 ---
 name: security-review
-description: This skill should be used when the user asks for a "security review", to "review security", "check for vulnerabilities", or before merging changes that touch config loading, logging, the gateway's HTTP surface, or provider/upstream handling in agentkeeper.
+description: This skill should be used when the user asks for a "security review", to "review security", "check for vulnerabilities", or before merging changes that touch config loading, logging, the gateway's HTTP surface, or provider/upstream handling in the Gateway.
 ---
 
-# agentkeeper security review
+# the Gateway security review
 
-agentkeeper's whole purpose is to sit in front of paid, credentialed LLM
+The Gateway's whole purpose is to sit in front of paid, credentialed LLM
 APIs and mediate access to them, so the failure modes that matter most here
 are: leaking upstream provider credentials, leaking prompt/response
 content (which is often sensitive/PII), and being tricked into forwarding
@@ -52,7 +52,7 @@ PR, or the whole repo).
 
 **Gateway HTTP surface**
 - New endpoints on the gateway's `http.ServeMux` (`internal/gateway`)
-  should be checked for: authentication (agentkeeper centralizes access
+  should be checked for: authentication (the Gateway centralizes access
   to paid APIs — is an unauthenticated caller able to spend the
   operator's provider budget?), and whether internal error details
   (stack traces, wrapped errors) leak to the HTTP response instead of
@@ -60,7 +60,7 @@ PR, or the whole repo).
 
 **Config loading**
 - Viper-based config (`internal/config`) reads from file paths and
-  `AGENTKEEPER_`-prefixed env vars. Flag anything that turns a
+  `CARDEA_GATEWAY_`-prefixed env vars. Flag anything that turns a
   request-time or client-supplied value into a config file path (path
   traversal) or that widens what env vars are trusted.
 

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/agentkeeper/agentkeeper/internal/identity"
-	"github.com/agentkeeper/agentkeeper/internal/pipeline"
+	"github.com/cardeahq/cardea-gateway/internal/identity"
+	"github.com/cardeahq/cardea-gateway/internal/pipeline"
 )
 
 const identityDenialMessage = "could not identify caller"

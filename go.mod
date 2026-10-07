@@ -1,4 +1,4 @@
-module github.com/agentkeeper/agentkeeper
+module github.com/cardeahq/cardea-gateway
 
 go 1.26.6
 

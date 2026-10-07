@@ -5,16 +5,16 @@ import (
 	"strings"
 )
 
-// credentialHeaders never reach the input document. x-agentkeeper-request-id
+// credentialHeaders never reach the input document. x-gateway-request-id
 // is the pipeline's own, stripped from inbound requests.
 var credentialHeaders = map[string]bool{
-	"authorization":            true,
-	"proxy-authorization":      true,
-	"x-api-key":                true,
-	"api-key":                  true,
-	"cookie":                   true,
-	"set-cookie":               true,
-	"x-agentkeeper-request-id": true,
+	"authorization":        true,
+	"proxy-authorization":  true,
+	"x-api-key":            true,
+	"api-key":              true,
+	"cookie":               true,
+	"set-cookie":           true,
+	"x-gateway-request-id": true,
 }
 
 // buildInput returns the document rules are written against. A key that

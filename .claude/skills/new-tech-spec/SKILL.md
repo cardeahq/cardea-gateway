@@ -1,6 +1,6 @@
 ---
 name: new-tech-spec
-description: This skill should be used when the user asks to "write a technical spec", "bootstrap a spec", "draft a design doc", "spec out this feature", or otherwise wants a new architecture/design document created under specs/ for an agentkeeper feature.
+description: This skill should be used when the user asks to "write a technical spec", "bootstrap a spec", "draft a design doc", "spec out this feature", or otherwise wants a new architecture/design document created under specs/ for a Gateway feature.
 model: sonnet
 ---
 

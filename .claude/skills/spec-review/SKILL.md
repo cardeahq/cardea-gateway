@@ -77,7 +77,7 @@ code, operators cannot review the thing written for them. The technical
 spec must not restate functional behavior; it links to it. A restatement
 is a second copy that will drift from the first.
 
-**6. agentkeeper's standing invariants.**
+**6. The Gateway's standing invariants.**
 These hold across every feature; a spec pair that breaks one is wrong
 regardless of internal consistency:
 
@@ -92,7 +92,7 @@ regardless of internal consistency:
   exist, and the spec must say what happens when it is hit.
 - New config needs the full triple specified: struct field, a default in
   both `defaults()` and `Load()`, and an entry in
-  `configs/agentkeeper.example.yaml`.
+  `configs/cardea-gateway.example.yaml`.
 
 **7. Unresolved open questions.**
 An _Open questions_ entry that defers to a future spec is fine. One that

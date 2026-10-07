@@ -3,8 +3,8 @@ package gateway
 import (
 	"context"
 
-	"github.com/agentkeeper/agentkeeper/internal/pipeline"
-	"github.com/agentkeeper/agentkeeper/internal/trace"
+	"github.com/cardeahq/cardea-gateway/internal/pipeline"
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 type tracingStage struct {
