@@ -496,7 +496,7 @@ func TestLoad_NonexistentPolicyPathIsNotRejectedByLoad(t *testing.T) {
 func wantCardeaDefaults() CardeaSinkConfig {
 	return CardeaSinkConfig{
 		Endpoint:        "",
-		APIKeyEnv:       "",
+		APIKeyEnv:       "CARDEA_API_KEY",
 		QueueSize:       10000,
 		QueueMaxBytes:   67108864,
 		BatchMaxRecords: 500,
@@ -665,7 +665,7 @@ func TestLoad_CardeaSinkRejections(t *testing.T) {
 		},
 		{
 			"empty api_key_env",
-			"tracing:\n  sink:\n    type: cardea\n    cardea:\n      endpoint: https://platform.example.com/in\n",
+			"tracing:\n  sink:\n    type: cardea\n    cardea:\n      endpoint: https://platform.example.com/in\n      api_key_env: \"\"\n",
 			"api_key_env",
 		},
 		{"no cardea settings at all with logging+cardea", "tracing:\n  sink:\n    type: logging+cardea\n", "endpoint"},

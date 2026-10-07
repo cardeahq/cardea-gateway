@@ -1,0 +1,8 @@
+{
+  "agents": {
+    "agent-alpha": { "models": ["claude-sonnet-5-5", "claude-opus-5-5"] },
+    "agent-beta": { "models": ["claude-haiku-4-5-20251001"] }
+  },
+  "forbidden_tools": ["delete_database", "drop_table"],
+  "blocked_path_prefixes": ["/secrets", "/etc/shadow", "~/.ssh"]
+}

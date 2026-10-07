@@ -13,7 +13,7 @@ build:
 
 .PHONY: run
 run:
-	go run ./cmd/gateway
+	go run ./cmd/gateway serve
 
 .PHONY: test
 test:

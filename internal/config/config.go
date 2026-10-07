@@ -116,8 +116,8 @@ type TraceSinkConfig struct {
 type CardeaSinkConfig struct {
 	// Endpoint is the full URL batches are POSTed to. Required, no default.
 	Endpoint string `mapstructure:"endpoint"`
-	// APIKeyEnv names the env var holding the platform API key. Required,
-	// no default. The key itself is never in config.
+	// APIKeyEnv names the env var holding the platform API key. Defaults to
+	// CARDEA_API_KEY. The key itself is never in config.
 	APIKeyEnv       string        `mapstructure:"api_key_env"`
 	QueueSize       int           `mapstructure:"queue_size"`
 	QueueMaxBytes   int64         `mapstructure:"queue_max_bytes"`
@@ -189,6 +189,7 @@ func defaults() Config {
 				Type: "logging",
 				Path: "",
 				Cardea: CardeaSinkConfig{
+					APIKeyEnv:       "CARDEA_API_KEY",
 					QueueSize:       10000,
 					QueueMaxBytes:   67108864,
 					BatchMaxRecords: 500,

@@ -8,3 +8,5 @@
 cardea-gateway.yaml
 cardea-gateway.local.yaml
 traces.jsonl
+
+__debug_bin*

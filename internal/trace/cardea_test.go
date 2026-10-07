@@ -1160,6 +1160,13 @@ func TestCardeaSink_CapacityDropsNewRecordsAndLeavesAGapOfExactlyTheDropped(t *t
 			recovered.Store(true)
 			p.release()
 			p.waitSeqs(t, 2)
+			// The platform records a request on arrival; the sink frees its
+			// capacity only once the reply is in, so wait for the queue to drain.
+			csWaitUntil(t, "the delivered records to leave the queue", 5*time.Second, func() bool {
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				return len(s.queue) == 0
+			})
 			csWrite(t, s, csSized(t, csCallID(6), 600))
 			p.waitSeqs(t, 3)
 			time.Sleep(100 * time.Millisecond)

@@ -2,15 +2,18 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
 	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
-var cfgFile string
+var cfgFile, envFile string
 
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
@@ -28,6 +31,8 @@ compaction policies.`,
 
 	root.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ./cardea-gateway.yaml)")
 
+	root.PersistentFlags().StringVar(&envFile, "env-file", ".env", "dotenv file loaded before the config (missing file is ignored; real environment variables win)")
+
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newVersionCmd())
 
@@ -42,5 +47,8 @@ func Execute() {
 }
 
 func loadConfig() (config.Config, error) {
+	if err := godotenv.Load(envFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return config.Config{}, fmt.Errorf("loading %s: %w", envFile, err)
+	}
 	return config.Load(cfgFile)
 }
