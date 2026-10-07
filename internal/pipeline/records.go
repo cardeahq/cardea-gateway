@@ -3,7 +3,7 @@ package pipeline
 import (
 	"time"
 
-	"github.com/agentkeeper/agentkeeper/internal/trace"
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, bodyRead bool) trace.RequestRecord {

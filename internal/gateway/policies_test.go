@@ -21,10 +21,10 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
-	"github.com/agentkeeper/agentkeeper/internal/pipeline"
-	"github.com/agentkeeper/agentkeeper/internal/policy"
-	"github.com/agentkeeper/agentkeeper/internal/trace"
+	"github.com/cardeahq/cardea-gateway/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/pipeline"
+	"github.com/cardeahq/cardea-gateway/internal/policy"
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 var _ pipeline.Stage = (*policiesStage)(nil)
@@ -420,8 +420,8 @@ deny contains "any-stream" if { input.stream == true }`)
 		t.Fatalf("the provider received %d requests, want none for a denied call", f.count())
 	}
 	e := decodeErr(t, rec)
-	if e.Error.Type != "agentkeeper_denied" || e.Error.Stage != "policies" || e.Error.Message != genericDeny {
-		t.Fatalf("error = %+v, want agentkeeper_denied from policies with the generic message", e.Error)
+	if e.Error.Type != "gateway_denied" || e.Error.Stage != "policies" || e.Error.Message != genericDeny {
+		t.Fatalf("error = %+v, want gateway_denied from policies with the generic message", e.Error)
 	}
 	if !regexp.MustCompile(`^ak_[0-9a-f]{16}$`).MatchString(e.Error.RequestID) {
 		t.Fatalf("request_id = %q, want a per-call identifier", e.Error.RequestID)
@@ -606,8 +606,8 @@ func TestPolicies_FailuresAre503WithoutShouldRetry(t *testing.T) {
 				t.Fatal("the provider received a call whose policy could not be evaluated")
 			}
 			e := decodeErr(t, rec)
-			if e.Error.Type != "agentkeeper_unavailable" || e.Error.Stage != "policies" {
-				t.Fatalf("error = %+v, want agentkeeper_unavailable from policies", e.Error)
+			if e.Error.Type != "gateway_unavailable" || e.Error.Stage != "policies" {
+				t.Fatalf("error = %+v, want gateway_unavailable from policies", e.Error)
 			}
 
 			req, _ := callRecords(t, cfg.Tracing.Sink.Path)
@@ -960,8 +960,8 @@ func TestPoliciesStage_EngineErrorBecomesTheUnavailableDenialThroughThePipeline(
 		t.Fatalf("status = %d, want 503", rec.Code)
 	}
 	e := decodeErr(t, rec)
-	if e.Error.Type != "agentkeeper_unavailable" || e.Error.Stage != "policies" {
-		t.Fatalf("error = %+v, want agentkeeper_unavailable from policies", e.Error)
+	if e.Error.Type != "gateway_unavailable" || e.Error.Stage != "policies" {
+		t.Fatalf("error = %+v, want gateway_unavailable from policies", e.Error)
 	}
 	if _, present := rec.Header()["X-Should-Retry"]; present {
 		t.Fatal("a failure must not carry X-Should-Retry")
@@ -1022,8 +1022,8 @@ func TestPolicies_EndToEnd(t *testing.T) {
 		t.Fatalf("the denial body names the rule: %s", body)
 	}
 	var env errBody
-	if err := json.Unmarshal([]byte(body), &env); err != nil || env.Error.Type != "agentkeeper_denied" || env.Error.Stage != "policies" || env.Error.Message != genericDeny {
-		t.Fatalf("denial body = %s (err %v), want the generic agentkeeper_denied from policies", body, err)
+	if err := json.Unmarshal([]byte(body), &env); err != nil || env.Error.Type != "gateway_denied" || env.Error.Stage != "policies" || env.Error.Message != genericDeny {
+		t.Fatalf("denial body = %s (err %v), want the generic gateway_denied from policies", body, err)
 	}
 	if f.count() != 1 {
 		t.Fatalf("provider calls = %d after a denied call, want still 1", f.count())

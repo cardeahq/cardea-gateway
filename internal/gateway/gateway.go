@@ -1,4 +1,4 @@
-// Package gateway implements agentkeeper's HTTP gateway server.
+// Package gateway implements the Gateway's HTTP server.
 package gateway
 
 import (
@@ -9,12 +9,12 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
-	"github.com/agentkeeper/agentkeeper/internal/identity"
-	"github.com/agentkeeper/agentkeeper/internal/pipeline"
-	"github.com/agentkeeper/agentkeeper/internal/policy"
-	"github.com/agentkeeper/agentkeeper/internal/provider"
-	"github.com/agentkeeper/agentkeeper/internal/trace"
+	"github.com/cardeahq/cardea-gateway/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/identity"
+	"github.com/cardeahq/cardea-gateway/internal/pipeline"
+	"github.com/cardeahq/cardea-gateway/internal/policy"
+	"github.com/cardeahq/cardea-gateway/internal/provider"
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 type Gateway struct {

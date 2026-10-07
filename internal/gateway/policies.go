@@ -8,9 +8,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/agentkeeper/agentkeeper/internal/pipeline"
-	"github.com/agentkeeper/agentkeeper/internal/policy"
-	"github.com/agentkeeper/agentkeeper/internal/trace"
+	"github.com/cardeahq/cardea-gateway/internal/pipeline"
+	"github.com/cardeahq/cardea-gateway/internal/policy"
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 type policiesStage struct {

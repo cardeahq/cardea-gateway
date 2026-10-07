@@ -31,7 +31,7 @@ func freeAddr(t *testing.T) string {
 	return addr
 }
 
-// runServe starts `agentkeeper serve --config ...` in the background and
+// runServe starts `gateway serve --config ...` in the background and
 // returns once /healthz answers. The returned stop function cancels the
 // command and reports what serve returned.
 func runServe(t *testing.T, policyPath string) (base string, stop func() error) {
@@ -61,7 +61,7 @@ pipeline:
 	if policyPath != "" {
 		cfg += fmt.Sprintf("policies:\n  path: %q\n", policyPath)
 	}
-	cfgPath := filepath.Join(t.TempDir(), "agentkeeper.yaml")
+	cfgPath := filepath.Join(t.TempDir(), "cardea-gateway.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestServe_ExitsBeforeListeningOnAnInvalidPolicy(t *testing.T) {
 	addr := freeAddr(t)
 	cfg := fmt.Sprintf("server:\n  listen_addr: %q\nlogging:\n  level: error\nprovider:\n  base_url: %q\n  api_key_env: %q\npipeline:\n  stages:\n    tracing: false\npolicies:\n  path: %q\n",
 		addr, upstream.URL, cliAnthropicKeyEnv, bad)
-	cfgPath := filepath.Join(dir, "agentkeeper.yaml")
+	cfgPath := filepath.Join(dir, "cardea-gateway.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}

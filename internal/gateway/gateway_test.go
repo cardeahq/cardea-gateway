@@ -22,8 +22,8 @@ import (
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
-	"github.com/agentkeeper/agentkeeper/internal/trace"
+	"github.com/cardeahq/cardea-gateway/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 // stubProvider is a minimal provider.Provider for tests that need to

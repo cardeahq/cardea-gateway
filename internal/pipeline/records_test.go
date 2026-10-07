@@ -22,8 +22,8 @@ import (
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
-	"github.com/agentkeeper/agentkeeper/internal/trace"
+	"github.com/cardeahq/cardea-gateway/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 // fakeSink keeps every record it accepts, as decoded JSON, since the JSON
@@ -314,8 +314,8 @@ func TestRecords_ForwardedCallGetsOneRequestAndOneResponseRecord(t *testing.T) {
 		t.Fatalf("response call_id = %v, want %q (pairs with the request record)", resp["call_id"], callID)
 	}
 	for _, r := range []map[string]any{req, resp} {
-		if r["schema"] != "agentkeeper.trace/v1" {
-			t.Fatalf("%s record schema = %v, want agentkeeper.trace/v1", r["record"], r["schema"])
+		if r["schema"] != "cardea-gateway.trace/v1" {
+			t.Fatalf("%s record schema = %v, want cardea-gateway.trace/v1", r["record"], r["schema"])
 		}
 	}
 	if got := str(req, "outcome", "result"); got != "forwarded" {
@@ -631,8 +631,8 @@ func TestRecords_TracingReadFailureFailsClosed(t *testing.T) {
 	}
 	var env errorEnvelope
 	_ = json.Unmarshal(rec.Body.Bytes(), &env)
-	if env.Error.Type != "agentkeeper_unavailable" || env.Error.Stage != "tracing" {
-		t.Fatalf("error = %+v, want agentkeeper_unavailable from stage tracing", env.Error)
+	if env.Error.Type != "gateway_unavailable" || env.Error.Stage != "tracing" {
+		t.Fatalf("error = %+v, want gateway_unavailable from stage tracing", env.Error)
 	}
 	req := sink.one(t, "request")
 	if str(req, "outcome", "result") != "failed" || str(req, "outcome", "stage") != "tracing" {
@@ -838,8 +838,8 @@ func TestRecords_TracingStageErrorStillDeniesEvenWhenTheSinkAlsoFails(t *testing
 	}
 	var env errorEnvelope
 	_ = json.Unmarshal(rec.Body.Bytes(), &env)
-	if env.Error.Type != "agentkeeper_unavailable" || env.Error.Stage != "tracing" || env.Error.Message != "governance unavailable" {
-		t.Fatalf("error = %+v, want agentkeeper_unavailable / tracing / governance unavailable", env.Error)
+	if env.Error.Type != "gateway_unavailable" || env.Error.Stage != "tracing" || env.Error.Message != "governance unavailable" {
+		t.Fatalf("error = %+v, want gateway_unavailable / tracing / governance unavailable", env.Error)
 	}
 }
 
@@ -855,10 +855,10 @@ func TestRecords_SinkRefusingRequestRecordOfARefusedCallKeepsTheRefusal(t *testi
 	}
 	var env errorEnvelope
 	_ = json.Unmarshal(rec.Body.Bytes(), &env)
-	if env.Error.Type != "agentkeeper_denied" || env.Error.Stage != "identification" {
-		t.Fatalf("error = %+v, want agentkeeper_denied from identification", env.Error)
+	if env.Error.Type != "gateway_denied" || env.Error.Stage != "identification" {
+		t.Fatalf("error = %+v, want gateway_denied from identification", env.Error)
 	}
-	if callID := rec.Header().Get("X-Agentkeeper-Request-Id"); !errorLogNames(logs, callID) {
+	if callID := rec.Header().Get("X-Gateway-Request-Id"); !errorLogNames(logs, callID) {
 		t.Fatalf("no error-level log names call %s: %v", callID, logs.All())
 	}
 }

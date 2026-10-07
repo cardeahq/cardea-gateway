@@ -14,7 +14,7 @@ Delete these comments.
 
 ## Context
 
-<The problem and why agentkeeper needs to solve it. Link the functional
+<The problem and why the Gateway needs to solve it. Link the functional
 spec rather than repeating it.>
 
 ## Goals
@@ -57,10 +57,10 @@ func NewFoo(cfg config.FooConfig, log *zap.Logger) *Foo
 
 | Field | Type | Default | Env var |
 | --- | --- | --- | --- |
-| `<section>.<field>` | <type> | `<default>` | `AGENTKEEPER_<SECTION>_<FIELD>` |
+| `<section>.<field>` | <type> | `<default>` | `CARDEA_GATEWAY_<SECTION>_<FIELD>` |
 
 <Each field needs a default in both `defaults()` and `Load()`, and an
-entry in configs/agentkeeper.example.yaml.>
+entry in configs/cardea-gateway.example.yaml.>
 
 ## Failure modes
 

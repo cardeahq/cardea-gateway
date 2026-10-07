@@ -1,4 +1,4 @@
-MODULE  := github.com/agentkeeper/agentkeeper
+MODULE  := github.com/cardeahq/cardea-gateway
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -9,11 +9,11 @@ LDFLAGS := -X $(MODULE)/internal/cli.version=$(VERSION) \
 
 .PHONY: build
 build:
-	go build -ldflags "$(LDFLAGS)" -o bin/agentkeeper ./cmd/agentkeeper
+	go build -ldflags "$(LDFLAGS)" -o bin/gateway ./cmd/gateway
 
 .PHONY: run
 run:
-	go run ./cmd/agentkeeper
+	go run ./cmd/gateway
 
 .PHONY: test
 test:

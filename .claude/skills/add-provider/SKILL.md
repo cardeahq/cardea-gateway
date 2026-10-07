@@ -1,11 +1,11 @@
 ---
 name: add-provider
-description: This skill should be used when the user asks to "add a provider", "add an LLM provider", "wire up OpenAI/Anthropic/Gemini/etc.", "support a new upstream", or otherwise wants agentkeeper to route requests to a new LLM backend.
+description: This skill should be used when the user asks to "add a provider", "add an LLM provider", "wire up OpenAI/Anthropic/Gemini/etc.", "support a new upstream", or otherwise wants the Gateway to route requests to a new LLM backend.
 ---
 
-# Add an LLM provider to agentkeeper
+# Add an LLM provider to the Gateway
 
-agentkeeper forwards every request to exactly one upstream LLM provider,
+The Gateway forwards every request to exactly one upstream LLM provider,
 configured by the operator — never chosen by the caller or exposed in the
 URL (`/healthz` aside, every path forwards as-is to that one provider's
 `Handler()`; see `internal/gateway/gateway.go`). `config.Config.Provider`
@@ -71,7 +71,7 @@ one, rewriting the request path/body, or special SSE handling — implement
 - [ ] `go build ./... && go vet ./... && golangci-lint run ./...` clean.
 - [ ] New provider has a table-driven or per-case test asserting what it
       sends upstream (not just that *a* request goes out).
-- [ ] Config docs updated in `configs/agentkeeper.example.yaml`.
+- [ ] Config docs updated in `configs/cardea-gateway.example.yaml`.
 - [ ] Secrets (API keys) come from config/env, never hardcoded, and are
       never logged — see the `security-review` skill's credential-handling
       checklist, which applies to any new provider.

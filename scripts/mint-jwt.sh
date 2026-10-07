@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mints an HS256 JWT for manually testing agentkeeper's identification
+# Mints an HS256 JWT for manually testing the Gateway's identification
 # stage (specs/0002). Signs with the raw bytes of the named env var, the
 # same way internal/identity reads jwt_secret_env.
 set -euo pipefail
@@ -9,7 +9,7 @@ usage() {
 Usage: $(basename "$0") <agent_id> <secret_env_var> [ttl_seconds]
 
   agent_id        value for the "sub" claim (must match an agent_id in
-                   agentkeeper's config with a jwt_secret_env set)
+                   the Gateway's config with a jwt_secret_env set)
   secret_env_var  name of the env var holding the signing secret
                    (>=32 bytes, matching that agent's jwt_secret_env)
   ttl_seconds     seconds from now until "exp" (default 3600; use a

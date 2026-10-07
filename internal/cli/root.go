@@ -1,4 +1,4 @@
-// Package cli implements agentkeeper's Cobra command tree.
+// Package cli implements the Gateway's Cobra command tree.
 package cli
 
 import (
@@ -7,16 +7,16 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 var cfgFile string
 
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "agentkeeper",
-		Short: "agentkeeper is an LLM gateway for security, privacy, and observability",
-		Long: `agentkeeper shields and contains LLM usage behind a single gateway.
+		Use:   "gateway",
+		Short: "Cardea Gateway is an LLM gateway for security, privacy, and observability",
+		Long: `Cardea Gateway shields and contains LLM usage behind a single gateway.
 
 It provides security, privacy, and observability controls for LLM traffic,
 lets you switch between LLM providers without changing application code,
@@ -26,7 +26,7 @@ compaction policies.`,
 		SilenceErrors: true,
 	}
 
-	root.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ./agentkeeper.yaml)")
+	root.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ./cardea-gateway.yaml)")
 
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newVersionCmd())

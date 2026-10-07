@@ -31,7 +31,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 // Compile-time checks that every sink the gateway holds is closeable.
@@ -413,8 +413,8 @@ func TestCardeaSink_RequestCarriesTheDeliveryContract(t *testing.T) {
 			"Content-Type":      "application/x-ndjson",
 			"Content-Encoding":  "gzip",
 			"X-Cardea-Instance": s.InstanceID(),
-			"X-Cardea-Schema":   "agentkeeper.trace/v1",
-			"User-Agent":        "agentkeeper-gateway",
+			"X-Cardea-Schema":   "cardea-gateway.trace/v1",
+			"User-Agent":        "cardea-gateway",
 		}
 		for h, want := range checks {
 			if got := r.header.Get(h); got != want {

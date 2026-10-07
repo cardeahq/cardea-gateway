@@ -104,8 +104,8 @@ delivers:
   | `Content-Encoding` | `gzip` |
   | `X-Cardea-Instance` | the instance identity (32 hex chars from `crypto/rand`) |
   | `X-Cardea-First-Seq`, `X-Cardea-Last-Seq` | first and last `seq` in the batch |
-  | `X-Cardea-Schema` | `agentkeeper.trace/v1` (`trace.Schema`) |
-  | `User-Agent` | `agentkeeper-gateway` |
+  | `X-Cardea-Schema` | `cardea-gateway.trace/v1` (`trace.Schema`) |
+  | `User-Agent` | `cardea-gateway` |
 
 - the response is classified from its status code alone (the body is
   neither read nor kept; it is drained up to 4 KiB and closed so the
@@ -382,7 +382,7 @@ guard so a nil sink is passed to the pipeline as a nil interface. `Run` is
 unchanged: it already closes the sink after `server.Shutdown` returns,
 which is after in-flight calls finish, so `Close` drains the last records.
 
-### `configs/agentkeeper.example.yaml` — modified
+### `configs/cardea-gateway.example.yaml` — modified
 
 Documents the new `tracing.sink` keys (below), with the credential note.
 
@@ -407,16 +407,16 @@ tracing:
 
 | Field | Type | Default | Env var |
 | --- | --- | --- | --- |
-| `tracing.sink.type` | string | `logging` | `AGENTKEEPER_TRACING_SINK_TYPE` |
-| `tracing.sink.cardea.endpoint` | string | `""` (required with `cardea`) | `AGENTKEEPER_TRACING_SINK_CARDEA_ENDPOINT` |
-| `tracing.sink.cardea.api_key_env` | string | `""` (required with `cardea`) | `AGENTKEEPER_TRACING_SINK_CARDEA_API_KEY_ENV` |
-| `tracing.sink.cardea.queue_size` | int | `10000` | `AGENTKEEPER_TRACING_SINK_CARDEA_QUEUE_SIZE` |
-| `tracing.sink.cardea.queue_max_bytes` | int64 | `67108864` | `AGENTKEEPER_TRACING_SINK_CARDEA_QUEUE_MAX_BYTES` |
-| `tracing.sink.cardea.batch_max_records` | int | `500` | `AGENTKEEPER_TRACING_SINK_CARDEA_BATCH_MAX_RECORDS` |
-| `tracing.sink.cardea.batch_max_bytes` | int | `1048576` | `AGENTKEEPER_TRACING_SINK_CARDEA_BATCH_MAX_BYTES` |
-| `tracing.sink.cardea.batch_max_delay` | duration | `1s` | `AGENTKEEPER_TRACING_SINK_CARDEA_BATCH_MAX_DELAY` |
-| `tracing.sink.cardea.request_timeout` | duration | `10s` | `AGENTKEEPER_TRACING_SINK_CARDEA_REQUEST_TIMEOUT` |
-| `tracing.sink.cardea.shutdown_timeout` | duration | `10s` | `AGENTKEEPER_TRACING_SINK_CARDEA_SHUTDOWN_TIMEOUT` |
+| `tracing.sink.type` | string | `logging` | `CARDEA_GATEWAY_TRACING_SINK_TYPE` |
+| `tracing.sink.cardea.endpoint` | string | `""` (required with `cardea`) | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_ENDPOINT` |
+| `tracing.sink.cardea.api_key_env` | string | `""` (required with `cardea`) | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_API_KEY_ENV` |
+| `tracing.sink.cardea.queue_size` | int | `10000` | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_QUEUE_SIZE` |
+| `tracing.sink.cardea.queue_max_bytes` | int64 | `67108864` | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_QUEUE_MAX_BYTES` |
+| `tracing.sink.cardea.batch_max_records` | int | `500` | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_BATCH_MAX_RECORDS` |
+| `tracing.sink.cardea.batch_max_bytes` | int | `1048576` | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_BATCH_MAX_BYTES` |
+| `tracing.sink.cardea.batch_max_delay` | duration | `1s` | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_BATCH_MAX_DELAY` |
+| `tracing.sink.cardea.request_timeout` | duration | `10s` | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_REQUEST_TIMEOUT` |
+| `tracing.sink.cardea.shutdown_timeout` | duration | `10s` | `CARDEA_GATEWAY_TRACING_SINK_CARDEA_SHUTDOWN_TIMEOUT` |
 
 Each field gets its default in both `defaults()` and `Load()`
 (`SetDefault`, which `AutomaticEnv` needs to see nested keys), and an

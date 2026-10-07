@@ -1,9 +1,9 @@
 ---
 name: code-review
-description: This skill should be used when the user asks to "review this code", "code review", "review the diff", or wants correctness bugs found in agentkeeper changes touching cli, config, gateway, logging, or provider packages.
+description: This skill should be used when the user asks to "review this code", "code review", "review the diff", or wants correctness bugs found in the Gateway changes touching cli, config, gateway, logging, or provider packages.
 ---
 
-# agentkeeper code review
+# the Gateway code review
 
 Review the pending diff for correctness bugs, scoped to patterns specific
 to this codebase's stack (Cobra, Viper, zap, `net/http`/`httputil`). Don't
@@ -29,7 +29,7 @@ catch.
 - New fields need all three: a struct field with `mapstructure` tag, a
   default in `defaults()` *and* a matching `v.SetDefault(...)` call in
   `Load()` (these two are easy to let drift apart), and documentation in
-  `configs/agentkeeper.example.yaml`.
+  `configs/cardea-gateway.example.yaml`.
 - `v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))` means nested keys
   with underscores in their own name can collide with the dot-replacement
   scheme — check new field names for this.
@@ -45,7 +45,7 @@ catch.
 - The `/` catch-all forwards everything not matched by a more specific
   pattern (currently just `/healthz`) straight to the configured
   provider. Any new specific route added here narrows what reaches the
-  provider unmodified — check it's intentional, since agentkeeper's
+  provider unmodified — check it's intentional, since the Gateway's
   contract is a transparent single entrypoint.
 
 **`internal/provider`**

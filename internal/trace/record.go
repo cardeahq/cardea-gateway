@@ -1,10 +1,10 @@
-// Package trace builds agentkeeper's call-trace records from the requests
+// Package trace builds the Gateway's call-trace records from the requests
 // and responses it relays, and hands them to a sink.
 package trace
 
 import "time"
 
-const Schema = "agentkeeper.trace/v1"
+const Schema = "cardea-gateway.trace/v1"
 
 // Record is a RequestRecord or a ResponseRecord.
 type Record interface{ recordType() string }

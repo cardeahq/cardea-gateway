@@ -74,7 +74,7 @@ func TestTimestamp_MarshalsRFC3339UTCWithSixFractionalDigits(t *testing.T) {
 }
 
 func TestSchema_IsV1(t *testing.T) {
-	if Schema != "agentkeeper.trace/v1" {
-		t.Fatalf("Schema = %q, want %q", Schema, "agentkeeper.trace/v1")
+	if Schema != "cardea-gateway.trace/v1" {
+		t.Fatalf("Schema = %q, want %q", Schema, "cardea-gateway.trace/v1")
 	}
 }

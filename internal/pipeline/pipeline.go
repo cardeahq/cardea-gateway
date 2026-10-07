@@ -15,7 +15,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/agentkeeper/agentkeeper/internal/trace"
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 // Call is the state every stage shares over the life of one request.
@@ -154,7 +154,7 @@ type observation struct {
 func (p *Pipeline) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		r.Header.Del("X-Agentkeeper-Request-Id")
+		r.Header.Del("X-Gateway-Request-Id")
 
 		c := &Call{ID: newRequestID(), Received: start, Request: r}
 

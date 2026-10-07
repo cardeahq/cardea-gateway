@@ -12,7 +12,7 @@ import (
 func writeConfigFile(t *testing.T, contents string) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "agentkeeper.yaml")
+	path := filepath.Join(dir, "cardea-gateway.yaml")
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatalf("writing config file: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestLoad_PipelineDefaults(t *testing.T) {
 
 func TestLoad_PipelineMaxBodyBytesEnvVarOverride(t *testing.T) {
 	path := writeConfigFile(t, "")
-	t.Setenv("AGENTKEEPER_PIPELINE_MAX_BODY_BYTES", "123")
+	t.Setenv("CARDEA_GATEWAY_PIPELINE_MAX_BODY_BYTES", "123")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -166,7 +166,7 @@ func TestLoad_RejectsAgentWithNeitherAPIKeyEnvNorJWTSecretEnvSet(t *testing.T) {
 
 func TestLoad_IdentificationEnvVarOverride(t *testing.T) {
 	path := writeConfigFile(t, "")
-	t.Setenv("AGENTKEEPER_PIPELINE_STAGES_IDENTIFICATION", "true")
+	t.Setenv("CARDEA_GATEWAY_PIPELINE_STAGES_IDENTIFICATION", "true")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -234,12 +234,12 @@ func TestLoad_TracingEnvVarOverrides(t *testing.T) {
 		value string
 		check func(Config) bool
 	}{
-		{"AGENTKEEPER_PIPELINE_STAGES_TRACING", "false", func(c Config) bool { return !c.Pipeline.Stages.Tracing }},
-		{"AGENTKEEPER_TRACING_FINGERPRINT_KEY_ENV", "MY_TRACE_KEY", func(c Config) bool { return c.Tracing.FingerprintKeyEnv == "MY_TRACE_KEY" }},
-		{"AGENTKEEPER_TRACING_MAX_READ_BYTES", "4096", func(c Config) bool { return c.Tracing.MaxReadBytes == 4096 }},
-		{"AGENTKEEPER_TRACING_SINK_TYPE", "logging", func(c Config) bool { return c.Tracing.Sink.Type == "logging" }},
-		{"AGENTKEEPER_TRACING_SINK_PATH", "/var/log/agentkeeper/records.jsonl", func(c Config) bool {
-			return c.Tracing.Sink.Path == "/var/log/agentkeeper/records.jsonl"
+		{"CARDEA_GATEWAY_PIPELINE_STAGES_TRACING", "false", func(c Config) bool { return !c.Pipeline.Stages.Tracing }},
+		{"CARDEA_GATEWAY_TRACING_FINGERPRINT_KEY_ENV", "MY_TRACE_KEY", func(c Config) bool { return c.Tracing.FingerprintKeyEnv == "MY_TRACE_KEY" }},
+		{"CARDEA_GATEWAY_TRACING_MAX_READ_BYTES", "4096", func(c Config) bool { return c.Tracing.MaxReadBytes == 4096 }},
+		{"CARDEA_GATEWAY_TRACING_SINK_TYPE", "logging", func(c Config) bool { return c.Tracing.Sink.Type == "logging" }},
+		{"CARDEA_GATEWAY_TRACING_SINK_PATH", "/var/log/cardea-gateway/records.jsonl", func(c Config) bool {
+			return c.Tracing.Sink.Path == "/var/log/cardea-gateway/records.jsonl"
 		}},
 	}
 	for _, tt := range tests {
@@ -426,19 +426,19 @@ policies:
 }
 
 func TestLoad_PoliciesEnvVarOverrides(t *testing.T) {
-	t.Setenv("AGENTKEEPER_PIPELINE_STAGES_POLICIES", "false")
-	t.Setenv("AGENTKEEPER_POLICIES_PATH", "/env/policy.rego")
-	t.Setenv("AGENTKEEPER_POLICIES_DATA", "/env/a.json,/env/b")
-	t.Setenv("AGENTKEEPER_POLICIES_WATCH", "true")
-	t.Setenv("AGENTKEEPER_POLICIES_WATCH_SETTLE", "1s")
-	t.Setenv("AGENTKEEPER_POLICIES_EVAL_TIMEOUT", "30ms")
+	t.Setenv("CARDEA_GATEWAY_PIPELINE_STAGES_POLICIES", "false")
+	t.Setenv("CARDEA_GATEWAY_POLICIES_PATH", "/env/policy.rego")
+	t.Setenv("CARDEA_GATEWAY_POLICIES_DATA", "/env/a.json,/env/b")
+	t.Setenv("CARDEA_GATEWAY_POLICIES_WATCH", "true")
+	t.Setenv("CARDEA_GATEWAY_POLICIES_WATCH_SETTLE", "1s")
+	t.Setenv("CARDEA_GATEWAY_POLICIES_EVAL_TIMEOUT", "30ms")
 
 	cfg, err := Load(writeConfigFile(t, ""))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Pipeline.Stages.Policies {
-		t.Fatal("AGENTKEEPER_PIPELINE_STAGES_POLICIES=false was ignored")
+		t.Fatal("CARDEA_GATEWAY_PIPELINE_STAGES_POLICIES=false was ignored")
 	}
 	want := PoliciesConfig{
 		Path:        "/env/policy.rego",
@@ -454,7 +454,7 @@ func TestLoad_PoliciesEnvVarOverrides(t *testing.T) {
 
 func TestLoad_PoliciesEnvVarOverridesFile(t *testing.T) {
 	path := writeConfigFile(t, "policies:\n  path: /file/policy.rego\n")
-	t.Setenv("AGENTKEEPER_POLICIES_PATH", "/env/policy.rego")
+	t.Setenv("CARDEA_GATEWAY_POLICIES_PATH", "/env/policy.rego")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -575,25 +575,25 @@ func TestLoad_CardeaSinkEnvVarOverrides(t *testing.T) {
 	// The mandatory settings come from the environment too, so every case
 	// is a valid configuration with one field changed.
 	base := map[string]string{
-		"AGENTKEEPER_TRACING_SINK_TYPE":               "cardea",
-		"AGENTKEEPER_TRACING_SINK_CARDEA_ENDPOINT":    "https://platform.example.com/ingest",
-		"AGENTKEEPER_TRACING_SINK_CARDEA_API_KEY_ENV": "CARDEA_API_KEY",
+		"CARDEA_GATEWAY_TRACING_SINK_TYPE":               "cardea",
+		"CARDEA_GATEWAY_TRACING_SINK_CARDEA_ENDPOINT":    "https://platform.example.com/ingest",
+		"CARDEA_GATEWAY_TRACING_SINK_CARDEA_API_KEY_ENV": "CARDEA_API_KEY",
 	}
 	tests := []struct {
 		env   string
 		value string
 		check func(TraceSinkConfig) bool
 	}{
-		{"AGENTKEEPER_TRACING_SINK_TYPE", "logging+cardea", func(s TraceSinkConfig) bool { return s.Type == "logging+cardea" }},
-		{"AGENTKEEPER_TRACING_SINK_CARDEA_ENDPOINT", "http://localhost:9000/in", func(s TraceSinkConfig) bool { return s.Cardea.Endpoint == "http://localhost:9000/in" }},
-		{"AGENTKEEPER_TRACING_SINK_CARDEA_API_KEY_ENV", "OTHER_KEY", func(s TraceSinkConfig) bool { return s.Cardea.APIKeyEnv == "OTHER_KEY" }},
-		{"AGENTKEEPER_TRACING_SINK_CARDEA_QUEUE_SIZE", "20000", func(s TraceSinkConfig) bool { return s.Cardea.QueueSize == 20000 }},
-		{"AGENTKEEPER_TRACING_SINK_CARDEA_QUEUE_MAX_BYTES", "134217728", func(s TraceSinkConfig) bool { return s.Cardea.QueueMaxBytes == 134217728 }},
-		{"AGENTKEEPER_TRACING_SINK_CARDEA_BATCH_MAX_RECORDS", "100", func(s TraceSinkConfig) bool { return s.Cardea.BatchMaxRecords == 100 }},
-		{"AGENTKEEPER_TRACING_SINK_CARDEA_BATCH_MAX_BYTES", "2097152", func(s TraceSinkConfig) bool { return s.Cardea.BatchMaxBytes == 2097152 }},
-		{"AGENTKEEPER_TRACING_SINK_CARDEA_BATCH_MAX_DELAY", "2s", func(s TraceSinkConfig) bool { return s.Cardea.BatchMaxDelay == 2*time.Second }},
-		{"AGENTKEEPER_TRACING_SINK_CARDEA_REQUEST_TIMEOUT", "5s", func(s TraceSinkConfig) bool { return s.Cardea.RequestTimeout == 5*time.Second }},
-		{"AGENTKEEPER_TRACING_SINK_CARDEA_SHUTDOWN_TIMEOUT", "3s", func(s TraceSinkConfig) bool { return s.Cardea.ShutdownTimeout == 3*time.Second }},
+		{"CARDEA_GATEWAY_TRACING_SINK_TYPE", "logging+cardea", func(s TraceSinkConfig) bool { return s.Type == "logging+cardea" }},
+		{"CARDEA_GATEWAY_TRACING_SINK_CARDEA_ENDPOINT", "http://localhost:9000/in", func(s TraceSinkConfig) bool { return s.Cardea.Endpoint == "http://localhost:9000/in" }},
+		{"CARDEA_GATEWAY_TRACING_SINK_CARDEA_API_KEY_ENV", "OTHER_KEY", func(s TraceSinkConfig) bool { return s.Cardea.APIKeyEnv == "OTHER_KEY" }},
+		{"CARDEA_GATEWAY_TRACING_SINK_CARDEA_QUEUE_SIZE", "20000", func(s TraceSinkConfig) bool { return s.Cardea.QueueSize == 20000 }},
+		{"CARDEA_GATEWAY_TRACING_SINK_CARDEA_QUEUE_MAX_BYTES", "134217728", func(s TraceSinkConfig) bool { return s.Cardea.QueueMaxBytes == 134217728 }},
+		{"CARDEA_GATEWAY_TRACING_SINK_CARDEA_BATCH_MAX_RECORDS", "100", func(s TraceSinkConfig) bool { return s.Cardea.BatchMaxRecords == 100 }},
+		{"CARDEA_GATEWAY_TRACING_SINK_CARDEA_BATCH_MAX_BYTES", "2097152", func(s TraceSinkConfig) bool { return s.Cardea.BatchMaxBytes == 2097152 }},
+		{"CARDEA_GATEWAY_TRACING_SINK_CARDEA_BATCH_MAX_DELAY", "2s", func(s TraceSinkConfig) bool { return s.Cardea.BatchMaxDelay == 2*time.Second }},
+		{"CARDEA_GATEWAY_TRACING_SINK_CARDEA_REQUEST_TIMEOUT", "5s", func(s TraceSinkConfig) bool { return s.Cardea.RequestTimeout == 5*time.Second }},
+		{"CARDEA_GATEWAY_TRACING_SINK_CARDEA_SHUTDOWN_TIMEOUT", "3s", func(s TraceSinkConfig) bool { return s.Cardea.ShutdownTimeout == 3*time.Second }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.env, func(t *testing.T) {

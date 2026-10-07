@@ -369,7 +369,7 @@ pipeline:
     token_counting: true
     identification: false # off by default — see note below
 
-# Agents agentkeeper recognizes once identification is enabled. Each
+# Agents the Gateway recognizes once identification is enabled. Each
 # entry needs api_key_env, jwt_secret_env, or both. Credential values are
 # never written here — only the name of the environment variable holding
 # them, matching provider.api_key_env.
@@ -382,7 +382,7 @@ agents: []
 
 | Field | Type | Default | Env var |
 | --- | --- | --- | --- |
-| `pipeline.stages.identification` | bool | `false` | `AGENTKEEPER_PIPELINE_STAGES_IDENTIFICATION` |
+| `pipeline.stages.identification` | bool | `false` | `CARDEA_GATEWAY_PIPELINE_STAGES_IDENTIFICATION` |
 | `agents` | `[]AgentConfig` | `[]` | not settable via env (list) |
 | `agents[].agent_id` | string | — | — |
 | `agents[].api_key_env` | string | `""` | — |
@@ -394,14 +394,14 @@ stylistic: for every other stage, "enabled with nothing configured to
 enforce" means "allow everything" (specs/0001, rule 4) — but for
 identification, "enabled with nothing configured" means "no caller can
 ever be identified," which is indistinguishable from denying all traffic
-outright. An operator upgrading agentkeeper must not discover this as an
+outright. An operator upgrading the Gateway must not discover this as an
 outage. Both `defaults()` and `Load()` must set this boolean to `false`
 explicitly — leaving it unregistered would coincidentally also unmarshal
 to `false` (Go's zero value), but registering it explicitly documents
 that the divergence from every other stage is deliberate.
 
 Both new fields need entries in `defaults()`/`Load()`, and this section's
-YAML needs to be reflected in `configs/agentkeeper.example.yaml`.
+YAML needs to be reflected in `configs/cardea-gateway.example.yaml`.
 
 ## Failure modes
 
@@ -418,7 +418,7 @@ YAML needs to be reflected in `configs/agentkeeper.example.yaml`.
 | `api_key_env`/`jwt_secret_env` names an unset or empty environment variable | `identity.NewRegistry` fails (surfaced through `gateway.New`); process exits before listening |
 | `jwt_secret_env` value shorter than 32 bytes | `identity.NewRegistry` fails; process exits before listening |
 | Two agents register the identical literal API key | `identity.NewRegistry` fails (ambiguous match); process exits before listening |
-| `identityStage.Request` panics (e.g. a wiring bug leaves the registry nil) | Recovered by the pipeline's existing panic handling (specs/0001); 503 `agentkeeper_unavailable` |
+| `identityStage.Request` panics (e.g. a wiring bug leaves the registry nil) | Recovered by the pipeline's existing panic handling (specs/0001); 503 `gateway_unavailable` |
 | Identification disabled | Stage absent from `buildStages`; no `Authorization` header required; `Call.AgentID` always `""` |
 
 Requests fail **closed**, per specs/0002 (functional) § *Failure
@@ -490,7 +490,7 @@ stage's error vs. its denial.
   combinations unmarshals cleanly.
 - Duplicate `agent_id`, empty `agent_id`, and an entry with neither env
   field set are all rejected by `Load`.
-- `AGENTKEEPER_PIPELINE_STAGES_IDENTIFICATION=true` overrides the default.
+- `CARDEA_GATEWAY_PIPELINE_STAGES_IDENTIFICATION=true` overrides the default.
 - An unknown key inside an `agents` entry is rejected the same way
   `pipeline.stages` already rejects unknown keys.
 
@@ -544,7 +544,7 @@ stage's error vs. its denial.
   back — deferred to the audit stage's spec.
 - Should `Registry.Authenticate`'s API-key comparison use
   `crypto/subtle` for constant time, closing a narrow timing side
-  channel a plain map lookup leaves open? No other part of agentkeeper
+  channel a plain map lookup leaves open? No other part of the Gateway
   does constant-time comparison today, and network jitter likely
   dominates; worth a decision during the security-review pass before this
   ships.

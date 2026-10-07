@@ -206,8 +206,8 @@ this.
     | `Content-Encoding: gzip` | The body is compressed |
     | `X-Cardea-Instance` | The instance identity (rule 10), 32 hexadecimal characters |
     | `X-Cardea-First-Seq`, `X-Cardea-Last-Seq` | The numbers of the first and last record in the batch |
-    | `X-Cardea-Schema` | The record schema, `agentkeeper.trace/v1` |
-    | `User-Agent: agentkeeper-gateway` | Identifies the sender |
+    | `X-Cardea-Schema` | The record schema, `cardea-gateway.trace/v1` |
+    | `User-Agent: cardea-gateway` | Identifies the sender |
 
   - Body: compressed (gzip) newline-delimited JSON, one line per record.
     Each line is an object with the record's `seq` (its number, rule 10)

@@ -161,7 +161,7 @@ func TestSchemas_RejectWhatTheContractForbids(t *testing.T) {
 		doc  any
 	}{
 		{"a field left out", record, mutate(func(m map[string]any) { delete(m, "tokens") })},
-		{"a wrong schema version", record, mutate(func(m map[string]any) { m["schema"] = "agentkeeper.trace/v2" })},
+		{"a wrong schema version", record, mutate(func(m map[string]any) { m["schema"] = "cardea-gateway.trace/v2" })},
 		{"a call id without its prefix", record, mutate(func(m map[string]any) { m["call_id"] = "7f3c" })},
 		{"a timestamp without microseconds", record, mutate(func(m map[string]any) { m["started_at"] = "2026-09-27T14:03:11Z" })},
 		{"a negative duration", record, mutate(func(m map[string]any) { m["duration_us"] = -1 })},

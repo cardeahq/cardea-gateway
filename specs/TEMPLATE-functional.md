@@ -5,7 +5,7 @@
 
 <!--
 Copy this file to specs/NNNN-<feature>-functional.md and fill it in.
-Write for the operator who deploys agentkeeper and the developer whose
+Write for the operator who deploys the Gateway and the developer whose
 client calls it: no Go types, no package names, no internal/ paths.
 Delete a section that genuinely doesn't apply. Delete these comments.
 -->

@@ -5,6 +5,6 @@
 .env
 .idea/
 
-agentkeeper.yaml
-agentkeeper.local.yaml
+cardea-gateway.yaml
+cardea-gateway.local.yaml
 traces.jsonl

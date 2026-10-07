@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 const sessionUUID = "8d0c7a3e-5b1f-4c2a-9e6d-1f2a3b4c5d6e"

@@ -188,7 +188,7 @@ into this file, so it happens once instead of once per stage.
 ```json
 {
   "error": {
-    "type": "agentkeeper_denied",
+    "type": "gateway_denied",
     "stage": "rate_limiting",
     "message": "request quota exceeded",
     "request_id": "ak_7f3c2b1d9e8a4f60"
@@ -197,15 +197,15 @@ into this file, so it happens once instead of once per stage.
 ```
 
 A stage failure (error or recovered panic) uses `type:
-"agentkeeper_unavailable"` with status 503 instead. A deliberate denial
-(`agentkeeper_denied`) also sets `X-Should-Retry: false`, the header the
+"gateway_unavailable"` with status 503 instead. A deliberate denial
+(`gateway_denied`) also sets `X-Should-Retry: false`, the header the
 Anthropic and OpenAI SDKs honor to skip their automatic retry (functional
 rules 7 and 9); a failure sets none, so SDK defaults apply. Both cases set
-`Content-Type: application/json` and `X-Agentkeeper-Request-Id:
+`Content-Type: application/json` and `X-Gateway-Request-Id:
 <Call.ID>`; `Denial.Reason` never appears in the body.
 
 `Call.ID` is generated as `"ak_"` followed by 16 hex characters from
-`crypto/rand`. Any inbound `X-Agentkeeper-Request-Id` header is stripped
+`crypto/rand`. Any inbound `X-Gateway-Request-Id` header is stripped
 before stages run, so a caller has no way to plant or collide with the ID
 that ends up in the audit trail.
 
@@ -268,11 +268,11 @@ pipeline:
 
 | Field | Type | Default | Env var |
 | --- | --- | --- | --- |
-| `pipeline.max_body_bytes` | int64 | `10485760` | `AGENTKEEPER_PIPELINE_MAX_BODY_BYTES` |
-| `pipeline.stages.token_counting` | bool | `true` | `AGENTKEEPER_PIPELINE_STAGES_TOKEN_COUNTING` |
+| `pipeline.max_body_bytes` | int64 | `10485760` | `CARDEA_GATEWAY_PIPELINE_MAX_BODY_BYTES` |
+| `pipeline.stages.token_counting` | bool | `true` | `CARDEA_GATEWAY_PIPELINE_STAGES_TOKEN_COUNTING` |
 
 Both fields need entries in `defaults()` and `Load()`, plus documentation
-in `configs/agentkeeper.example.yaml`. Every future stage adds its own
+in `configs/cardea-gateway.example.yaml`. Every future stage adds its own
 `pipeline.stages.<name>` boolean, defaulting to `true`, plus whatever
 settings section actually turns it into an enforcing gate — a stage with
 an empty settings section must allow everything (functional spec §
@@ -288,11 +288,11 @@ the path.
 
 | Condition | Result |
 | --- | --- |
-| `Stage.Request` returns an `error` | 503 `agentkeeper_unavailable`, names the stage; `next` never called; logged at error level |
+| `Stage.Request` returns an `error` | 503 `gateway_unavailable`, names the stage; `next` never called; logged at error level |
 | `Stage.Request` panics | Recovered into an error, same handling as above; the process keeps running |
 | A `Decision` has `allow == false` | Its status and message go to the caller; the pipeline short-circuits; logged at warn with `Reason` |
-| Request body exceeds `max_body_bytes` | 413 `agentkeeper_denied`, stage recorded as `"pipeline"`, before any stage's `Request` runs; observers still fire |
-| Request body read fails | 400 `agentkeeper_denied`; nothing forwarded; observers still fire |
+| Request body exceeds `max_body_bytes` | 413 `gateway_denied`, stage recorded as `"pipeline"`, before any stage's `Request` runs; observers still fire |
+| Request body read fails | 400 `gateway_denied`; nothing forwarded; observers still fire |
 | Response exceeds `max_body_bytes` | Still streamed to the caller in full; `ResponseTruncated = true` and observers see a partial `ResponseBody` |
 | `ResponseObserver.Response` panics | Recovered and logged; does not touch the response the caller already received |
 | Unknown key under `pipeline.stages`, or `max_body_bytes <= 0` | `config.Load` fails; `serve` exits non-zero before listening |
@@ -311,14 +311,14 @@ allow / deny / error / panic / observer variants):
 - Observer order and coverage: observers run in reverse order, exactly
   once per call, for allowed, denied, and failed calls alike, with
   `c.Denial` populated for the latter two.
-- Denial rendering: correct status, JSON shape, `X-Agentkeeper-Request-Id`
+- Denial rendering: correct status, JSON shape, `X-Gateway-Request-Id`
   header, and an explicit assertion that `Denial.Reason` never appears in
   the body.
 - Do-not-retry signal: a denial (including the pipeline's own 413 and 400)
   carries `X-Should-Retry: false`; a stage failure carries no
   `X-Should-Retry` header.
 - Request IDs: generated, unique per call, and an inbound
-  `X-Agentkeeper-Request-Id` is neither honored nor echoed back.
+  `X-Gateway-Request-Id` is neither honored nor echoed back.
 - Body handling: read once; `r.Body` is still fully and identically
   readable by `next`; an over-limit body is denied with 413 and `next` is
   never invoked.

@@ -12,9 +12,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
-	"github.com/agentkeeper/agentkeeper/internal/identity"
-	"github.com/agentkeeper/agentkeeper/internal/pipeline"
+	"github.com/cardeahq/cardea-gateway/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/identity"
+	"github.com/cardeahq/cardea-gateway/internal/pipeline"
 )
 
 // identityStage must satisfy pipeline.Stage; unlike tokenStage it never

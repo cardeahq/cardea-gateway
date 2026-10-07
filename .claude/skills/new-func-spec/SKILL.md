@@ -1,6 +1,6 @@
 ---
 name: new-func-spec
-description: This skill should be used when the user asks to "write a functional spec", "bootstrap a functional spec", "describe the behavior of this feature", "write the requirements", or otherwise wants a new behavior/requirements document created under specs/ for an agentkeeper feature.
+description: This skill should be used when the user asks to "write a functional spec", "bootstrap a functional spec", "describe the behavior of this feature", "write the requirements", or otherwise wants a new behavior/requirements document created under specs/ for a Gateway feature.
 ---
 
 # Bootstrap a functional specification
@@ -13,7 +13,7 @@ against it.
 
 Two audiences read it, and neither wants Go:
 
-- the **operator** who deploys agentkeeper and configures it;
+- the **operator** who deploys the Gateway and configures it;
 - the **application developer** whose client talks to the gateway and who
   sees only requests, responses, status codes, and latency.
 
@@ -49,8 +49,8 @@ depends on whether the feature already has a technical spec:
 
 Do not start drafting until the behavior is settled. Skim the existing
 behavior the feature changes — the routes in `internal/gateway`, the
-config surface in `configs/agentkeeper.example.yaml` — so the questions
-are specific to agentkeeper, then ask the user, batched via
+config surface in `configs/cardea-gateway.example.yaml` — so the questions
+are specific to the Gateway, then ask the user, batched via
 `AskUserQuestion` rather than one at a time:
 
 - **Problem and who has it** — what goes wrong today, for the operator or
@@ -75,11 +75,11 @@ are specific to agentkeeper, then ask the user, batched via
 - **Acceptance criteria** — how we will know it works. If the user has
   none, propose three and get them confirmed.
 
-Two constraints hold across agentkeeper features; don't re-litigate them
+Two constraints hold across the Gateway features; don't re-litigate them
 in the interview, but do check the proposed behavior against them and
 flag a conflict:
 
-- The caller cannot choose or see the upstream provider — agentkeeper
+- The caller cannot choose or see the upstream provider — the Gateway
   decides from config alone. A feature must not add a caller-facing
   provider selector.
 - Behavior is meant to be rule-driven for the operator, not

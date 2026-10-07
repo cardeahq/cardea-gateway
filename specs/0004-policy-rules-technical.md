@@ -382,7 +382,7 @@ Rules for building it:
 - **`call.headers`**: lower-cased names, values as lists, with
   `authorization`, `proxy-authorization`, `x-api-key`, `api-key`, `cookie`
   and `set-cookie` removed (the list functional rule 11 names), plus
-  `x-agentkeeper-request-id`, which the pipeline already strips from
+  `x-gateway-request-id`, which the pipeline already strips from
   inbound requests. The removal list is a constant in the package, with a
   test that fails if any of them can reach the input.
 - **`operation.name`** from the path: `/v1/messages` is `messages`,
@@ -454,7 +454,7 @@ func (s *policiesStage) Request(ctx context.Context, c *pipeline.Call) (pipeline
 2. `res, err := s.engine.Evaluate(ctx, req)`. On error, log at error level
    with the call id, the error kind and `s.engine.Revision()`, and return
    `pipeline.Decision{}, err`. The pipeline turns that into the 503
-   `agentkeeper_unavailable` denial (specs/0001).
+   `gateway_unavailable` denial (specs/0001).
 3. `detail := trace.StageDetail{Revision: res.Revision, Rules: res.Rules}`
    (a nil `Rules` becomes `[]string{}` so it encodes as `[]`); when
    `res.Revision == ""` (no policy configured) the detail is omitted.
@@ -564,12 +564,12 @@ policies:
 
 | Field | Type | Default | Env var |
 | --- | --- | --- | --- |
-| `pipeline.stages.policies` | bool | `true` | `AGENTKEEPER_PIPELINE_STAGES_POLICIES` |
-| `policies.path` | string | `""` | `AGENTKEEPER_POLICIES_PATH` |
-| `policies.data` | list of string | `[]` | `AGENTKEEPER_POLICIES_DATA` (comma-separated) |
-| `policies.watch` | bool | `false` | `AGENTKEEPER_POLICIES_WATCH` |
-| `policies.watch_settle` | duration | `500ms` | `AGENTKEEPER_POLICIES_WATCH_SETTLE` |
-| `policies.eval_timeout` | duration | `100ms` | `AGENTKEEPER_POLICIES_EVAL_TIMEOUT` |
+| `pipeline.stages.policies` | bool | `true` | `CARDEA_GATEWAY_PIPELINE_STAGES_POLICIES` |
+| `policies.path` | string | `""` | `CARDEA_GATEWAY_POLICIES_PATH` |
+| `policies.data` | list of string | `[]` | `CARDEA_GATEWAY_POLICIES_DATA` (comma-separated) |
+| `policies.watch` | bool | `false` | `CARDEA_GATEWAY_POLICIES_WATCH` |
+| `policies.watch_settle` | duration | `500ms` | `CARDEA_GATEWAY_POLICIES_WATCH_SETTLE` |
+| `policies.eval_timeout` | duration | `100ms` | `CARDEA_GATEWAY_POLICIES_EVAL_TIMEOUT` |
 
 Every key is registered in `defaults()` and with `SetDefault` in `Load()`
 (an unregistered key would unmarshal to its zero value; for
@@ -582,7 +582,7 @@ fails at startup. `Load` rejects `eval_timeout <= 0` and `watch_settle <=
 
 The existing `rules.path` key is left as it is: still unused, still in the
 example file. It belongs to the circuit-breaker and compaction rules its
-comment describes; this feature does not touch it. `configs/agentkeeper.example.yaml`
+comment describes; this feature does not touch it. `configs/cardea-gateway.example.yaml`
 gets the `policies` block above and `policies: true` under
 `pipeline.stages`, with a note that the stage allows everything until
 `path` is set.
@@ -596,7 +596,7 @@ gets the `policies` block above and `policies: true` under
 | Two data files define the same top-level key, or a data key equals a package root | Same: startup fails naming both files |
 | The policy does not declare `package cardea.policy`, or defines no `deny` | `policy.New` fails and `serve` exits before listening, naming the file; on reload, the old snapshot stays |
 | Reload fails, for any reason above, or a watched path vanished | Old snapshot stays; error logged with trigger, revision and position; `Reload` returns the error |
-| Evaluation exceeds `eval_timeout` | `*EvalError{timeout}` at the deadline, even if the evaluation cannot be interrupted at once; stage returns it; 503 `agentkeeper_unavailable`, no `X-Should-Retry`; error log with kind and revision |
+| Evaluation exceeds `eval_timeout` | `*EvalError{timeout}` at the deadline, even if the evaluation cannot be interrupted at once; stage returns it; 503 `gateway_unavailable`, no `X-Should-Retry`; error log with kind and revision |
 | 16 abandoned evaluations are still running | `*EvalError{overloaded}` immediately; same 503 handling; the log names the kind |
 | OPA returns an error, or the result is not a set of strings | `*EvalError{internal}` or `{malformed_decision}`; same handling |
 | `messages` or `count_tokens` body is not valid JSON, repeats a key in any object, or `messages` is not an array | `*EvalError{input}`; same handling |
@@ -710,7 +710,7 @@ denial and for the pipeline's own 413, and none for a failure; a stage
 detail encodes `"detail": null`.
 
 `internal/config`: defaults and env overrides for every new field;
-`AGENTKEEPER_POLICIES_PATH`; unknown key under `policies`
+`CARDEA_GATEWAY_POLICIES_PATH`; unknown key under `policies`
 fails; non-positive durations fail.
 
 `internal/cli`: `SIGHUP` reaches `ReloadPolicy` (with a fake) and does not

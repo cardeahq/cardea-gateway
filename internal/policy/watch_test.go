@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 const watchSettle = 150 * time.Millisecond

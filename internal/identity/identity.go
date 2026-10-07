@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/agentkeeper/agentkeeper/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 // DenialReason is the audit-only category for a failed identification

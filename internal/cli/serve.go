@@ -7,15 +7,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/agentkeeper/agentkeeper/internal/gateway"
-	"github.com/agentkeeper/agentkeeper/internal/logging"
-	"github.com/agentkeeper/agentkeeper/internal/provider"
+	"github.com/cardeahq/cardea-gateway/internal/gateway"
+	"github.com/cardeahq/cardea-gateway/internal/logging"
+	"github.com/cardeahq/cardea-gateway/internal/provider"
 )
 
 func newServeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "serve",
-		Short: "Start the agentkeeper LLM gateway",
+		Short: "Start the Cardea Gateway",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
