@@ -1,15 +1,29 @@
 {
   "agents": {
-    "agent-alpha": { "models": ["claude-sonnet-5-5", "claude-opus-5-5"] },
+    "agent-alpha": {
+      "models": [
+        "claude-sonnet-5-5",
+        "claude-opus-5-5"
+      ]
+    },
     "agent-beta": {
-      "models": ["claude-haiku-4-5-20251001"],
+      "models": [
+        "claude-haiku-4-5-20251001"
+      ],
       "max_tokens": 8192
     }
   },
   "limits": {
-    "max_tokens": 64000,
+    "max_tokens": 128000,
     "max_request_bytes": 8000000
   },
-  "forbidden_tools": ["delete_database", "drop_table"],
-  "blocked_path_prefixes": ["/secrets", "/etc/shadow", "~/.ssh"]
+  "forbidden_tools": [
+    "delete_database",
+    "drop_table"
+  ],
+  "blocked_path_prefixes": [
+    "/secrets",
+    "/etc/shadow",
+    "~/.ssh"
+  ]
 }
