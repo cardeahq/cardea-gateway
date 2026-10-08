@@ -52,10 +52,12 @@ deny contains "secret-path-in-tool-call" if {
 	startswith(arg, prefix)
 }
 
-# 6. Cost guardrails
-deny contains "max-tokens-too-high" if input.parameters.max_tokens > 8192
+# 6. Cost guardrails: data.limits, overridable per agent in data.agents
+limit(name) := object.get(data.agents, [object.get(input, ["agent", "id"], ""), name], data.limits[name])
 
-deny contains "request-too-large" if input.call.size_bytes > 2000000
+deny contains "max-tokens-too-high" if input.parameters.max_tokens > limit("max_tokens")
+
+deny contains "request-too-large" if input.call.size_bytes > limit("max_request_bytes")
 
 # 7. Weekend freeze for everyone except agent-alpha
 deny contains "weekend-freeze" if {
