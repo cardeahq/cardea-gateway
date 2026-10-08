@@ -6,7 +6,7 @@ server:
   listen_addr: ":8080"
 
 logging:
-  level: info    # debug | info | warn | error
+  level: info # debug | info | warn | error
   format: console # console | json
 
 rules:
@@ -49,6 +49,10 @@ agents: []
   #   api_key_env: "AGENT_ACME_BOT_API_KEY"
   # - agent_id: "beta-bot"
   #   jwt_secret_env: "AGENT_BETA_BOT_JWT_SECRET"
+  # Claude Code: start it with ANTHROPIC_BASE_URL pointing at the Gateway
+  # and ANTHROPIC_AUTH_TOKEN set to this key (sent as a Bearer token).
+  # - agent_id: "claude-code"
+  #   api_key_env: "AGENT_CLAUDE_CODE_API_KEY"
 
 # Call tracing: one JSON record per request and per response, handed to the
 # trace sink. Records carry metadata and keyed fingerprints only — never
@@ -86,10 +90,13 @@ tracing:
   # applies to the listed agents, or with default: true to every agent
   # without a list of its own.
   sessions: []
-  # - agents: ["agent-alpha"]
+  # Claude Code sends its session ID in a header, and again in the body
+  # inside metadata.user_id (a JSON-encoded string) as a fallback.
+  # - agents: ["claude-code"]
   #   sources:
+  #     - header: X-Claude-Code-Session-Id
   #     - body_field: metadata.user_id
-  #       pattern: '_session_([0-9a-f-]{36})$'
+  #       pattern: '"session_id":"([0-9a-f-]{36})"'
   # - default: true
   #   sources:
   #     - header: X-Session-Id
