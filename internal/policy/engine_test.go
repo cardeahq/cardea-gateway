@@ -346,7 +346,7 @@ deny contains "other" if { input.model == "m" }`,
 			if err != nil {
 				t.Fatalf("Evaluate: %v", err)
 			}
-			if !slices.Equal(res.Rules, tt.want) && !(len(res.Rules) == 0 && len(tt.want) == 0) {
+			if !slices.Equal(res.Rules, tt.want) && (len(res.Rules) != 0 || len(tt.want) != 0) {
 				t.Fatalf("Rules = %v, want %v", res.Rules, tt.want)
 			}
 			if !revisionPattern.MatchString(res.Revision) {

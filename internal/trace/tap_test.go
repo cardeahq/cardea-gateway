@@ -174,9 +174,9 @@ func checkToolCall(t *testing.T, got ToolCall, want wantToolCall) {
 			t.Fatalf("tool call %s Fingerprint = %v, want %s", want.id, deref(got.Fingerprint), fp)
 		}
 	}
-	switch {
-	case want.relayedAt == anyTime:
-	case want.relayedAt == nil:
+	switch want.relayedAt {
+	case anyTime:
+	case nil:
 		if got.RelayedAt != nil {
 			t.Fatalf("tool call %s RelayedAt = %v, want nil", want.id, time.Time(*got.RelayedAt))
 		}
