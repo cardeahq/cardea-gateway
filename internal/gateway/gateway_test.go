@@ -319,7 +319,7 @@ func gwUnwritableSink(t *testing.T) (path string, breakIt func(), hasWriter func
 	hasWriter = func() bool {
 		buf := make([]byte, 1)
 		n, err := syscall.Read(fd, buf)
-		return !(n == 0 && err == nil) // EOF means no writer holds the FIFO open
+		return n != 0 || err != nil // EOF means no writer holds the FIFO open
 	}
 	return path, closeReader, hasWriter
 }
