@@ -57,6 +57,10 @@ know how much or how often.
 - **Operator-defined detection patterns.** The three categories and their
   patterns are fixed in this version; only the cache backend is
   pluggable.
+- **A generic, high-entropy "this looks like a secret" detector for API
+  keys.** Only fixed, vendor-prefixed formats are matched; there's no
+  reliable way to tell a real secret from an ordinary long ID, hash or
+  UUID without more signal than this stage has.
 - **Scanning request headers or the tools an agent offers** (their names,
   descriptions and declared schemas). Only conversation content and the
   tool calls/results already in the request are scanned — the same scope
@@ -131,9 +135,11 @@ version disguises it.
    - **Social Security Number**, as one category covering the US, UK and
      France national formats; any of the three is detected under this
      one category.
-   - **API key**, covering common vendor-prefixed secret formats and
-     generic high-entropy bearer-style tokens of typical key length.
-     Exact patterns are a technical-spec concern.
+   - **API key**, covering common vendor-prefixed secret formats (for
+     example a key that starts `sk-`, `ghp_`, `AKIA`). A standalone
+     token with no recognizable prefix is not detected under this
+     category in this version, even if it looks like a secret — see
+     *Non-goals*. Exact patterns are a technical-spec concern.
 7. Each category can be enabled or disabled independently. A disabled
    category's pattern is never matched, and PII of that category passes
    through unredacted while the others are still detected in the same
@@ -162,8 +168,9 @@ version disguises it.
 | --- | --- | --- | --- |
 | Stage on/off | Whether filtering is in the pipeline path | On | Off: nothing is scanned or cached; every request is forwarded exactly as the caller sent it. |
 | Per-category on/off (email / SSN / API key) | Enables or disables detection for one category | All on | All off: equivalent to the stage being off for detection, though the cache backend still initializes. |
-| Cache backend | Which implementation holds detected values: in-memory, Redis, or a custom implementation of the Gateway's cache interface | In-memory | Redis is described but not implemented this version (see *Non-goals*); a custom backend that fails to initialize fails the Gateway at startup, like a misconfigured policy (specs/0004 rule 19). |
+| Cache backend | Which implementation holds detected values. Only "in-memory" is a configurable value in this version | In-memory | Any other configured value, including "redis", fails the Gateway at startup rather than silently falling back to in-memory (see *Non-goals*). A different implementation (Redis, or one of an operator's own) is added by building a modified Gateway binary that wires it in — not a value this control accepts. |
 | Cache entry lifetime | How long a cached value is kept before it's evicted | A few minutes | Too short: entries disappear almost immediately — harmless today since nothing reads them back yet, but would need raising once a restoration feature exists. Too long: memory grows with sustained traffic in a long-running process. |
+| Cache capacity | How many entries the in-memory cache holds before it evicts the oldest to make room | 100,000 | Too low: entries are evicted well before their lifetime is up under heavy traffic. Too high: memory grows further before eviction kicks in. |
 
 With an operator who configures nothing, filtering is on, all three
 categories are active, and the in-memory cache backend holds detected
@@ -269,9 +276,10 @@ failure) the error that occurred.
 15. **Given** an unknown category name in configuration, **when** the
     Gateway starts, **then** it exits with an error naming the unknown
     category.
-16. **Given** a custom cache implementation that fails to initialize,
-    **when** the Gateway starts, **then** it exits with an error rather
-    than silently falling back to the in-memory default.
+16. **Given** a cache backend configured to anything other than
+    "in-memory" (including "redis"), **when** the Gateway starts,
+    **then** it exits with an error naming the value, rather than
+    silently falling back to the in-memory default.
 
 ## Open questions
 

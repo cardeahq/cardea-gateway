@@ -255,7 +255,23 @@ type Result struct {
 
 // Engine detects and redacts PII in a request body. Safe for concurrent
 // use: it holds no per-call state (see scan).
-type Engine struct { /* unexported: patterns, cache, ttl */ }
+type Engine struct { /* unexported: patterns, cache, ttl, providerName */ }
+
+// MemoryCache is the default Cache: volatile, in-process, bounded by
+// capacity and per-entry TTL. Past capacity, the oldest entry by
+// insertion order (not access) is evicted first — see Design, "Cache
+// eviction."
+type MemoryCache struct { /* unexported: mutex, map, insertion-ordered queue, ticker, closed flag */ }
+
+// NewMemoryCache starts a background goroutine that sweeps expired
+// entries every 30s, regardless of any individual entry's TTL. capacity
+// must be positive. Close stops the sweep goroutine; Set and Get on a
+// closed cache return an error.
+func NewMemoryCache(capacity int) (*MemoryCache, error)
+
+func (c *MemoryCache) Set(ctx context.Context, key string, entry Entry, ttl time.Duration) error
+func (c *MemoryCache) Get(ctx context.Context, key string) (Entry, bool, error)
+func (c *MemoryCache) Close() error
 
 // New builds an Engine from configuration, starting the configured cache
 // backend (today: only "memory"; any other value is a config error, see
@@ -687,6 +703,17 @@ cache, written once and read by nothing in this version.
   `zaptest/observer`, and nowhere in `Result.Body` — only as the `Value`
   of a `Cache.Get` the test performs directly, standing in for a future
   restoration consumer.
+- **Write before forward (functional criterion 8).** An `httptest`
+  upstream handler, invoked synchronously while serving the proxied
+  request, calls `Cache.Get` on a redacted occurrence's placeholder UUID
+  and asserts a hit — proving the value was cached before the request
+  reached the provider, not just eventually.
+- **Startup warning (functional criterion 9).** `filtering.New` with the
+  default (memory) backend logs, via `zaptest/observer`, the warning that
+  the cache is volatile and won't survive a restart; a future backend
+  that isn't volatile would not need to log it (not applicable to this
+  version, but the assertion is scoped to the memory backend
+  specifically, not "some warning is logged").
 
 `internal/gateway`: `filteringStage` against a stub engine — a redaction
 attaches `Redactions` and logs one line with per-category fields in fixed

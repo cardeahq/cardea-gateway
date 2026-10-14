@@ -614,6 +614,29 @@ func TestRecords_RequestSizeBytes(t *testing.T) {
 	}
 }
 
+// shrinkBodyStage mimics a stage that rewrites c.Body in place (specs/0006's
+// filtering stage is the first), shrinking it so a test can tell "the
+// length the caller sent" apart from "len(c.Body) after this stage ran."
+type shrinkBodyStage struct{ name string }
+
+func (s *shrinkBodyStage) Name() string { return s.name }
+func (s *shrinkBodyStage) Request(_ context.Context, c *Call) (Decision, error) {
+	c.Body = []byte("x") // much shorter than whatever the caller actually sent
+	return Allow(), nil
+}
+
+func TestRecords_RequestSizeBytesIsCapturedBeforeAnyStageCanChangeTheBody(t *testing.T) {
+	sink := &fakeSink{}
+	p := New(zaptest.NewLogger(t), 1<<20, sink, &shrinkBodyStage{name: "filtering"})
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	doRequest(t, p, next, postBody(streamedBody))
+
+	req := sink.one(t, "request")
+	if v, ok := req["size_bytes"]; !ok || v != float64(len(streamedBody)) {
+		t.Fatalf("size_bytes = %#v, want %d: the caller's original length, not len(c.Body) (1) after the stage shrank it", v, len(streamedBody))
+	}
+}
+
 func TestRecords_TracingReadFailureFailsClosed(t *testing.T) {
 	sink := &fakeSink{}
 	p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})

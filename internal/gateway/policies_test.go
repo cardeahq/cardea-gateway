@@ -172,7 +172,7 @@ func TestBuildStages_PoliciesComesThirdAndFollowsItsConfigBoolean(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := buildCfg(t, tt.identification, tt.tracing, tt.policies, "")
-			stages, sink, eng, err := buildStages(cfg, zaptest.NewLogger(t))
+			stages, sink, eng, _, err := buildStages(cfg, zaptest.NewLogger(t))
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -210,7 +210,7 @@ func TestBuildStages_PolicyErrorsFailConstruction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := buildCfg(t, false, true, true, tt.path)
-			stages, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
+			stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
 			if sink != nil {
 				_ = sink.Close()
 			}
@@ -248,7 +248,7 @@ func TestBuildStages_PolicyConfiguredWithoutIdentificationWarns(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			logger, logs := observed()
 			cfg := buildCfg(t, tt.identification, true, true, tt.path)
-			_, sink, _, err := buildStages(cfg, logger)
+			_, sink, _, _, err := buildStages(cfg, logger)
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
