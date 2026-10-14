@@ -91,11 +91,15 @@ type RequestStage struct {
 	Detail     *StageDetail `json:"detail"` // nil encodes null: the stage reported none
 }
 
-// StageDetail is what a stage reports about its own decision. Rules is
-// never nil when set, so it encodes as [].
+// StageDetail is what a stage reports about its own decision. Each field
+// is populated by the stage that uses it; a stage that doesn't use a
+// field leaves it at its zero value (empty string, or nil, which encodes
+// as JSON null). Rules is never nil when the policies stage sets it, so
+// it encodes as [] there.
 type StageDetail struct {
-	Revision string   `json:"revision"`
-	Rules    []string `json:"rules"`
+	Revision   string         `json:"revision"`
+	Rules      []string       `json:"rules"`
+	Redactions map[string]int `json:"redactions"`
 }
 
 // Observation is one of "completed", "failed".

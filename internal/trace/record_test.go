@@ -3,6 +3,7 @@ package trace
 import (
 	"encoding/json"
 	"maps"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -76,5 +77,46 @@ func TestTimestamp_MarshalsRFC3339UTCWithSixFractionalDigits(t *testing.T) {
 func TestSchema_IsV1(t *testing.T) {
 	if Schema != "cardea-gateway.trace/v1" {
 		t.Fatalf("Schema = %q, want %q", Schema, "cardea-gateway.trace/v1")
+	}
+}
+
+// --- StageDetail (specs/0006 adds Redactions) ------------------------------------
+
+func TestStageDetail_MarshalsRedactionsAlongsideThePolicyFields(t *testing.T) {
+	tests := []struct {
+		name string
+		in   StageDetail
+		want map[string]any
+	}{
+		{
+			name: "zero value: every field is its zero/null, not omitted",
+			in:   StageDetail{},
+			want: map[string]any{"revision": "", "rules": nil, "redactions": nil},
+		},
+		{
+			name: "a policy detail leaves redactions null",
+			in:   StageDetail{Revision: "r7", Rules: []string{"no-rm-rf"}},
+			want: map[string]any{"revision": "r7", "rules": []any{"no-rm-rf"}, "redactions": nil},
+		},
+		{
+			name: "a filtering detail leaves revision empty and rules null",
+			in:   StageDetail{Redactions: map[string]int{"email": 2, "ssn": 1}},
+			want: map[string]any{"revision": "", "rules": nil, "redactions": map[string]any{"email": float64(2), "ssn": float64(1)}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := json.Marshal(tt.in)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("Marshal(%+v) = %s, want fields %v", tt.in, raw, tt.want)
+			}
+		})
 	}
 }

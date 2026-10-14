@@ -44,8 +44,9 @@ const (
 // --- Fake Anthropic upstream ------------------------------------------------------
 
 type capturedRequest struct {
-	header http.Header
-	body   []byte
+	header        http.Header
+	body          []byte
+	contentLength int64 // r.ContentLength, as the transport actually saw it (specs/0006)
 }
 
 type fakeAnthropic struct {
@@ -57,7 +58,7 @@ type fakeAnthropic struct {
 func (f *fakeAnthropic) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	f.mu.Lock()
-	f.requests = append(f.requests, capturedRequest{header: r.Header.Clone(), body: body})
+	f.requests = append(f.requests, capturedRequest{header: r.Header.Clone(), body: body, contentLength: r.ContentLength})
 	f.mu.Unlock()
 	f.respond(w, body)
 }
@@ -339,7 +340,7 @@ func loopResponder(w http.ResponseWriter, body []byte) {
 
 func TestBuildStages_TracingFollowsIdentification(t *testing.T) {
 	cfg := withAgents(t, tracingGatewayConfig(t, "http://127.0.0.1:1"))
-	stages, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -362,7 +363,7 @@ func TestBuildStages_TracingOffGivesNoSinkAndNoRecords(t *testing.T) {
 	cfg := tracingGatewayConfig(t, url)
 	cfg.Pipeline.Stages.Tracing = false
 
-	stages, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}

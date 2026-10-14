@@ -186,7 +186,7 @@ func TestBuildStages_PrependsIdentificationAheadOfTracing(t *testing.T) {
 		Agents:  []config.AgentConfig{{AgentID: "agent-alpha", APIKeyEnv: "AK_GW_TEST_BUILD_ALPHA_KEY"}},
 		Tracing: fileSinkTracing(t),
 	}
-	stages, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestBuildStages_OmitsIdentificationWhenDisabled(t *testing.T) {
 		},
 		Tracing: fileSinkTracing(t),
 	}
-	stages, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestBuildStages_ReturnsErrorNotPartialStagesOnRegistryFailure(t *testing.T)
 		Agents:  []config.AgentConfig{{AgentID: "agent-a", APIKeyEnv: "AK_GW_TEST_UNSET_ENV_VAR_ABC123"}},
 		Tracing: fileSinkTracing(t),
 	}
-	stages, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, _, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err == nil {
 		t.Fatal("buildStages with a registry construction failure = nil error, want error")
 	}

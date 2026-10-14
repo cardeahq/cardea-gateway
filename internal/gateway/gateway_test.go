@@ -133,7 +133,7 @@ func TestBuildStages_RespectsConfigBooleans(t *testing.T) {
 				},
 				Tracing: fileSinkTracing(t),
 			}
-			stages, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
+			stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -155,7 +155,7 @@ func TestBuildStages_TracingStageIsNamedAfterItsConfigKey(t *testing.T) {
 		},
 		Tracing: fileSinkTracing(t),
 	}
-	stages, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestBuildStages_SinkTypeSelectsTheImplementation(t *testing.T) {
 			}
 			cfg.Tracing.Sink.Type = tt.sinkType
 			cfg.Tracing.Sink.Cardea = gwCardeaSettings(p.srv.URL + "/in")
-			_, sink, _, err := buildStages(cfg, zaptest.NewLogger(t))
+			_, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -642,7 +642,7 @@ func TestBuildStages_PolicyEngineFailureClosesTheSinkAlreadyBuilt(t *testing.T) 
 	cfg.Tracing.Sink.Path = path
 	cfg.Tracing.Sink.Cardea = gwCardeaSettings(p.srv.URL + "/in")
 
-	if _, _, _, err := buildStages(cfg, logger); err == nil {
+	if _, _, _, _, err := buildStages(cfg, logger); err == nil {
 		t.Fatal("buildStages = nil error, want the policy failure")
 	}
 	if hasWriter() {

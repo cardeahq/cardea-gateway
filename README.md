@@ -36,6 +36,24 @@ all available keys. Point at a specific file with `--config`:
 gateway serve --config ./cardea-gateway.yaml
 ```
 
+## Filtering
+
+Before a request reaches the provider, the Gateway redacts PII it finds in
+the conversation, replacing each occurrence with a `[category:UUID]`
+placeholder so the provider never sees the real value. On by default, with
+three built-in categories, each independently toggleable:
+
+- **Email addresses**
+- **Social Security Numbers** — US, UK and France formats, one category
+- **API keys** — common vendor-prefixed formats (`sk-`, `ghp_`, `AKIA`, …)
+
+The real value is cached under its placeholder's UUID for a future
+restoration feature; nothing reads it back yet. See
+[`specs/0006-filtering-functional.md`](specs/0006-filtering-functional.md) for
+the full behavior and
+[`configs/cardea-gateway.example.yaml`](configs/cardea-gateway.example.yaml)
+for the `filtering` config block.
+
 ## Development
 
 ```sh

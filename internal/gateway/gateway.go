@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/cardeahq/cardea-gateway/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/filtering"
 	"github.com/cardeahq/cardea-gateway/internal/identity"
 	"github.com/cardeahq/cardea-gateway/internal/pipeline"
 	"github.com/cardeahq/cardea-gateway/internal/policy"
@@ -18,12 +19,13 @@ import (
 )
 
 type Gateway struct {
-	cfg      config.Config
-	logger   *zap.Logger
-	provider provider.Provider
-	sink     trace.CloseableSink
-	engine   *policy.Engine
-	server   *http.Server
+	cfg          config.Config
+	logger       *zap.Logger
+	provider     provider.Provider
+	sink         trace.CloseableSink
+	engine       *policy.Engine
+	filterEngine *filtering.Engine
+	server       *http.Server
 }
 
 func New(cfg config.Config, logger *zap.Logger, prov provider.Provider) (*Gateway, error) {
@@ -34,12 +36,13 @@ func New(cfg config.Config, logger *zap.Logger, prov provider.Provider) (*Gatewa
 		provider: prov,
 	}
 
-	stages, sink, engine, err := buildStages(cfg, logger)
+	stages, sink, engine, filterEngine, err := buildStages(cfg, logger)
 	if err != nil {
 		return nil, err
 	}
 	g.sink = sink
 	g.engine = engine
+	g.filterEngine = filterEngine
 	var pipelineSink trace.Sink
 	if sink != nil {
 		pipelineSink = sink
@@ -71,6 +74,9 @@ func (g *Gateway) ReloadPolicy() error {
 func (g *Gateway) Run(ctx context.Context) error {
 	if g.sink != nil {
 		defer func() { _ = g.sink.Close() }()
+	}
+	if g.filterEngine != nil {
+		defer func() { _ = g.filterEngine.Close() }()
 	}
 	if g.engine != nil {
 		go func() {
@@ -111,24 +117,24 @@ func (g *Gateway) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // spec adds its constructor at its position here. The returned sink is
 // nil exactly when tracing is disabled, and the engine exactly when the
 // policies stage is.
-func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace.CloseableSink, *policy.Engine, error) {
+func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace.CloseableSink, *policy.Engine, *filtering.Engine, error) {
 	var stages []pipeline.Stage
 	var sink trace.CloseableSink
 	if cfg.Pipeline.Stages.Identification {
 		registry, err := identity.NewRegistry(cfg.Agents)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("building agent registry: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("building agent registry: %w", err)
 		}
 		stages = append(stages, &identityStage{registry: registry})
 	}
 	if cfg.Pipeline.Stages.Tracing {
 		tracer, err := trace.NewTracer(cfg.Tracing, logger)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("building tracer: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("building tracer: %w", err)
 		}
 		sink, err = buildSink(cfg.Tracing, logger)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		stages = append(stages, &tracingStage{tracer: tracer})
 	}
@@ -140,14 +146,26 @@ func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace
 			if sink != nil {
 				_ = sink.Close()
 			}
-			return nil, nil, nil, fmt.Errorf("building policy engine: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("building policy engine: %w", err)
 		}
 		if cfg.Policies.Path != "" && !cfg.Pipeline.Stages.Identification {
 			logger.Warn("a policy is configured but identification is off: rules cannot tell agents apart")
 		}
 		stages = append(stages, &policiesStage{engine: engine, logger: logger})
 	}
-	return stages, sink, engine, nil
+	var filterEngine *filtering.Engine
+	if cfg.Pipeline.Stages.Filtering {
+		var err error
+		filterEngine, err = filtering.New(cfg.Filtering, cfg.Provider.Name, logger)
+		if err != nil {
+			if sink != nil {
+				_ = sink.Close()
+			}
+			return nil, nil, nil, nil, fmt.Errorf("building filtering engine: %w", err)
+		}
+		stages = append(stages, &filteringStage{engine: filterEngine, logger: logger})
+	}
+	return stages, sink, engine, filterEngine, nil
 }
 
 // buildSink returns the sink cfg.Sink selects: the local log, the Cardea
