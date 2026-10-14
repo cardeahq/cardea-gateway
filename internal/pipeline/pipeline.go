@@ -185,6 +185,9 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 			c.Body = body
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
+		// requestSize is the length the caller actually sent, captured
+		// before any stage can shrink or grow c.Body (specs/0006).
+		requestSize := int64(len(body))
 
 		ctx := r.Context()
 		var results []stageResult
@@ -248,7 +251,7 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 		}
 
 		if p.sink != nil {
-			rec := buildRequestRecord(c, results, denial, stageErr != nil, bodyRead)
+			rec := buildRequestRecord(c, results, denial, stageErr != nil, bodyRead, requestSize)
 			if err := p.sink.Write(rec); err != nil {
 				p.logger.Error("trace sink did not accept the request record; the record is lost",
 					zap.String("call_id", c.ID), zap.String("stage", "tracing"), zap.String("record", "request"), zap.Error(err))

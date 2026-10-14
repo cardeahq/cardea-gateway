@@ -402,8 +402,11 @@ var (
 	reEmail = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+`)
 
 	// reSSNUS: ###-##-####, excluding the area codes 000, 666 and 900-999
-	// and the group 00, which the SSA never issues.
-	reSSNUS = regexp.MustCompile(`\b(?:(?!000|666|9\d{2})\d{3})-(?:(?!00)\d{2})-(?:(?!0000)\d{4})\b`)
+	// and the group 00, which the SSA never issues. Written as explicit
+	// alternation, not negative lookahead: Go's regexp package (RE2) does
+	// not support (?!...), so the area, group and serial each enumerate
+	// their valid ranges directly instead of excluding the invalid ones.
+	reSSNUS = regexp.MustCompile(`\b(?:0(?:[1-9]\d|\d[1-9])|[1-5]\d{2}|6(?:[0-5]\d|6[0-57-9]|[7-9]\d)|[7-8]\d{2})-(?:[1-9]\d|0[1-9])-(?:[1-9]\d{3}|0[1-9]\d{2}|0{2}[1-9]\d|0{3}[1-9])\b`)
 
 	// reSSNUK: a National Insurance Number. First letter excludes
 	// D,F,I,Q,U,V; second excludes D,F,I,Q,U,V,O; six digits; suffix A-D.
@@ -616,9 +619,18 @@ type FilterCacheConfig struct {
 true, APIKey: true}, Cache: {Backend: "memory", Capacity: 100000, TTL: 5
 * time.Minute}}`.
 
-`Load()` registers every key above via `v.SetDefault`, and unmarshals
-`filtering` with `ErrorUnused` like `policies` and `pipeline.stages`
-(a typo'd key fails at startup). After unmarshalling, `Load` rejects:
+`Load()` registers every key above via `v.SetDefault`. `cfg.Filtering`
+itself is populated by the existing top-level `v.Unmarshal(&cfg)` call,
+not by a second `UnmarshalKey("filtering", ...)` assigned back onto
+it — unlike `policies` and `pipeline.stages`, `filtering` has fields
+nested inside sub-structs (`categories.*`, `cache.*`), and
+`UnmarshalKey` does not apply `AutomaticEnv` overrides below the first
+level, so a second, *authoritative* decode into `cfg.Filtering` would
+silently drop every `CARDEA_GATEWAY_FILTERING_CATEGORIES_*`/`_CACHE_*`
+env override. Catching a typo'd key still needs an `ErrorUnused` decode,
+so `Load` runs `v.UnmarshalKey("filtering", &discard, ErrorUnused)` into
+a throwaway value purely to surface that error — its result is never
+assigned to `cfg.Filtering`. After unmarshalling, `Load` rejects:
 `filtering.cache.backend` not equal to `"memory"` (naming the value and
 that only `"memory"` is implemented this version); `filtering.cache.capacity
 <= 0`; `filtering.cache.ttl <= 0`.

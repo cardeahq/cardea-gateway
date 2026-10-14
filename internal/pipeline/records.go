@@ -6,7 +6,7 @@ import (
 	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
-func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, bodyRead bool) trace.RequestRecord {
+func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, bodyRead bool, requestSize int64) trace.RequestRecord {
 	rec := trace.RequestRecord{
 		Schema:      trace.Schema,
 		Record:      "request",
@@ -21,7 +21,7 @@ func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, 
 		Findings:    []trace.Finding{},
 	}
 	if bodyRead {
-		size := int64(len(c.Body))
+		size := requestSize
 		rec.SizeBytes = &size
 	}
 	if c.Trace != nil {

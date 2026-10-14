@@ -147,20 +147,29 @@
                 "description": "One of: allowed, denied, failed, not_run."
               },
               "detail": {
-                "description": "What a stage reports about its own decision; null for stages that report none. Today only the policies stage sets it (specs/0004).",
+                "description": "What a stage reports about its own decision; null for stages that report none. The policies stage (specs/0004) sets revision/rules; the filtering stage (specs/0006) sets redactions. A stage leaves the fields it doesn't use at their zero value.",
                 "oneOf": [
                   {
                     "type": "object",
-                    "required": ["revision", "rules"],
+                    "required": ["revision", "rules", "redactions"],
                     "properties": {
                       "revision": {
-                        "description": "The policy revision in force.",
+                        "description": "The policy revision in force; \"\" when not set by the policies stage.",
                         "type": "string"
                       },
                       "rules": {
-                        "description": "Identifiers of the rules that fired; empty when none did.",
-                        "type": "array",
-                        "items": { "type": "string" }
+                        "description": "Identifiers of the rules that fired; empty when none did; null when not set by the policies stage.",
+                        "oneOf": [
+                          { "type": "array", "items": { "type": "string" } },
+                          { "type": "null" }
+                        ]
+                      },
+                      "redactions": {
+                        "description": "Occurrences redacted by category; null when not set by the filtering stage.",
+                        "oneOf": [
+                          { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+                          { "type": "null" }
+                        ]
                       }
                     }
                   },
