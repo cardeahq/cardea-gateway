@@ -73,10 +73,30 @@ jobs:
 
   govulncheck:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
-      - run: govulncheck ./...
+      - name: govulncheck
+        run: govulncheck ./... | tee govulncheck.log
+      - name: file or update vulnerability issue
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body="govulncheck failed on main at $(git rev-parse --short HEAD):
+
+          \`\`\`
+          $(cat govulncheck.log)
+          \`\`\`"
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --label vulnerability --state open --json number -q '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "govulncheck: vulnerabilities found on main" --label vulnerability --body "$body"
+          fi

@@ -121,6 +121,120 @@ interrupted.
   follow it. If the implementation ends up diverging from the spec, update
   the spec in the same change rather than leaving it stale.
 
+## Spec-driven workflow
+
+Agents and skills live in `.claude/`:
+
+- Skills: `new-func-spec`, `new-tech-spec`, `spec-review`, `code-review`,
+  `security-review`, `simplify`.
+- Agents, one human gate between each: `spec-test-writer` (tests only),
+  `spec-implementer` (never edits tests), `quality-gate` (PASS or FAIL).
+
+Write the functional spec, then the technical spec, run `spec-review` on the
+pair, then the three agents in order. `make check` must pass at each stage.
+
+## GitHub-issue-triggered pipeline
+
+The same workflow, started from a GitHub issue instead of a human writing the
+specs, and run unattended between its two human gates. A scheduled Claude
+Code session (`gh-issue-loop` skill, run via a Claude Code cron job — see
+below) polls `cardeahq/cardea-gateway` issues and drives it.
+
+```
+issue, labeled spec-request
+        │  issue-spec-writer agent: worktree + branch off main,
+        │  drafts functional + technical spec from the issue, opens
+        │  a draft PR ("Closes #N")
+        ▼
+issue labeled spec-ready  ──── HUMAN GATE 1: review the spec diff in
+        │                      the draft PR, then label the issue
+        │                      spec-approved (or leave PR review
+        │                      comments and re-trigger spec-request)
+        ▼
+issue labeled spec-approved
+        │  issue-pipeline agent: spec-test-writer → spec-implementer
+        │  → quality-gate, back to back, no pause between them
+        ▼
+quality-gate PASS → PR marked "ready for review", issue labeled in-review
+quality-gate FAIL → PR comment with the report, issue labeled blocked
+        ▼
+issue labeled in-review ──── HUMAN GATE 2: ordinary GitHub PR review
+                              and merge. Nothing pipeline-specific here.
+```
+
+Labels, all on the **issue** (the PR itself only ever carries GitHub's
+native review state):
+
+| Label | Means | Who sets it |
+| --- | --- | --- |
+| `spec-request` | Please draft specs for this | human |
+| `spec-in-progress` | Stage 0 running | agent |
+| `needs-input` | Stage 0 stopped on a question only a human can answer — see the issue comment | agent |
+| `spec-ready` | Draft spec PR posted, awaiting spec approval | agent |
+| `spec-approved` | Specs approved, go implement | human |
+| `pipeline-in-progress` | Stage 2 running | agent |
+| `in-review` | quality-gate passed, PR is ready for normal review | agent |
+| `blocked` | quality-gate failed, or stage 0/2 needs help | agent |
+
+Worktrees live at `../cardea-gateway-worktrees/issue-<N>-<slug>`, one per
+issue, branch `issue-<N>-<slug>`, both derived from the issue number and
+title so re-entry after `needs-input` or `blocked` reuses the same one
+instead of creating a duplicate.
+
+Unlike the interactive agents above, `issue-spec-writer` and `issue-pipeline`
+never call `AskUserQuestion` — there's no one watching. `issue-spec-writer`
+treats the issue body and comments as the interview; if something only a
+human can decide is missing, it posts the question as an issue comment and
+labels the issue `needs-input` instead of guessing. `issue-pipeline` chains
+`spec-test-writer`, `spec-implementer`, and `quality-gate` without the pause
+each normally expects between stages — the two human gates for this whole
+pipeline are spec approval and the final PR review, not one per agent.
+
+**Running it:** manually, ask Claude to use the `gh-issue-loop` skill.
+Scheduled, register it as a Claude Code cron job (`CronCreate`) that invokes
+that skill every tick; a 15–30 minute interval is reasonable since this is
+polling, not latency-sensitive. Every `gh` call needs a valid token — if your
+shell exports a stale `GITHUB_TOKEN`, it shadows `gh`'s own keyring login and
+every call fails; the agents and skill here run `GITHUB_TOKEN= gh ...` to
+sidestep that, but the cron job's own environment should not have one set
+either.
+
+## Vulnerability loop
+
+A second, simpler loop off the same `gh-issue-loop` entry point: fixing a
+`govulncheck` finding is a mechanical version bump, not a design decision,
+so there's no spec stage and only one human gate — the PR review.
+
+```
+CI: govulncheck fails on a push to main
+        │  files or updates one open issue, labeled vulnerability,
+        │  with the full govulncheck output
+        ▼
+issue labeled vulnerability
+        │  vuln-fixer agent: worktree + branch off main, re-runs
+        │  govulncheck -json to map each reachable finding to a
+        │  module bump or a Go toolchain bump, applies them,
+        │  verifies with make check + a clean govulncheck re-run
+        ▼
+all findings cleared → PR opened directly, issue labeled in-review
+some findings remain, or make check breaks → PR comment or issue
+  comment with what's still open and why, issue labeled blocked
+        ▼
+issue labeled in-review ──── HUMAN GATE: ordinary GitHub PR review
+                              and merge.
+```
+
+The `govulncheck` CI job (`.github/workflows/ci.yml`) has `issues: write`
+scoped to that job only, and on failure (push to `main` only, never on a PR)
+dedupes against any existing open `vulnerability` issue rather than filing a
+new one each run. `vuln-fixer` reuses the `vulnerability` /
+`vuln-in-progress` labels for its own claim, and the shared `in-review` /
+`blocked` labels from the feature pipeline above for its outcome.
+
+If a finding has no fix published upstream yet, `vuln-fixer` still opens a
+PR for whatever it could fix and leaves the issue `blocked` rather than
+retrying — a human re-adds `vulnerability` once a fix ships.
+
 ## How to use the Gateway with OpenCode
 
 1. Run the Gateway with a Claude API key
