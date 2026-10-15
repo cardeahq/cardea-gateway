@@ -8,10 +8,14 @@
 The functional spec asks for a fourth pipeline stage that detects email
 addresses, US/UK/France SSNs and API keys inside a request's conversation
 text and tool calls/results, replaces each occurrence with a
-`[category:UUID]` placeholder (never reusing a UUID), and writes the real
-value to a pluggable cache for a later version to read back. Responses are
+`[category:UUID]` placeholder (never reusing a UUID). Responses are
 untouched; restoration is explicitly out of scope (specs/0006-functional,
-*Non-goals*).
+*Non-goals*). *Amended by specs/0007: this spec originally also had
+filtering write the real value to a pluggable cache for a later version
+to read back; specs/0007 removes that cache and every type and config
+field built for it, described throughout this spec as "Amended by
+specs/0007" — see specs/0007-technical for the design that replaces
+those parts.*
 
 Nothing in the Gateway today rewrites a request body. Every existing
 stage (`identification`, `tracing`, `policies`) only reads `pipeline.Call`
@@ -31,29 +35,34 @@ if used to reconstruct a request.
 - Three fixed categories — `email`, `ssn` (US, UK, France combined),
   `api_key` (vendor-prefixed formats only; see *Non-goals*) — each
   independently enabled/disabled, on by default.
-- A `Cache` interface with one shipped implementation, `MemoryCache`
-  (TTL + FIFO eviction, a startup warning that it's volatile).
+- ~~A `Cache` interface with one shipped implementation, `MemoryCache`
+  (TTL + FIFO eviction, a startup warning that it's volatile).~~ *Removed
+  by specs/0007.*
 - Redact only within scope: `system`, each message's text/tool-call/
   tool-result content. Everything else — `thinking`/`redacted_thinking`
   blocks, `image` blocks, unrecognized block types, and every top-level
   field outside `system`/`messages` — passes through byte-identical.
-- Fail the call closed on any detection or cache error, never forwarding
-  a partially redacted or unredacted body.
+- Fail the call closed on any detection error, never forwarding a
+  partially redacted or unredacted body. *Amended by specs/0007: a cache
+  error is no longer a case, since there is no cache.*
 - Keep the request's `Content-Length` consistent with the rewritten body
   so the upstream transport doesn't misread it.
-- Nothing logged — at any level, on any path — contains a detected value,
-  the text that matched, or a cache key tied to one.
+- Nothing logged — at any level, on any path — contains a detected
+  value or the text that matched. *Amended by specs/0007: "a cache key
+  tied to one" no longer applies.*
 
 ## Non-goals
 
 - Everything specs/0006-functional excludes: response rewriting/
-  restoration, a Redis cache, categories beyond the three fixed ones,
-  per-jurisdiction SSN toggles, operator-defined patterns, scanning
-  headers or tool *definitions*.
-- A public (non-`internal/`) package for `Cache`. It stays under
+  restoration, categories beyond the three fixed ones, per-jurisdiction
+  SSN toggles, operator-defined patterns, scanning headers or tool
+  *definitions*. *Amended by specs/0007: a Redis cache is no longer a
+  deferred option — there is no cache of any kind.*
+- ~~A public (non-`internal/`) package for `Cache`. It stays under
   `internal/filtering`, extended the way `trace.Sink` is today: by
   forking and adding an implementation, then wiring it into
-  `buildStages` — not a runtime-loadable plugin.
+  `buildStages` — not a runtime-loadable plugin.~~ *Removed by
+  specs/0007: `Cache` itself no longer exists.*
 - A generic, entropy-based "this looks like a secret" heuristic for
   `api_key`. Only fixed vendor-prefixed patterns ship in this version;
   see *Alternatives considered*.
@@ -62,9 +71,10 @@ if used to reconstruct a request.
   as part of the conversation, and rewriting its text would invalidate
   that signature and break the call. They are always passed through
   untouched, even when they contain text matching a category.
-- True LRU eviction for the in-memory cache. Nothing reads an entry back
-  yet, so there's no access pattern to make recency-aware eviction
-  meaningful to build or test; FIFO-past-capacity is enough.
+- ~~True LRU eviction for the in-memory cache. Nothing reads an entry
+  back yet, so there's no access pattern to make recency-aware eviction
+  meaningful to build or test; FIFO-past-capacity is enough.~~ *Removed
+  by specs/0007: there is no cache, so no eviction policy of any kind.*
 - Byte-for-byte fidelity of the rewritten JSON. Every top-level field
   other than `system` and `messages` is copied as raw, untouched bytes.
   Inside `system` and `messages`, keys within a rewritten object are not
@@ -161,9 +171,11 @@ string, every enabled category's compiled patterns are tried; matches are
 sorted by start offset (a tie broken by the longer match), and a match
 that starts before the previous one ended is dropped as an overlap. Each
 surviving match gets its own `newUUID()` — never reused, even for a value
-that repeats verbatim elsewhere in the same string or request — written
-to the cache as `Entry{Category, Value}` under that UUID, then replaced
-with `[category:UUID]` in the output.
+that repeats verbatim elsewhere in the same string or request — then
+replaced with `[category:UUID]` in the output. *Amended by specs/0007:
+the matched value was originally also written to the cache as
+`Entry{Category, Value}` under that UUID before the substitution; there
+is no cache to write to any more — see specs/0007-technical.*
 
 **No per-call state on `Engine`.** `Engine` is built once at startup and
 shared across every concurrent request, so it cannot hold a request's
@@ -171,9 +183,10 @@ match counts as a field — that would race. Every helper
 (`redactText`, `redactTree`, `redactBlock`, …) is a method on an
 unexported `*scan`, one of which is created fresh per `Redact` call and
 carries that call's `context.Context` and its `counts map[Category]int`
-accumulator. `Engine` itself holds only what's immutable for the process:
-the compiled patterns for each enabled category, the cache, and the
-per-entry TTL.
+accumulator. `Engine` itself holds only what's immutable for the
+process: the compiled patterns for each enabled category. *Amended by
+specs/0007: `Engine` originally also held the cache and its per-entry
+TTL; both fields are removed.*
 
 **Gating, like `policy`'s.** Filtering only attempts to parse a body when
 the provider is `anthropic` and the path is `/v1/messages` or
@@ -201,7 +214,11 @@ the limit governs what the pipeline *reads*, not what it forwards.
 ### `internal/filtering` — new
 
 Files: `engine.go`, `anthropic.go`, `cache.go`, `memory_cache.go`,
-`patterns.go`, `errors.go`, plus tests.
+`patterns.go`, `errors.go`, plus tests. *Amended by specs/0007:
+`cache.go`'s `Cache`/`Entry` and `memory_cache.go` in their entirety are
+deleted; `Request`/`Result` move into `engine.go` and `Category` (with
+its constants) moves into `patterns.go` — see specs/0007-technical,
+Packages and types.*
 
 ```go
 // Category names a built-in PII category. Fixed in this version —
@@ -255,6 +272,9 @@ type Result struct {
 
 // Engine detects and redacts PII in a request body. Safe for concurrent
 // use: it holds no per-call state (see scan).
+//
+// Amended by specs/0007: the cache and ttl fields below are removed;
+// Engine keeps only patterns and providerName. See specs/0007-technical.
 type Engine struct { /* unexported: patterns, cache, ttl, providerName */ }
 
 // MemoryCache is the default Cache: volatile, in-process, bounded by
@@ -296,17 +316,25 @@ type FilterError struct{ Kind string } // "input", "cache_write", "internal"
 func (e *FilterError) Error() string
 ```
 
-**`engine.go`.** `New`:
+*Amended by specs/0007: `Cache`, `Entry`, `MemoryCache`, `NewMemoryCache`
+and `Engine.Close` above are deleted entirely; `Request` and `Result`
+move to `engine.go`; `Category` and its constants move to `patterns.go`;
+`FilterError.Kind` drops `"cache_write"`, leaving only `"input"` and
+`"internal"`. See specs/0007-technical, Packages and
+types, for the resulting signatures.*
+
+**`engine.go`.** `New` *(amended by specs/0007 — steps 2 and 3 below are
+removed; see specs/0007-technical for the replacement)*:
 
 1. Builds the enabled pattern set from `cfg.Categories` and the
    package-level `categoryPatterns` (below).
-2. Builds the cache: today only `cfg.Cache.Backend == "memory"` is valid
-   (checked in `internal/config`, not here — see *Configuration*);
-   `NewMemoryCache(cfg.Cache.Capacity)` is called and, on success, logs
-   `logger.Warn("filtering cache is in-memory and will not survive a
-   restart; any value cached for a future restoration feature is lost on
-   restart")`.
-3. Returns the `Engine{patterns, cache, ttl: cfg.Cache.TTL}`.
+2. ~~Builds the cache: today only `cfg.Cache.Backend == "memory"` is
+   valid (checked in `internal/config`, not here — see
+   *Configuration*); `NewMemoryCache(cfg.Cache.Capacity)` is called and,
+   on success, logs `logger.Warn("filtering cache is in-memory and will
+   not survive a restart; any value cached for a future restoration
+   feature is lost on restart")`.~~
+3. ~~Returns the `Engine{patterns, cache, ttl: cfg.Cache.TTL}`.~~
 
 `Redact`:
 
@@ -475,6 +503,12 @@ func (s *scan) redactText(str string) (string, error) {
 }
 ```
 
+*Amended by specs/0007: the `cache.Set` call and its error return above
+are removed entirely — `redactText` can no longer fail, so it drops its
+`error` return (`func (s *scan) redactText(str string) string`), and
+every call site in `anthropic.go` drops its error check accordingly.
+See specs/0007-technical, Design and Packages and types.*
+
 ### `internal/gateway` — modified
 
 New file `filtering.go`:
@@ -530,6 +564,10 @@ if g.filterEngine != nil {
 }
 ```
 
+*Amended by specs/0007: `Engine.Close` is deleted along with `Cache`
+(there is nothing left to release), so this deferred block is deleted
+from `Run` as well. See specs/0007-technical, Design.*
+
 ### `internal/pipeline` — modified
 
 `pipeline.go`, in `Handler`: right after the body is read and accepted
@@ -566,6 +604,12 @@ reason.
 
 ## Configuration
 
+*Amended by specs/0007: every `filtering.cache.*` key, the
+`FilterCacheConfig` type, and the `Load` validation and defaults for
+them are deleted. The YAML, field table and Go struct below are 0006's
+original; see specs/0007-technical, Configuration, for what replaces
+them.*
+
 ```yaml
 pipeline:
   stages:
@@ -588,14 +632,14 @@ filtering:
 | `filtering.categories.email` | bool | `true` | `CARDEA_GATEWAY_FILTERING_CATEGORIES_EMAIL` |
 | `filtering.categories.ssn` | bool | `true` | `CARDEA_GATEWAY_FILTERING_CATEGORIES_SSN` |
 | `filtering.categories.api_key` | bool | `true` | `CARDEA_GATEWAY_FILTERING_CATEGORIES_API_KEY` |
-| `filtering.cache.backend` | string | `"memory"` | `CARDEA_GATEWAY_FILTERING_CACHE_BACKEND` |
-| `filtering.cache.capacity` | int | `100000` | `CARDEA_GATEWAY_FILTERING_CACHE_CAPACITY` |
-| `filtering.cache.ttl` | duration | `5m` | `CARDEA_GATEWAY_FILTERING_CACHE_TTL` |
+| ~~`filtering.cache.backend`~~ | ~~string~~ | ~~`"memory"`~~ | *removed* |
+| ~~`filtering.cache.capacity`~~ | ~~int~~ | ~~`100000`~~ | *removed* |
+| ~~`filtering.cache.ttl`~~ | ~~duration~~ | ~~`5m`~~ | *removed* |
 
 ```go
 type FilteringConfig struct {
 	Categories CategoriesConfig  `mapstructure:"categories"`
-	Cache      FilterCacheConfig `mapstructure:"cache"`
+	Cache      FilterCacheConfig `mapstructure:"cache"` // removed by specs/0007
 }
 
 type CategoriesConfig struct {
@@ -604,39 +648,37 @@ type CategoriesConfig struct {
 	APIKey bool `mapstructure:"api_key"`
 }
 
-type FilterCacheConfig struct {
-	// Backend must be "memory" — the only value accepted this version.
-	// "redis" is reserved for when specs/0006 gains that implementation.
-	Backend  string        `mapstructure:"backend"`
-	Capacity int           `mapstructure:"capacity"`
-	TTL      time.Duration `mapstructure:"ttl"`
-}
+type FilterCacheConfig struct { /* deleted entirely by specs/0007 */ }
 ```
 
 `Config` gains `Filtering FilteringConfig`; `StagesConfig` gains
 `Filtering bool`. `defaults()` sets `Filtering: true` under
 `Stages`, and `Filtering: FilteringConfig{Categories: {Email: true, SSN:
-true, APIKey: true}, Cache: {Backend: "memory", Capacity: 100000, TTL: 5
-* time.Minute}}`.
+true, APIKey: true}}` *(amended by specs/0007: the original default also
+set `Cache: {Backend: "memory", Capacity: 100000, TTL: 5 * time.Minute}}`,
+now removed)*.
 
 `Load()` registers every key above via `v.SetDefault`. `cfg.Filtering`
 itself is populated by the existing top-level `v.Unmarshal(&cfg)` call,
 not by a second `UnmarshalKey("filtering", ...)` assigned back onto
 it — unlike `policies` and `pipeline.stages`, `filtering` has fields
-nested inside sub-structs (`categories.*`, `cache.*`), and
-`UnmarshalKey` does not apply `AutomaticEnv` overrides below the first
-level, so a second, *authoritative* decode into `cfg.Filtering` would
-silently drop every `CARDEA_GATEWAY_FILTERING_CATEGORIES_*`/`_CACHE_*`
-env override. Catching a typo'd key still needs an `ErrorUnused` decode,
-so `Load` runs `v.UnmarshalKey("filtering", &discard, ErrorUnused)` into
-a throwaway value purely to surface that error — its result is never
-assigned to `cfg.Filtering`. After unmarshalling, `Load` rejects:
-`filtering.cache.backend` not equal to `"memory"` (naming the value and
-that only `"memory"` is implemented this version); `filtering.cache.capacity
-<= 0`; `filtering.cache.ttl <= 0`.
+nested inside a sub-struct (`categories.*`), and `UnmarshalKey` does not
+apply `AutomaticEnv` overrides below the first level, so a second,
+*authoritative* decode into `cfg.Filtering` would silently drop every
+`CARDEA_GATEWAY_FILTERING_CATEGORIES_*` env override. Catching a typo'd
+key still needs an `ErrorUnused` decode, so `Load` runs
+`v.UnmarshalKey("filtering", &discard, ErrorUnused)` into a throwaway
+value purely to surface that error — its result is never assigned to
+`cfg.Filtering`. *Amended by specs/0007: after unmarshalling, `Load`
+originally also rejected `filtering.cache.backend` not equal to
+`"memory"`, `filtering.cache.capacity <= 0`, and `filtering.cache.ttl <=
+0`; those three checks are deleted along with the field they validated,
+and the same `ErrorUnused` decode above now rejects any
+`filtering.cache.*` key as unrecognized instead.*
 
-`configs/cardea-gateway.example.yaml` gets the `filtering` block above and
-`filtering: true` under `pipeline.stages`.
+`configs/cardea-gateway.example.yaml` gets the `filtering` block above
+(minus the `cache:` sub-block, per specs/0007) and `filtering: true`
+under `pipeline.stages`.
 
 ## Failure modes
 
@@ -645,26 +687,30 @@ that only `"memory"` is implemented this version); `filtering.cache.capacity
 | Every category disabled, or the stage disabled | `Redact` is a no-op (or never called); body forwarded exactly as received |
 | Body is not an Anthropic `messages`/`count_tokens` request (other provider, other path, not JSON) | Not a target: body forwarded unchanged, no error, no detail |
 | Target body is not valid JSON, repeats an object key at any depth, or `messages` is not an array | `*FilterError{"input"}`; stage returns the error; 503 `governance_unavailable`; provider receives nothing |
-| `cache.Set` fails (a future backend unreachable, or the in-memory cache closed) | `*FilterError{"cache_write"}`; same 503 handling; the body already built up to that point is discarded, never partially forwarded |
+| ~~`cache.Set` fails (a future backend unreachable, or the in-memory cache closed)~~ | ~~`*FilterError{"cache_write"}`; same 503 handling; the body already built up to that point is discarded, never partially forwarded~~ *— removed by specs/0007: there is no cache to fail.* |
 | A panic during redaction | Recovered inside `Engine.Redact` itself into `*FilterError{"internal"}`, before the pipeline's own generic stage-panic recovery (which logs the panic's `%v` and could otherwise leak content) ever sees it |
-| `filtering.cache.backend` is anything but `"memory"` | `config.Load` fails at startup, naming the value |
-| `filtering.cache.capacity` or `.ttl` is zero or negative | `config.Load` fails at startup |
+| ~~`filtering.cache.backend` is anything but `"memory"`~~ | ~~`config.Load` fails at startup, naming the value~~ *— removed by specs/0007; see specs/0007-technical, Failure modes, for what setting it now does.* |
+| ~~`filtering.cache.capacity` or `.ttl` is zero or negative~~ | ~~`config.Load` fails at startup~~ *— removed by specs/0007.* |
 | A redaction occurs | Body rewritten; `c.Request.ContentLength` and the `Content-Length` header updated to match; one info log line with per-category counts; `trace.StageDetail.Redactions` set on the request record's `filtering` stage entry |
 | Nothing is detected | Body, `ContentLength` and headers untouched; no log line; `trace.StageDetail` omitted (nil) |
 
 **Requests fail closed**, matching every other stage (specs/0001,
-specs/0004): a detection or cache failure denies the call with the
-standard "governance unavailable" 503; the provider never receives the
-original, unredacted body either. Filtering has no deliberate denial of
-its own — it only ever allows (optionally with a rewritten body) or fails
-closed.
+specs/0004): a detection failure denies the call with the standard
+"governance unavailable" 503; the provider never receives the original,
+unredacted body either. Filtering has no deliberate denial of its own —
+it only ever allows (optionally with a rewritten body) or fails closed.
+*Amended by specs/0007: a cache failure is no longer among the causes,
+since there is no cache.*
 
 **Nothing logged carries PII.** `FilterError` carries a kind only, never
 matched text (unlike `policy.EvalError`, there's no parser-error-with-
 file-position case here worth quoting, since there's no operator-authored
 file to blame). The per-request log line carries counts per category,
-never a value or a placeholder's UUID. `Entry.Value` exists only in the
-cache, written once and read by nothing in this version.
+never a value or a placeholder's UUID. *Amended by specs/0007: the
+original last sentence here — "`Entry.Value` exists only in the cache,
+written once and read by nothing in this version" — no longer applies;
+`Entry` and the cache it lived in are both deleted, so the real value
+exists nowhere once `redactText` returns.*
 
 ## Testing
 
@@ -675,9 +721,10 @@ cache, written once and read by nothing in this version.
   placeholder; a category disabled in config lets its own pattern's text
   through unredacted while others in the same string are still redacted;
   the same email appearing three times in one string gets three distinct
-  UUIDs and three distinct cache entries; two overlapping matches (e.g. a
-  US-SSN-shaped substring inside a longer API-key-shaped token) keep only
-  the earlier/longer one per the merge rule.
+  UUIDs; two overlapping matches (e.g. a US-SSN-shaped substring inside a
+  longer API-key-shaped token) keep only the earlier/longer one per the
+  merge rule. *Amended by specs/0007: "three distinct cache entries" no
+  longer applies — there is no cache to hold them.*
 - **Negative API-key case.** A 40-character random hex string with no
   vendor prefix is not matched — the decision this version makes instead
   of a generic entropy heuristic (*Non-goals*).
@@ -698,34 +745,41 @@ cache, written once and read by nothing in this version.
   unrelated path — all return unchanged with no error.
 - **Failure.** A duplicate top-level key; a duplicate key nested inside a
   `tool_use`'s `input`; `messages` present but not an array — each gives
-  `*FilterError{"input"}`. A `Cache` test double whose `Set` always
-  errors gives `*FilterError{"cache_write"}`, and the caller never
-  receives a body — not even a partially redacted one (assert `Result{}`
-  on error). A redaction helper made to panic (test hook) is recovered
-  into `*FilterError{"internal"}` with no panic value in `Error()`.
-- **Cache (`MemoryCache`).** `Set`/`Get` round trip; an entry past its TTL
-  is a miss on `Get` even before the sweep runs; inserting past capacity
-  evicts the oldest *inserted* entry first (FIFO, not LRU — a `Get` on
-  the second-oldest does not protect it from later eviction); `Close`
-  stops the sweep goroutine (`goleak` or an explicit counter) and a `Set`
-  after `Close` errors.
+  `*FilterError{"input"}`. A redaction helper made to panic (test hook)
+  is recovered into `*FilterError{"internal"}` with no panic value in
+  `Error()`. *Amended by specs/0007: the `Cache` test double whose `Set`
+  always errors, and its `*FilterError{"cache_write"}` assertion, are
+  removed — there is no cache to fail.*
+- ~~**Cache (`MemoryCache`).** `Set`/`Get` round trip; an entry past its
+  TTL is a miss on `Get` even before the sweep runs; inserting past
+  capacity evicts the oldest *inserted* entry first (FIFO, not LRU — a
+  `Get` on the second-oldest does not protect it from later eviction);
+  `Close` stops the sweep goroutine (`goleak` or an explicit counter)
+  and a `Set` after `Close` errors.~~ *Removed by specs/0007: there is no
+  `MemoryCache`.*
 - **No content in outputs.** A marker string placed in `system` text, a
   `tool_use` argument three levels deep, and `tool_result` text: the
   marker appears in no `FilterError.Error()`, no log line captured via
-  `zaptest/observer`, and nowhere in `Result.Body` — only as the `Value`
-  of a `Cache.Get` the test performs directly, standing in for a future
-  restoration consumer.
-- **Write before forward (functional criterion 8).** An `httptest`
+  `zaptest/observer`, and nowhere in `Result.Body`. *Amended by
+  specs/0007: the original last clause — "only as the `Value` of a
+  `Cache.Get` the test performs directly, standing in for a future
+  restoration consumer" — no longer applies; the marker exists nowhere
+  at all once redaction returns, since there is no cache to hold it.*
+- ~~**Write before forward (functional criterion 8).** An `httptest`
   upstream handler, invoked synchronously while serving the proxied
   request, calls `Cache.Get` on a redacted occurrence's placeholder UUID
   and asserts a hit — proving the value was cached before the request
-  reached the provider, not just eventually.
-- **Startup warning (functional criterion 9).** `filtering.New` with the
-  default (memory) backend logs, via `zaptest/observer`, the warning that
-  the cache is volatile and won't survive a restart; a future backend
-  that isn't volatile would not need to log it (not applicable to this
-  version, but the assertion is scoped to the memory backend
-  specifically, not "some warning is logged").
+  reached the provider, not just eventually.~~ *Removed by specs/0007:
+  0006's acceptance criterion 8 is removed; there is nothing to assert a
+  cache hit against.*
+- ~~**Startup warning (functional criterion 9).** `filtering.New` with
+  the default (memory) backend logs, via `zaptest/observer`, the warning
+  that the cache is volatile and won't survive a restart; a future
+  backend that isn't volatile would not need to log it (not applicable
+  to this version, but the assertion is scoped to the memory backend
+  specifically, not "some warning is logged").~~ *Removed by specs/0007:
+  0006's acceptance criterion 9 is removed along with the warning
+  itself.*
 
 `internal/gateway`: `filteringStage` against a stub engine — a redaction
 attaches `Redactions` and logs one line with per-category fields in fixed
@@ -740,20 +794,23 @@ not the original request's.
 `buildRequestRecord`'s `size_bytes` still reports the length the caller
 originally sent, not the post-stage size.
 
-`internal/config`: defaults and env overrides for every new field;
-`filtering.cache.backend: redis` (and any value besides `memory`) fails
-naming it; non-positive `capacity`/`ttl` fail; an unknown key under
-`filtering` fails.
+`internal/config`: defaults and env overrides for every new field; an
+unknown key under `filtering` fails. *Amended by specs/0007: the
+`filtering.cache.backend: redis` (and any value besides `memory`)
+case, and the non-positive `capacity`/`ttl` cases, are removed along
+with the fields they validated; see specs/0007-technical, Testing, for
+what replaces them.*
 
 End to end (one test, mirroring 0004's): default config, a prompt
 containing an email — provider receives `[email:UUID]` in its place, and
 the response is relayed byte-identical (functional criterion 1, 11); no
 PII anywhere — byte-identical forward (criterion 5); the stage disabled —
-PII of every category reaches the provider (criterion 7); a forced
-cache-write failure — 503, upstream never called (criterion 10); PII only
-in a `tool_use` argument and a `tool_result`, none in the top-level
+PII of every category reaches the provider (criterion 7); PII only in a
+`tool_use` argument and a `tool_result`, none in the top-level
 `messages` text — both still redacted (criterion 12); a PII-shaped string
 inside the `tools` list's `description` — left untouched (criterion 13).
+*Amended by specs/0007: the forced cache-write-failure case (criterion
+10) is removed along with the criterion itself.*
 
 ## Alternatives considered
 
@@ -772,17 +829,24 @@ inside the `tools` list's `description` — left untouched (criterion 13).
   signature verification the next time that block is resent.
 - **A generic high-entropy secret heuristic for `api_key`** — rejected
   for this version: no reliable way to tell a real secret from an
-  ordinary long ID, hash or UUID without more signal than this stage has,
-  and a wrong call here means the real value never even reaches the
-  cache for a human to later decide was fine.
-- **True LRU eviction** — rejected for this version: nothing reads an
+  ordinary long ID, hash or UUID without more signal than this stage has.
+  *Amended by specs/0007: the original second clause ("a wrong call here
+  means the real value never even reaches the cache for a human to
+  later decide was fine") no longer applies — there is no cache for any
+  value to reach.*
+- ~~**True LRU eviction** — rejected for this version: nothing reads an
   entry back yet, so there's no access pattern to make recency-aware
-  eviction meaningful to build, test, or justify over FIFO.
-- **A public, non-`internal/` package for `Cache`** — rejected for now:
+  eviction meaningful to build, test, or justify over FIFO.~~ *Removed
+  by specs/0007: there is no cache, so no eviction policy to choose
+  between.*
+- ~~**A public, non-`internal/` package for `Cache`** — rejected for now:
   every other extension point in this codebase (`trace.Sink`) is
   `internal/`-only and extended by forking; moving just this one
   interface out would be inconsistent, and can be revisited if a real
-  external consumer shows up.
+  external consumer shows up.~~ *Removed by specs/0007: `Cache` no
+  longer exists to have a visibility decision about; see
+  specs/0007-technical, Alternatives considered, for the decisions that
+  replace it.*
 - **A generic `Decision.WithBody([]byte)` mechanism in `pipeline.go`,
   mirroring `WithDetail`** — rejected: filtering is the only stage that
   needs to rewrite a request, and it already holds a `*pipeline.Call` it
@@ -797,17 +861,30 @@ inside the `tools` list's `description` — left untouched (criterion 13).
 
 ## Open questions
 
-- **The Redis cache.** `filtering.cache.backend: redis` is reserved but
+- ~~**The Redis cache.** `filtering.cache.backend: redis` is reserved but
   rejected at startup until that implementation exists; its own spec
   decides encryption-at-rest and the key-management story the functional
-  spec already flags as a requirement.
+  spec already flags as a requirement.~~ *Moot as of specs/0007: there
+  is no cache backend left to reserve a value for.*
 - **Generic/entropy-based API key detection.** Deferred; worth revisiting
   once there's a corpus of real traffic to measure false-positive rate
   against, per the functional spec's own open question.
-- **FIFO vs. LRU.** Revisit once a restoration feature makes cache reads
-  a real, hot-path access pattern.
+- ~~**FIFO vs. LRU.** Revisit once a restoration feature makes cache
+  reads a real, hot-path access pattern.~~ *Moot as of specs/0007: there
+  is no cache and no eviction policy to revisit.*
 - **Per-jurisdiction SSN toggle.** Same open question as the functional
   spec; implementing it later means splitting `CategoriesConfig.SSN`
   into three booleans without changing the placeholder category name
   (`ssn` stays one category in the placeholder even if its three
   patterns become independently toggleable).
+
+## Relationship to 0007
+
+specs/0007-technical amends this feature: every `Cache`/`MemoryCache`/
+`Entry` type, the `cache`/`ttl` fields on `Engine`, `Engine.Close`, the
+`"cache_write"` `FilterError.Kind`, `FilterCacheConfig` and its
+`Load`/defaults/example-YAML wiring, and the cache-dependent tests and
+alternatives are removed, as marked above with "Amended by specs/0007"
+or struck through. The JSON-walking design in `anthropic.go`, the
+detection patterns in `patterns.go`, and the pipeline wiring in
+`internal/gateway` are otherwise unchanged.
