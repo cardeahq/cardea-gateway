@@ -1,11 +1,8 @@
 package filtering
 
 import (
-	"context"
 	"regexp"
 	"strings"
-	"sync"
-	"time"
 )
 
 // --- Example PII values, one per pattern in patterns.go -------------------
@@ -29,77 +26,21 @@ var (
 	exNoPrefixHex = strings.Repeat("a1b2c3d4", 5)
 )
 
-// --- fakeCache --------------------------------------------------------------
-
-// fakeCache is a Cache double for tests that need to control or observe
-// Set/Get beyond what the real MemoryCache allows: forcing a write
-// failure, forcing a panic (standing in for "a redaction helper made to
-// panic"), or recording call order. Tests that only need a working cache
-// use the real MemoryCache instead (see memory_cache_test.go).
-type fakeCache struct {
-	mu       sync.Mutex
-	entries  map[string]Entry
-	sets     []Entry
-	setErr   error
-	setPanic string // non-empty: Set panics with this value instead of writing
-	closed   bool
-}
-
-func (c *fakeCache) Set(_ context.Context, key string, entry Entry, _ time.Duration) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.setPanic != "" {
-		panic(c.setPanic)
-	}
-	if c.setErr != nil {
-		return c.setErr
-	}
-	if c.entries == nil {
-		c.entries = map[string]Entry{}
-	}
-	c.entries[key] = entry
-	c.sets = append(c.sets, entry)
-	return nil
-}
-
-func (c *fakeCache) Get(_ context.Context, key string) (Entry, bool, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.entries[key]
-	return e, ok, nil
-}
-
-func (c *fakeCache) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.closed = true
-	return nil
-}
-
-func (c *fakeCache) setCount() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.sets)
-}
-
 // --- Engine construction for white-box tests --------------------------------
 //
-// Engine's own doc comment names its unexported fields (patterns, cache,
-// ttl, providerName), so tests build one directly rather than going
-// through New, which hides the cache a test needs to inspect directly
-// (see "No content in outputs" and "write before forward" in
-// engine_test.go).
+// Engine's own doc comment names its unexported fields (patterns,
+// providerName), so tests build one directly rather than going through New.
 
-func testEngine(cache Cache) *Engine {
-	return testEngineWithCategories(cache, CategoryEmail, CategorySSN, CategoryAPIKey)
+func testEngine() *Engine {
+	return testEngineWithCategories(CategoryEmail, CategorySSN, CategoryAPIKey)
 }
 
-func testEngineWithCategories(cache Cache, cats ...Category) *Engine {
+func testEngineWithCategories(cats ...Category) *Engine {
 	patterns := map[Category][]*regexp.Regexp{}
 	for _, c := range cats {
 		patterns[c] = categoryPatterns[c]
 	}
-	return &Engine{patterns: patterns, cache: cache, ttl: time.Minute, providerName: "anthropic"}
+	return &Engine{patterns: patterns, providerName: "anthropic"}
 }
 
 // --- Placeholder parsing -----------------------------------------------------

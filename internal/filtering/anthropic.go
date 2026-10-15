@@ -74,10 +74,9 @@ func (s *scan) redactTextOrTextBlocks(raw json.RawMessage) (json.RawMessage, err
 	}
 	var str string
 	if err := json.Unmarshal(raw, &str); err == nil {
-		redacted, err := s.redactText(str)
-		if err != nil {
-			return nil, err
-		}
+		// redactText cannot fail (specs/0007-technical, Design); no error
+		// to check here any more.
+		redacted := s.redactText(str)
 		return json.Marshal(redacted)
 	}
 	var blocks []map[string]json.RawMessage
@@ -92,10 +91,7 @@ func (s *scan) redactTextOrTextBlocks(raw json.RawMessage) (json.RawMessage, err
 		if !ok {
 			continue
 		}
-		redacted, err := s.redactText(text)
-		if err != nil {
-			return nil, err
-		}
+		redacted := s.redactText(text)
 		enc, err := json.Marshal(redacted)
 		if err != nil {
 			return nil, err
@@ -138,10 +134,7 @@ func (s *scan) redactMessageContent(raw json.RawMessage) (json.RawMessage, error
 	}
 	var str string
 	if err := json.Unmarshal(raw, &str); err == nil {
-		redacted, err := s.redactText(str)
-		if err != nil {
-			return nil, err
-		}
+		redacted := s.redactText(str)
 		return json.Marshal(redacted)
 	}
 	var blocks []json.RawMessage
@@ -172,10 +165,7 @@ func (s *scan) redactBlock(raw json.RawMessage) (json.RawMessage, error) {
 		if !ok {
 			return raw, nil
 		}
-		redacted, err := s.redactText(text)
-		if err != nil {
-			return nil, err
-		}
+		redacted := s.redactText(text)
 		enc, err := json.Marshal(redacted)
 		if err != nil {
 			return nil, err
@@ -225,7 +215,7 @@ func (s *scan) redactBlock(raw json.RawMessage) (json.RawMessage, error) {
 func (s *scan) redactTree(v any) (any, error) {
 	switch x := v.(type) {
 	case string:
-		return s.redactText(x)
+		return s.redactText(x), nil
 	case map[string]any:
 		for k, val := range x {
 			redacted, err := s.redactTree(val)

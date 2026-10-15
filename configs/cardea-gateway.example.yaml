@@ -118,15 +118,10 @@ policies:
 
 # PII filtering: before a request reaches the provider, email addresses,
 # SSNs (US/UK/France) and vendor-prefixed API keys are replaced with a
-# [category:UUID] placeholder, and the real value is written to the cache
-# below. Responses are never touched. On by default, with zero
-# configuration needed.
+# [category:UUID] placeholder. Responses are never touched. On by
+# default, with zero configuration needed.
 filtering:
   categories:
     email: true
     ssn: true # US, UK and France formats, one category
     api_key: true
-  cache:
-    backend: memory # the only backend this version implements
-    capacity: 100000 # entries held before the oldest (by insertion) is evicted
-    ttl: 5m # how long a detected value is kept

@@ -75,9 +75,6 @@ func (g *Gateway) Run(ctx context.Context) error {
 	if g.sink != nil {
 		defer func() { _ = g.sink.Close() }()
 	}
-	if g.filterEngine != nil {
-		defer func() { _ = g.filterEngine.Close() }()
-	}
 	if g.engine != nil {
 		go func() {
 			if err := g.engine.Watch(ctx); err != nil {
