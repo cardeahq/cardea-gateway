@@ -2,6 +2,16 @@ package filtering
 
 import "regexp"
 
+// Category names a built-in PII category. Fixed in this version —
+// operators enable or disable one, they cannot define a new one.
+type Category string
+
+const (
+	CategoryEmail  Category = "email"
+	CategorySSN    Category = "ssn"
+	CategoryAPIKey Category = "api_key"
+)
+
 // categoryPatterns holds every enabled category's compiled patterns,
 // tried in the order listed; all are attempted, not just the first.
 var categoryPatterns = map[Category][]*regexp.Regexp{

@@ -68,25 +68,16 @@ type StagesConfig struct {
 	Filtering      bool `mapstructure:"filtering"`
 }
 
-// FilteringConfig configures the filtering stage (specs/0006): which PII
-// categories are detected, and the cache detected values are written to.
+// FilteringConfig configures the filtering stage (specs/0006, amended
+// by specs/0007): which PII categories are detected.
 type FilteringConfig struct {
-	Categories CategoriesConfig  `mapstructure:"categories"`
-	Cache      FilterCacheConfig `mapstructure:"cache"`
+	Categories CategoriesConfig `mapstructure:"categories"`
 }
 
 type CategoriesConfig struct {
 	Email  bool `mapstructure:"email"`
 	SSN    bool `mapstructure:"ssn"`
 	APIKey bool `mapstructure:"api_key"`
-}
-
-type FilterCacheConfig struct {
-	// Backend must be "memory" — the only value accepted this version.
-	// "redis" is reserved for when specs/0006 gains that implementation.
-	Backend  string        `mapstructure:"backend"`
-	Capacity int           `mapstructure:"capacity"`
-	TTL      time.Duration `mapstructure:"ttl"`
 }
 
 type PoliciesConfig struct {
@@ -231,7 +222,6 @@ func defaults() Config {
 		},
 		Filtering: FilteringConfig{
 			Categories: CategoriesConfig{Email: true, SSN: true, APIKey: true},
-			Cache:      FilterCacheConfig{Backend: "memory", Capacity: 100000, TTL: 5 * time.Minute},
 		},
 	}
 }
@@ -257,9 +247,6 @@ func Load(cfgFile string) (Config, error) {
 	v.SetDefault("filtering.categories.email", d.Filtering.Categories.Email)
 	v.SetDefault("filtering.categories.ssn", d.Filtering.Categories.SSN)
 	v.SetDefault("filtering.categories.api_key", d.Filtering.Categories.APIKey)
-	v.SetDefault("filtering.cache.backend", d.Filtering.Cache.Backend)
-	v.SetDefault("filtering.cache.capacity", d.Filtering.Cache.Capacity)
-	v.SetDefault("filtering.cache.ttl", d.Filtering.Cache.TTL)
 	v.SetDefault("policies.path", d.Policies.Path)
 	v.SetDefault("policies.data", d.Policies.Data)
 	v.SetDefault("policies.watch", d.Policies.Watch)
@@ -358,16 +345,6 @@ func Load(cfgFile string) (Config, error) {
 	}
 	if cfg.Policies.WatchSettle <= 0 {
 		return Config{}, fmt.Errorf("policies.watch_settle must be positive, got %s", cfg.Policies.WatchSettle)
-	}
-
-	if cfg.Filtering.Cache.Backend != "memory" {
-		return Config{}, fmt.Errorf("filtering.cache.backend must be \"memory\" (the only backend implemented this version), got %q", cfg.Filtering.Cache.Backend)
-	}
-	if cfg.Filtering.Cache.Capacity <= 0 {
-		return Config{}, fmt.Errorf("filtering.cache.capacity must be positive, got %d", cfg.Filtering.Cache.Capacity)
-	}
-	if cfg.Filtering.Cache.TTL <= 0 {
-		return Config{}, fmt.Errorf("filtering.cache.ttl must be positive, got %s", cfg.Filtering.Cache.TTL)
 	}
 
 	seenAgentIDs := make(map[string]bool, len(cfg.Agents))

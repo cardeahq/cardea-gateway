@@ -43,8 +43,7 @@ func TestBuildTarget_NonTargetBodiesReturnUnchangedWithNoError(t *testing.T) {
 // --- redactSystem ---------------------------------------------------------------
 
 func TestScan_RedactSystem_PlainStringIsRedacted(t *testing.T) {
-	fc := &fakeCache{}
-	sc := newScanWithCache(fc)
+	sc := newScan()
 
 	out, err := sc.redactSystem(json.RawMessage(`"contact ` + exEmail + ` now"`))
 	if err != nil {
@@ -59,8 +58,7 @@ func TestScan_RedactSystem_PlainStringIsRedacted(t *testing.T) {
 }
 
 func TestScan_RedactSystem_OnlyTextBlocksAreTouched(t *testing.T) {
-	fc := &fakeCache{}
-	sc := newScanWithCache(fc)
+	sc := newScan()
 
 	raw := json.RawMessage(`[{"type":"text","text":"a ` + exEmail + ` b"},{"type":"other","text":"c ` + exEmail + ` d"}]`)
 	out, err := sc.redactSystem(raw)
@@ -80,7 +78,7 @@ func TestScan_RedactSystem_OnlyTextBlocksAreTouched(t *testing.T) {
 }
 
 func TestScan_RedactSystem_NilWhenAbsent(t *testing.T) {
-	sc := newScanWithCache(&fakeCache{})
+	sc := newScan()
 	out, err := sc.redactSystem(nil)
 	if err != nil || out != nil {
 		t.Fatalf("redactSystem(nil) = %v, %v, want nil, nil", out, err)
@@ -90,7 +88,7 @@ func TestScan_RedactSystem_NilWhenAbsent(t *testing.T) {
 // --- redactBlock ------------------------------------------------------------------
 
 func TestScan_RedactBlock_TextBlockTextIsRedacted(t *testing.T) {
-	sc := newScanWithCache(&fakeCache{})
+	sc := newScan()
 	out, err := sc.redactBlock(json.RawMessage(`{"type":"text","text":"hi ` + exEmail + `"}`))
 	if err != nil {
 		t.Fatalf("redactBlock: %v", err)
@@ -101,7 +99,7 @@ func TestScan_RedactBlock_TextBlockTextIsRedacted(t *testing.T) {
 }
 
 func TestScan_RedactBlock_ToolUseInputRedactedAtDepthAndInArraysKeysUntouched(t *testing.T) {
-	sc := newScanWithCache(&fakeCache{})
+	sc := newScan()
 	// depth 3: input.a.b.c is the leaf string; input.list[0] is an array
 	// element; the map key itself looks like an email and must survive.
 	raw := json.RawMessage(`{"type":"tool_use","id":"t1","name":"bash","input":{"a":{"b":{"c":"deep ` + exEmail + `"}},"list":["in list ` + exEmail + `"],"` + exEmail + `":"key looks like an email too"}}`)
@@ -132,7 +130,7 @@ func TestScan_RedactBlock_ToolUseInputRedactedAtDepthAndInArraysKeysUntouched(t 
 }
 
 func TestScan_RedactBlock_ToolUseInputPreservesLargeIntegers(t *testing.T) {
-	sc := newScanWithCache(&fakeCache{})
+	sc := newScan()
 	const bigInt = "9007199254740993" // beyond float64's exact integer range
 	raw := json.RawMessage(`{"type":"tool_use","id":"t1","name":"x","input":{"n":` + bigInt + `}}`)
 	out, err := sc.redactBlock(raw)
@@ -145,7 +143,7 @@ func TestScan_RedactBlock_ToolUseInputPreservesLargeIntegers(t *testing.T) {
 }
 
 func TestScan_RedactBlock_ToolResultContentAsStringAndAsBlocks(t *testing.T) {
-	sc := newScanWithCache(&fakeCache{})
+	sc := newScan()
 
 	str, err := sc.redactBlock(json.RawMessage(`{"type":"tool_result","tool_use_id":"t1","content":"out ` + exEmail + `"}`))
 	if err != nil {
@@ -165,7 +163,7 @@ func TestScan_RedactBlock_ToolResultContentAsStringAndAsBlocks(t *testing.T) {
 }
 
 func TestScan_RedactBlock_ThinkingAndRedactedThinkingPassThroughUntouched(t *testing.T) {
-	sc := newScanWithCache(&fakeCache{})
+	sc := newScan()
 	for _, typ := range []string{"thinking", "redacted_thinking"} {
 		raw := json.RawMessage(`{"type":"` + typ + `","text":"` + exEmail + `"}`)
 		out, err := sc.redactBlock(raw)
@@ -179,7 +177,7 @@ func TestScan_RedactBlock_ThinkingAndRedactedThinkingPassThroughUntouched(t *tes
 }
 
 func TestScan_RedactBlock_ImageBlockPassesThroughUntouched(t *testing.T) {
-	sc := newScanWithCache(&fakeCache{})
+	sc := newScan()
 	raw := json.RawMessage(`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aGVsbG8gd29ybGQ="}}`)
 	out, err := sc.redactBlock(raw)
 	if err != nil {
@@ -191,7 +189,7 @@ func TestScan_RedactBlock_ImageBlockPassesThroughUntouched(t *testing.T) {
 }
 
 func TestScan_RedactBlock_UnrecognizedBlockTypePassesThroughUntouched(t *testing.T) {
-	sc := newScanWithCache(&fakeCache{})
+	sc := newScan()
 	raw := json.RawMessage(`{"type":"server_tool_use","id":"t1","input":{"q":"` + exEmail + `"}}`)
 	out, err := sc.redactBlock(raw)
 	if err != nil {
@@ -203,7 +201,7 @@ func TestScan_RedactBlock_UnrecognizedBlockTypePassesThroughUntouched(t *testing
 }
 
 func TestScan_RedactBlock_UnrecognizedKeysOnAKnownBlockTypeArePreserved(t *testing.T) {
-	sc := newScanWithCache(&fakeCache{})
+	sc := newScan()
 	raw := json.RawMessage(`{"type":"text","text":"hi ` + exEmail + `","cache_control":{"type":"ephemeral"},"citations":[{"x":1}]}`)
 	out, err := sc.redactBlock(raw)
 	if err != nil {
@@ -224,7 +222,7 @@ func TestScan_RedactBlock_UnrecognizedKeysOnAKnownBlockTypeArePreserved(t *testi
 // --- redactMessages ---------------------------------------------------------------
 
 func TestScan_RedactMessages_EveryKeyOtherThanContentIsPreserved(t *testing.T) {
-	sc := newScanWithCache(&fakeCache{})
+	sc := newScan()
 	raw := json.RawMessage(`[{"role":"user","content":"hi ` + exEmail + `","cache_control":{"type":"ephemeral"}}]`)
 	out, err := sc.redactMessages(raw)
 	if err != nil {
@@ -248,8 +246,7 @@ func TestScan_RedactMessages_EveryKeyOtherThanContentIsPreserved(t *testing.T) {
 // --- Integration: top-level fields outside system/messages are untouched --------
 
 func TestEngine_Redact_TopLevelFieldsOutsideSystemAndMessagesAreByteIdentical(t *testing.T) {
-	fc := &fakeCache{}
-	eng := testEngine(fc)
+	eng := testEngine()
 	body := []byte(`{"model":"m","tools":[{"name":"x","description":"contact ` + exEmail + `"}],` +
 		`"parameters":{"note":"` + exEmail + `"},"metadata":{"note":"` + exEmail + `"},` +
 		`"messages":[{"role":"user","content":"hi"}]}`)
@@ -272,8 +269,7 @@ func TestEngine_Redact_TopLevelFieldsOutsideSystemAndMessagesAreByteIdentical(t 
 }
 
 func TestEngine_Redact_PIIOnlyInToolCallAndToolResultIsStillRedacted(t *testing.T) {
-	fc := &fakeCache{}
-	eng := testEngine(fc)
+	eng := testEngine()
 	body := []byte(`{"model":"m","messages":[` +
 		`{"role":"user","content":"please look this up"},` +
 		`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"lookup","input":{"query":"` + exEmail + `"}}]},` +
@@ -291,10 +287,31 @@ func TestEngine_Redact_PIIOnlyInToolCallAndToolResultIsStillRedacted(t *testing.
 	}
 }
 
+// --- redactText --------------------------------------------------------------------
+
+// TestScan_RedactText_CannotFail pins the one change specs/0007 makes inside
+// anthropic.go: with no cache left to write to, redactText has nothing left
+// that can fail, so it returns a single value. Assigning its result to one
+// variable only compiles if that is true — a two-value return here would be
+// a compile error, which is exactly the property this spec asks for (see
+// specs/0007-technical, Testing: "redactText has no error return any more").
+// Every call site in this file and in anthropic.go relies on the same
+// one-value signature.
+func TestScan_RedactText_CannotFail(t *testing.T) {
+	sc := newScan()
+	redacted := sc.redactText("contact " + exEmail + " now")
+	if strings.Contains(redacted, exEmail) {
+		t.Fatalf("redactText output still has the real value: %s", redacted)
+	}
+	if len(placeholders([]byte(redacted))) != 1 {
+		t.Fatalf("placeholders = %v, want 1", placeholders([]byte(redacted)))
+	}
+}
+
 // --- helpers ---------------------------------------------------------------------
 
-func newScanWithCache(cache Cache) *scan {
-	return &scan{ctx: context.Background(), engine: testEngine(cache), counts: map[Category]int{}}
+func newScan() *scan {
+	return &scan{ctx: context.Background(), engine: testEngine(), counts: map[Category]int{}}
 }
 
 func fmtAny(v any) string {

@@ -1,8 +1,7 @@
 // Package filtering detects email addresses, US/UK/France SSNs and
 // vendor-prefixed API keys in an Anthropic Messages or count_tokens
 // request body, and replaces each occurrence with a fresh
-// "[category:UUID]" placeholder, writing the real value to a cache under
-// that UUID before the request is forwarded.
+// "[category:UUID]" placeholder before the request is forwarded.
 package filtering
 
 import (
@@ -14,26 +13,36 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
+// Request is what the pipeline hands the engine for one call.
+type Request struct {
+	CallID string
+	Path   string
+	Body   []byte
+}
+
+// Result is one Redact call's outcome. Counts is nil when nothing was
+// redacted (not a target body, or nothing matched); Body equals the
+// input body in that case.
+type Result struct {
+	Body   []byte
+	Counts map[Category]int
+}
+
 // Engine detects and redacts PII in a request body. Safe for concurrent
 // use: it holds no per-call state (see scan).
 type Engine struct {
 	patterns     map[Category][]*regexp.Regexp
-	cache        Cache
-	ttl          time.Duration
 	providerName string
 }
 
-// New builds an Engine from configuration, starting the configured cache
-// backend (today: only "memory"; any other value is a config error, see
-// internal/config). With every category disabled, the returned Engine's
-// Redact is a no-op that never touches the cache.
+// New builds an Engine from configuration. With every category
+// disabled, the returned Engine's Redact is a no-op.
 func New(cfg config.FilteringConfig, providerName string, logger *zap.Logger) (*Engine, error) {
 	patterns := map[Category][]*regexp.Regexp{}
 	for cat, enabled := range map[Category]bool{
@@ -46,13 +55,7 @@ func New(cfg config.FilteringConfig, providerName string, logger *zap.Logger) (*
 		}
 	}
 
-	cache, err := NewMemoryCache(cfg.Cache.Capacity)
-	if err != nil {
-		return nil, fmt.Errorf("building filtering cache: %w", err)
-	}
-	logger.Warn("filtering cache is in-memory and will not survive a restart; any value cached for a future restoration feature is lost on restart")
-
-	return &Engine{patterns: patterns, cache: cache, ttl: cfg.Cache.TTL, providerName: providerName}, nil
+	return &Engine{patterns: patterns, providerName: providerName}, nil
 }
 
 // Redact scans r.Body for every enabled category and returns the
@@ -104,14 +107,8 @@ func (e *Engine) Redact(ctx context.Context, r Request) (res Result, err error) 
 	return Result{Body: body, Counts: sc.counts}, nil
 }
 
-// Close releases the cache.
-func (e *Engine) Close() error {
-	return e.cache.Close()
-}
-
 // asInputErr classifies err as a *FilterError{"input"} unless it already
-// is a *FilterError (a cache_write failure from redactText, which must
-// keep its own kind).
+// is a *FilterError.
 func asInputErr(err error) error {
 	var fe *FilterError
 	if errors.As(err, &fe) {
@@ -123,9 +120,8 @@ func asInputErr(err error) error {
 // redactText is the leaf-level primitive every string field goes
 // through: every enabled category's patterns are tried, non-overlapping
 // matches (sorted by start, ties broken by the longer match) are each
-// replaced by a fresh placeholder, and the real value is written to the
-// cache before this returns.
-func (s *scan) redactText(str string) (string, error) {
+// replaced by a fresh placeholder.
+func (s *scan) redactText(str string) string {
 	type match struct {
 		start, end int
 		category   Category
@@ -139,7 +135,7 @@ func (s *scan) redactText(str string) (string, error) {
 		}
 	}
 	if len(matches) == 0 {
-		return str, nil
+		return str
 	}
 	sort.Slice(matches, func(i, j int) bool {
 		if matches[i].start != matches[j].start {
@@ -156,15 +152,12 @@ func (s *scan) redactText(str string) (string, error) {
 		}
 		b.WriteString(str[last:m.start])
 		id := newPlaceholderID()
-		if err := s.engine.cache.Set(s.ctx, id, Entry{Category: m.category, Value: str[m.start:m.end]}, s.engine.ttl); err != nil {
-			return "", &FilterError{Kind: "cache_write"}
-		}
 		b.WriteString("[" + string(m.category) + ":" + id + "]")
 		s.counts[m.category]++
 		last = m.end
 	}
 	b.WriteString(str[last:])
-	return b.String(), nil
+	return b.String()
 }
 
 // newPlaceholderID returns a fresh, crypto/rand-backed UUIDv4, never

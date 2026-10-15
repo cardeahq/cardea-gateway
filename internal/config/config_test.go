@@ -720,7 +720,6 @@ func TestLoad_CardeaSettingsAreIgnoredAndUnvalidatedWhenTheTypeIsLogging(t *test
 func wantFilteringDefaults() FilteringConfig {
 	return FilteringConfig{
 		Categories: CategoriesConfig{Email: true, SSN: true, APIKey: true},
-		Cache:      FilterCacheConfig{Backend: "memory", Capacity: 100000, TTL: 5 * time.Minute},
 	}
 }
 
@@ -757,10 +756,6 @@ filtering:
     email: false
     ssn: true
     api_key: false
-  cache:
-    backend: memory
-    capacity: 500
-    ttl: 30s
 `)
 	cfg, err := Load(path)
 	if err != nil {
@@ -771,7 +766,6 @@ filtering:
 	}
 	want := FilteringConfig{
 		Categories: CategoriesConfig{Email: false, SSN: true, APIKey: false},
-		Cache:      FilterCacheConfig{Backend: "memory", Capacity: 500, TTL: 30 * time.Second},
 	}
 	if cfg.Filtering != want {
 		t.Fatalf("Filtering = %+v, want %+v", cfg.Filtering, want)
@@ -788,8 +782,6 @@ func TestLoad_FilteringEnvVarOverrides(t *testing.T) {
 		{"CARDEA_GATEWAY_FILTERING_CATEGORIES_EMAIL", "false", func(c Config) bool { return !c.Filtering.Categories.Email }},
 		{"CARDEA_GATEWAY_FILTERING_CATEGORIES_SSN", "false", func(c Config) bool { return !c.Filtering.Categories.SSN }},
 		{"CARDEA_GATEWAY_FILTERING_CATEGORIES_API_KEY", "false", func(c Config) bool { return !c.Filtering.Categories.APIKey }},
-		{"CARDEA_GATEWAY_FILTERING_CACHE_CAPACITY", "42", func(c Config) bool { return c.Filtering.Cache.Capacity == 42 }},
-		{"CARDEA_GATEWAY_FILTERING_CACHE_TTL", "90s", func(c Config) bool { return c.Filtering.Cache.TTL == 90*time.Second }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.env, func(t *testing.T) {
@@ -807,22 +799,6 @@ func TestLoad_FilteringEnvVarOverrides(t *testing.T) {
 	}
 }
 
-func TestLoad_FilteringCacheBackendRejectsAnythingButMemory(t *testing.T) {
-	tests := []string{"redis", "sqlite", "", "Memory"}
-	for _, backend := range tests {
-		t.Run(backend, func(t *testing.T) {
-			path := writeConfigFile(t, "filtering:\n  cache:\n    backend: \""+backend+"\"\n")
-			_, err := Load(path)
-			if err == nil {
-				t.Fatalf("Load with filtering.cache.backend: %q = nil error, want it rejected naming the value", backend)
-			}
-			if !strings.Contains(err.Error(), "memory") {
-				t.Fatalf("error %q does not say only \"memory\" is implemented", err)
-			}
-		})
-	}
-}
-
 func TestLoad_FilteringRejections(t *testing.T) {
 	tests := []struct {
 		name string
@@ -831,10 +807,13 @@ func TestLoad_FilteringRejections(t *testing.T) {
 		{"unknown key under filtering", "filtering:\n  made_up_key: true\n"},
 		{"unknown key under filtering.categories", "filtering:\n  categories:\n    phone: true\n"},
 		{"unknown key under filtering.cache", "filtering:\n  cache:\n    region: us-east\n"},
-		{"capacity zero", "filtering:\n  cache:\n    capacity: 0\n"},
-		{"capacity negative", "filtering:\n  cache:\n    capacity: -1\n"},
-		{"ttl zero", "filtering:\n  cache:\n    ttl: 0s\n"},
-		{"ttl negative", "filtering:\n  cache:\n    ttl: -1s\n"},
+		// filtering.cache.backend, .capacity and .ttl were valid settings
+		// before specs/0007; FilterCacheConfig no longer exists, so each is
+		// now simply an unrecognized key under "filtering" (specs/0007
+		// acceptance criterion 3), not a bad value for a recognized one.
+		{"filtering.cache.backend no longer exists", "filtering:\n  cache:\n    backend: memory\n"},
+		{"filtering.cache.capacity no longer exists", "filtering:\n  cache:\n    capacity: 500\n"},
+		{"filtering.cache.ttl no longer exists", "filtering:\n  cache:\n    ttl: 30s\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -847,8 +826,7 @@ func TestLoad_FilteringRejections(t *testing.T) {
 
 func TestLoad_FilteringAcceptsEveryCategoryDisabled(t *testing.T) {
 	// All off is a valid configuration: it is equivalent to the stage being
-	// off for detection, though the cache backend still initializes
-	// (specs/0006-functional, Operator controls).
+	// off for detection (specs/0006-functional, Operator controls).
 	path := writeConfigFile(t, "filtering:\n  categories:\n    email: false\n    ssn: false\n    api_key: false\n")
 	cfg, err := Load(path)
 	if err != nil {

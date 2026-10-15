@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -38,7 +37,6 @@ const (
 func filteringCfg() config.FilteringConfig {
 	return config.FilteringConfig{
 		Categories: config.CategoriesConfig{Email: true, SSN: true, APIKey: true},
-		Cache:      config.FilterCacheConfig{Backend: "memory", Capacity: 1000, TTL: time.Minute},
 	}
 }
 
@@ -80,9 +78,6 @@ func TestBuildStages_FilteringComesAfterPoliciesAndFollowsItsConfigBoolean(t *te
 			if sink != nil {
 				t.Cleanup(func() { _ = sink.Close() })
 			}
-			if fEng != nil {
-				t.Cleanup(func() { _ = fEng.Close() })
-			}
 			var names []string
 			for _, s := range stages {
 				names = append(names, s.Name())
@@ -100,24 +95,6 @@ func TestBuildStages_FilteringComesAfterPoliciesAndFollowsItsConfigBoolean(t *te
 	}
 }
 
-func TestBuildStages_FilteringEngineErrorFailsConstruction(t *testing.T) {
-	cfg := buildCfg(t, false, true, false, "")
-	cfg.Pipeline.Stages.Filtering = true
-	cfg.Filtering = filteringCfg()
-	cfg.Filtering.Cache.Capacity = 0 // invalid: NewMemoryCache requires a positive capacity
-
-	stages, sink, _, fEng, err := buildStages(cfg, zaptest.NewLogger(t))
-	if sink != nil {
-		_ = sink.Close()
-	}
-	if err == nil {
-		t.Fatal("buildStages = nil error, want the filtering engine construction failure")
-	}
-	if stages != nil || fEng != nil {
-		t.Fatalf("stages=%v fEng=%v, want nil on error", stages, fEng)
-	}
-}
-
 // --- the stage itself, against a real engine ----------------------------------
 
 func TestFilteringStage_RedactionAttachesDetailAndLogsCategoriesInFixedOrder(t *testing.T) {
@@ -125,7 +102,6 @@ func TestFilteringStage_RedactionAttachesDetailAndLogsCategoriesInFixedOrder(t *
 	if err != nil {
 		t.Fatalf("filtering.New: %v", err)
 	}
-	defer func() { _ = eng.Close() }()
 
 	logger, logs := observed()
 	sink := &captureSink{}
@@ -186,7 +162,6 @@ func TestFilteringStage_ZeroRedactionsAttachesNoDetailAndLogsNothing(t *testing.
 	if err != nil {
 		t.Fatalf("filtering.New: %v", err)
 	}
-	defer func() { _ = eng.Close() }()
 
 	logger, logs := observed()
 	sink := &captureSink{}
@@ -218,9 +193,6 @@ func TestFilteringStage_EngineErrorBecomesThe503AndTheUpstreamIsNeverCalled(t *t
 	if err != nil {
 		t.Fatalf("filtering.New: %v", err)
 	}
-	if err := eng.Close(); err != nil { // forces any future cache.Set to fail
-		t.Fatalf("Close: %v", err)
-	}
 
 	logger, logs := observed()
 	sink := &captureSink{}
@@ -229,13 +201,17 @@ func TestFilteringStage_EngineErrorBecomesThe503AndTheUpstreamIsNeverCalled(t *t
 	var upstreamCalled bool
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { upstreamCalled = true })
 	rec := httptest.NewRecorder()
-	p.Handler(next).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(filterBody(filterEmail))))
+	// A target body filtering cannot parse (specs/0007-functional acceptance
+	// criterion 6): the stage must still deny the call, unaffected by the
+	// cache's removal.
+	malformed := `{"model":"m","messages":[`
+	p.Handler(next).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(malformed)))
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
 	}
 	if upstreamCalled {
-		t.Fatal("the upstream received a call whose redaction could not be written to the cache")
+		t.Fatal("the upstream received a call whose body filtering could not parse")
 	}
 	e := decodeErr(t, rec)
 	if e.Error.Type != "gateway_unavailable" || e.Error.Stage != "filtering" {
@@ -248,12 +224,12 @@ func TestFilteringStage_EngineErrorBecomesThe503AndTheUpstreamIsNeverCalled(t *t
 	var logged bool
 	for _, le := range logs.FilterLevelExact(zapcore.ErrorLevel).All() {
 		ctx := le.ContextMap()
-		if ctx["kind"] == "cache_write" && ctx["call_id"] != nil {
+		if ctx["kind"] == "input" && ctx["call_id"] != nil {
 			logged = true
 		}
 	}
 	if !logged {
-		t.Fatalf("no error-level line names kind=cache_write; logs:\n%s", logText(logs))
+		t.Fatalf("no error-level line names kind=input; logs:\n%s", logText(logs))
 	}
 }
 
@@ -336,28 +312,6 @@ func TestFiltering_EndToEnd(t *testing.T) {
 		}
 		if got := string(f.last(t).body); got != body {
 			t.Fatalf("provider received %q, want the unredacted body unchanged with the stage off", got)
-		}
-	})
-
-	t.Run("a cache write failure denies with 503 and the upstream is never called (criterion 10)", func(t *testing.T) {
-		f, url := newFakeAnthropic(t, loopResponder)
-		cfg := filteringGatewayConfig(t, url)
-		g := newTracingGateway(t, cfg, zaptest.NewLogger(t))
-		// Force the cache write that a redaction needs to fail: closing the
-		// engine closes its cache, and Set on a closed cache errors.
-		if g.filterEngine == nil {
-			t.Fatal("gateway has no filterEngine with filtering enabled")
-		}
-		if err := g.filterEngine.Close(); err != nil {
-			t.Fatalf("filterEngine.Close: %v", err)
-		}
-
-		rec := serve(g, post(filterBody(filterEmail)))
-		if rec.Code != http.StatusServiceUnavailable {
-			t.Fatalf("status = %d, want 503", rec.Code)
-		}
-		if f.count() != 0 {
-			t.Fatalf("provider calls = %d, want 0: the call must never reach it unredacted or partially redacted", f.count())
 		}
 	})
 

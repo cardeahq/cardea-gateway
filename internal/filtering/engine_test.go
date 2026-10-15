@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -38,7 +37,6 @@ func sysBody(system string) string {
 func defaultFilteringConfig() config.FilteringConfig {
 	return config.FilteringConfig{
 		Categories: config.CategoriesConfig{Email: true, SSN: true, APIKey: true},
-		Cache:      config.FilterCacheConfig{Backend: "memory", Capacity: 1000, TTL: time.Minute},
 	}
 }
 
@@ -62,8 +60,7 @@ func TestEngine_Redact_DetectionAndReplacement(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fc := &fakeCache{}
-			eng := testEngine(fc)
+			eng := testEngine()
 			body := []byte(sysBody("see " + tt.val + " please"))
 
 			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
@@ -80,20 +77,12 @@ func TestEngine_Redact_DetectionAndReplacement(t *testing.T) {
 			if strings.Contains(string(res.Body), tt.val) {
 				t.Fatalf("redacted body still contains the real value: %s", res.Body)
 			}
-			entry, ok, err := fc.Get(context.Background(), ph[0][1])
-			if err != nil || !ok {
-				t.Fatalf("cache.Get(%s) = ok=%v err=%v, want a hit", ph[0][1], ok, err)
-			}
-			if entry.Category != tt.cat || entry.Value != tt.val {
-				t.Fatalf("cache entry = %+v, want {%s %s}", entry, tt.cat, tt.val)
-			}
 		})
 	}
 }
 
 func TestEngine_Redact_NegativeAPIKeyCaseIsNotDetected(t *testing.T) {
-	fc := &fakeCache{}
-	eng := testEngine(fc)
+	eng := testEngine()
 	body := []byte(sysBody("token " + exNoPrefixHex + " end"))
 
 	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
@@ -109,8 +98,7 @@ func TestEngine_Redact_NegativeAPIKeyCaseIsNotDetected(t *testing.T) {
 }
 
 func TestEngine_Redact_DisabledCategoryLetsItsPatternThroughOthersStillRedacted(t *testing.T) {
-	fc := &fakeCache{}
-	eng := testEngineWithCategories(fc, CategorySSN, CategoryAPIKey) // email disabled
+	eng := testEngineWithCategories(CategorySSN, CategoryAPIKey) // email disabled
 	body := []byte(sysBody(exEmail + " and " + exSSNUS))
 
 	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
@@ -131,9 +119,8 @@ func TestEngine_Redact_DisabledCategoryLetsItsPatternThroughOthersStillRedacted(
 	}
 }
 
-func TestEngine_Redact_RepeatedValueGetsDistinctUUIDsAndCacheEntries(t *testing.T) {
-	fc := &fakeCache{}
-	eng := testEngine(fc)
+func TestEngine_Redact_RepeatedValueGetsDistinctUUIDs(t *testing.T) {
+	eng := testEngine()
 	body := []byte(sysBody(exEmail + " then " + exEmail + " then " + exEmail))
 
 	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
@@ -153,19 +140,11 @@ func TestEngine_Redact_RepeatedValueGetsDistinctUUIDsAndCacheEntries(t *testing.
 			t.Fatalf("UUID %s reused across occurrences of the same value", p[1])
 		}
 		seen[p[1]] = true
-		entry, ok, _ := fc.Get(context.Background(), p[1])
-		if !ok || entry.Value != exEmail {
-			t.Fatalf("cache entry for %s = %+v (ok=%v), want Value %q", p[1], entry, ok, exEmail)
-		}
-	}
-	if fc.setCount() != 3 {
-		t.Fatalf("cache.Set called %d times, want 3 (one per occurrence)", fc.setCount())
 	}
 }
 
 func TestEngine_Redact_OverlappingMatchesKeepTheEarlierLongerOne(t *testing.T) {
-	fc := &fakeCache{}
-	eng := testEngine(fc)
+	eng := testEngine()
 	// A Slack token whose suffix, once inside the token, is shaped exactly
 	// like a US SSN. The Slack match starts first and is longer, so the
 	// embedded SSN-shaped substring must not get its own placeholder.
@@ -186,8 +165,7 @@ func TestEngine_Redact_OverlappingMatchesKeepTheEarlierLongerOne(t *testing.T) {
 }
 
 func TestEngine_Redact_NothingMatchedReturnsTheOriginalBytes(t *testing.T) {
-	fc := &fakeCache{}
-	eng := testEngine(fc)
+	eng := testEngine()
 	body := []byte(`{"system":"nothing to see here","model":"m","messages":[{"role":"user","content":"hi"}]}`)
 
 	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
@@ -215,8 +193,7 @@ func TestEngine_Redact_NonTargetBodiesAreUnchangedWithNoError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fc := &fakeCache{}
-			eng := testEngine(fc)
+			eng := testEngine()
 			body := []byte(tt.body)
 			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: tt.path, Body: body})
 			if err != nil {
@@ -225,16 +202,12 @@ func TestEngine_Redact_NonTargetBodiesAreUnchangedWithNoError(t *testing.T) {
 			if string(res.Body) != string(body) || res.Counts != nil {
 				t.Fatalf("Result = %+v, want the body unchanged and no counts", res)
 			}
-			if fc.setCount() != 0 {
-				t.Fatal("a non-target body wrote to the cache")
-			}
 		})
 	}
 }
 
 func TestEngine_Redact_WrongProviderNameOnTheEngineIsNotATarget(t *testing.T) {
-	fc := &fakeCache{}
-	eng := testEngineWithCategories(fc, CategoryEmail)
+	eng := testEngineWithCategories(CategoryEmail)
 	eng.providerName = "openai" // this Engine was built for a different provider
 	body := []byte(sysBody(exEmail))
 
@@ -245,8 +218,7 @@ func TestEngine_Redact_WrongProviderNameOnTheEngineIsNotATarget(t *testing.T) {
 }
 
 func TestEngine_Redact_EveryCategoryDisabledNeverInspectsTheBody(t *testing.T) {
-	fc := &fakeCache{}
-	eng := &Engine{patterns: map[Category][]*regexp.Regexp{}, cache: fc, ttl: time.Minute, providerName: "anthropic"}
+	eng := &Engine{patterns: map[Category][]*regexp.Regexp{}, providerName: "anthropic"}
 	malformed := []byte(`{"model":`) // not even valid JSON, on a target path
 
 	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: malformed})
@@ -255,9 +227,6 @@ func TestEngine_Redact_EveryCategoryDisabledNeverInspectsTheBody(t *testing.T) {
 	}
 	if string(res.Body) != string(malformed) || res.Counts != nil {
 		t.Fatalf("Result = %+v, want the body unchanged", res)
-	}
-	if fc.setCount() != 0 {
-		t.Fatal("every category disabled but the cache was still written to")
 	}
 }
 
@@ -275,8 +244,7 @@ func TestEngine_Redact_TargetBodyParseFailuresGiveInputError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fc := &fakeCache{}
-			eng := testEngine(fc)
+			eng := testEngine()
 			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: []byte(tt.body)})
 
 			var fe *FilterError
@@ -290,31 +258,16 @@ func TestEngine_Redact_TargetBodyParseFailuresGiveInputError(t *testing.T) {
 	}
 }
 
-// --- Failure: cache_write --------------------------------------------------------
-
-func TestEngine_Redact_CacheWriteFailureFailsClosed(t *testing.T) {
-	fc := &fakeCache{setErr: errors.New("backend unreachable")}
-	eng := testEngine(fc)
-	body := []byte(sysBody(exEmail))
-
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
-
-	var fe *FilterError
-	if !errors.As(err, &fe) || fe.Kind != "cache_write" {
-		t.Fatalf("err = %v, want *FilterError{Kind: \"cache_write\"}", err)
-	}
-	if res.Body != nil || res.Counts != nil {
-		t.Fatalf("Result = %+v on a cache write failure, want the zero value: not even a partially redacted body", res)
-	}
-}
-
 // --- Failure: internal (panic recovery) ------------------------------------------
 
 func TestEngine_Redact_PanicDuringRedactionIsRecoveredWithoutLeakingItsValue(t *testing.T) {
-	const secretPanic = "panic carrying " + "do-not-leak-this-value"
-	fc := &fakeCache{setPanic: secretPanic}
-	eng := testEngine(fc)
-	body := []byte(sysBody(exEmail))
+	// There is no cache left to fail on demand, so the panic is forced via
+	// a deliberately broken pattern set: a nil *regexp.Regexp panics as
+	// soon as redactText tries to match against it, standing in for "an
+	// internal failure while scanning" (specs/0007-technical, Design).
+	const secretText = "do-not-leak-this-value"
+	eng := &Engine{patterns: map[Category][]*regexp.Regexp{CategoryEmail: {nil}}, providerName: "anthropic"}
+	body := []byte(sysBody(secretText))
 
 	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
 
@@ -322,8 +275,8 @@ func TestEngine_Redact_PanicDuringRedactionIsRecoveredWithoutLeakingItsValue(t *
 	if !errors.As(err, &fe) || fe.Kind != "internal" {
 		t.Fatalf("err = %v, want *FilterError{Kind: \"internal\"}", err)
 	}
-	if strings.Contains(err.Error(), "do-not-leak-this-value") {
-		t.Fatalf("err.Error() = %q, leaks the recovered panic value", err.Error())
+	if strings.Contains(err.Error(), secretText) {
+		t.Fatalf("err.Error() = %q, leaks the request content present when the panic occurred", err.Error())
 	}
 	if res.Body != nil || res.Counts != nil {
 		t.Fatalf("Result = %+v on a panic, want the zero value", res)
@@ -332,14 +285,13 @@ func TestEngine_Redact_PanicDuringRedactionIsRecoveredWithoutLeakingItsValue(t *
 
 // --- No content in outputs --------------------------------------------------------
 
-func TestEngine_Redact_NoMarkerAnywhereExceptTheCacheValue(t *testing.T) {
+func TestEngine_Redact_NoMarkerAnywhereInTheOutput(t *testing.T) {
 	// The marker is the local-part of an email address, so the entire
 	// marker falls inside the detected (and therefore redacted) span —
 	// unlike arbitrary surrounding text, which legitimately survives
 	// redaction untouched.
 	const markerEmail = "zqfiltermarker9@example.com"
-	fc := &fakeCache{}
-	eng := testEngine(fc)
+	eng := testEngine()
 	body := []byte(`{"model":"m","system":"sys ` + markerEmail + `","messages":[` +
 		`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"bash","input":{"a":{"b":{"c":"` + markerEmail + `"}}}}]},` +
 		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"result ` + markerEmail + `"}]}]}`)
@@ -354,76 +306,21 @@ func TestEngine_Redact_NoMarkerAnywhereExceptTheCacheValue(t *testing.T) {
 	if res.Counts[CategoryEmail] != 3 {
 		t.Fatalf("Counts[email] = %d, want 3 (system, tool_use input, tool_result)", res.Counts[CategoryEmail])
 	}
-	found := 0
-	for _, p := range placeholders(res.Body) {
-		entry, ok, _ := fc.Get(context.Background(), p[1])
-		if !ok {
-			continue
-		}
-		if entry.Value == markerEmail {
-			found++
-		}
-	}
-	if found != 3 {
-		t.Fatalf("marker found as a cache Value in %d entries, want 3 (the only place it may appear)", found)
-	}
-}
-
-// --- Write before forward (functional criterion 8) -------------------------------
-
-func TestEngine_Redact_CacheIsWrittenBeforeRedactReturns(t *testing.T) {
-	fc := &fakeCache{}
-	eng := testEngine(fc)
-	body := []byte(sysBody(exEmail))
-
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
-	if err != nil {
-		t.Fatalf("Redact: %v", err)
-	}
-	ph := placeholders(res.Body)
-	if len(ph) != 1 {
-		t.Fatalf("placeholders = %v, want 1", ph)
-	}
-	// No delay, no goroutine hand-off: the entry must already be there by
-	// the time Redact has returned, since nothing has forwarded the call yet.
-	entry, ok, err := fc.Get(context.Background(), ph[0][1])
-	if err != nil || !ok || entry.Value != exEmail {
-		t.Fatalf("cache.Get right after Redact returned = %+v ok=%v err=%v, want an immediate hit", entry, ok, err)
-	}
-}
-
-// --- Engine.Close ------------------------------------------------------------------
-
-func TestEngine_Close_ClosesTheCache(t *testing.T) {
-	fc := &fakeCache{}
-	eng := testEngine(fc)
-	if err := eng.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if !fc.closed {
-		t.Fatal("Engine.Close did not close the underlying cache")
-	}
 }
 
 // --- New -----------------------------------------------------------------------
 
-func TestNew_MemoryBackendLogsTheVolatilityWarning(t *testing.T) {
+func TestNew_LogsNothingAboutAFilteringCacheOrItsVolatility(t *testing.T) {
 	logger, logs := observedLogger()
-	eng, err := New(defaultFilteringConfig(), "anthropic", logger)
-	if err != nil {
+	if _, err := New(defaultFilteringConfig(), "anthropic", logger); err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer func() { _ = eng.Close() }()
 
-	var warned bool
-	for _, e := range logs.FilterLevelExact(zapcore.WarnLevel).All() {
+	for _, e := range logs.All() {
 		msg := strings.ToLower(e.Message)
-		if strings.Contains(msg, "in-memory") && strings.Contains(msg, "restart") {
-			warned = true
+		if strings.Contains(msg, "cache") || strings.Contains(msg, "volatil") || strings.Contains(msg, "restart") {
+			t.Fatalf("startup logged a line naming a filtering cache or its volatility, want none: %q", e.Message)
 		}
-	}
-	if !warned {
-		t.Fatalf("no warning names the in-memory cache as volatile across a restart; logs:\n%s", logText(logs))
 	}
 }
 
@@ -434,7 +331,6 @@ func TestNew_CategoriesFromConfigRestrictWhichPatternsRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer func() { _ = eng.Close() }()
 
 	body := []byte(sysBody(exEmail + " " + exSSNUS + " " + exAPIKeyOpenAI))
 	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
@@ -449,14 +345,13 @@ func TestNew_CategoriesFromConfigRestrictWhichPatternsRun(t *testing.T) {
 	}
 }
 
-func TestNew_EveryCategoryDisabledStillInitializesTheCacheButRedactIsANoOp(t *testing.T) {
+func TestNew_EveryCategoryDisabledStillSucceedsButRedactIsANoOp(t *testing.T) {
 	cfg := defaultFilteringConfig()
 	cfg.Categories = config.CategoriesConfig{Email: false, SSN: false, APIKey: false}
 	eng, err := New(cfg, "anthropic", zap.NewNop())
 	if err != nil {
-		t.Fatalf("New: %v, want success: the cache backend still initializes with every category off", err)
+		t.Fatalf("New: %v, want success: there is nothing left that can fail with every category off", err)
 	}
-	defer func() { _ = eng.Close() }()
 
 	malformed := []byte(`{"model":`)
 	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: malformed})
