@@ -3,7 +3,6 @@ package filtering
 import (
 	"context"
 	"errors"
-	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -18,14 +17,6 @@ import (
 func observedLogger() (*zap.Logger, *observer.ObservedLogs) {
 	core, logs := observer.New(zapcore.DebugLevel)
 	return zap.New(core), logs
-}
-
-func logText(logs *observer.ObservedLogs) string {
-	var b strings.Builder
-	for _, e := range logs.All() {
-		fmt.Fprintf(&b, "%s %v\n", e.Message, e.ContextMap())
-	}
-	return b.String()
 }
 
 // sysBody is a minimal Anthropic messages request with a plain-string
