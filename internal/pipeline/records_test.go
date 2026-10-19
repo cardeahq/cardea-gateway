@@ -363,9 +363,9 @@ func TestRecords_EveryFieldPresent(t *testing.T) {
 	doRequest(t, p, sseUpstream(toolStream()), postBody(streamedBody))
 
 	req, resp := sink.one(t, "request"), sink.one(t, "response")
-	wantReq := []string{"schema", "record", "call_id", "agent_id", "session", "received_at", "duration_us",
+	wantReq := []string{"schema", "record", "call_id", "agent_id", "client_address", "session", "received_at", "duration_us",
 		"model", "stream", "size_bytes", "outcome", "stages", "tool_results", "findings"}
-	wantResp := []string{"schema", "record", "call_id", "agent_id", "session", "started_at", "first_byte_us",
+	wantResp := []string{"schema", "record", "call_id", "agent_id", "client_address", "session", "started_at", "first_byte_us",
 		"duration_us", "outcome", "stages", "streamed", "response_id", "response_model", "stop_reason", "tokens",
 		"tool_calls", "findings"}
 	if got := slices.Sorted(maps.Keys(req)); !slices.Equal(got, slices.Sorted(slices.Values(wantReq))) {
@@ -413,6 +413,43 @@ func TestRecords_AgentAndSessionAreOnBothRecords(t *testing.T) {
 		}
 		if v, ok := resp["agent_id"]; !ok || v != nil {
 			t.Fatalf("response agent_id = %#v, want null", v)
+		}
+	})
+}
+
+func TestRecords_ClientAddress(t *testing.T) {
+	t.Run("port is stripped from the default test RemoteAddr", func(t *testing.T) {
+		sink := &fakeSink{}
+		p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+		doRequest(t, p, sseUpstream(toolStream()), postBody(streamedBody))
+
+		req, resp := sink.one(t, "request"), sink.one(t, "response")
+		if req["client_address"] != "192.0.2.1" || resp["client_address"] != "192.0.2.1" {
+			t.Fatalf("client_address = %v / %v, want 192.0.2.1 on both records (httptest.NewRequest's default RemoteAddr with the port stripped)", req["client_address"], resp["client_address"])
+		}
+	})
+
+	t.Run("an address with no port is used as-is", func(t *testing.T) {
+		sink := &fakeSink{}
+		p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+		req := postBody(streamedBody)
+		req.RemoteAddr = "10.0.0.5"
+		doRequest(t, p, sseUpstream(toolStream()), req)
+
+		if got := sink.one(t, "request")["client_address"]; got != "10.0.0.5" {
+			t.Fatalf("client_address = %v, want 10.0.0.5 unchanged", got)
+		}
+	})
+
+	t.Run("no RemoteAddr gives null", func(t *testing.T) {
+		sink := &fakeSink{}
+		p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+		req := postBody(streamedBody)
+		req.RemoteAddr = ""
+		doRequest(t, p, sseUpstream(toolStream()), req)
+
+		if v, ok := sink.one(t, "request")["client_address"]; !ok || v != nil {
+			t.Fatalf("client_address = %#v, want null", v)
 		}
 	})
 }

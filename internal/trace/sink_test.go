@@ -126,14 +126,14 @@ func TestLogSink_EveryFieldPresentWithNullAndEmptyList(t *testing.T) {
 	_ = json.Unmarshal([]byte(lines[0]), &req)
 	_ = json.Unmarshal([]byte(lines[1]), &resp)
 
-	assertKeys(t, "request", req, "schema", "record", "call_id", "agent_id", "session", "received_at", "duration_us",
-		"model", "stream", "size_bytes", "outcome", "stages", "tool_results", "findings")
+	assertKeys(t, "request", req, "schema", "record", "call_id", "agent_id", "client_address", "session", "received_at",
+		"duration_us", "model", "stream", "size_bytes", "outcome", "stages", "tool_results", "findings")
 	assertKeys(t, "request.session", asObject(t, "session", req["session"]), "id", "status", "source", "source_name")
 	assertKeys(t, "request.outcome", asObject(t, "outcome", req["outcome"]), "result", "status", "stage", "reason")
 	stage := asObject(t, "request.stages[0]", asArray(t, "request.stages", req["stages"])[0])
 	assertKeys(t, "request.stages[0]", stage, "name", "started_at", "duration_us", "decision", "detail")
 
-	for _, k := range []string{"agent_id", "model", "size_bytes"} {
+	for _, k := range []string{"agent_id", "client_address", "model", "size_bytes"} {
 		if v, ok := req[k]; !ok || v != nil {
 			t.Fatalf("request.%s = %#v, want null", k, v)
 		}
@@ -150,9 +150,9 @@ func TestLogSink_EveryFieldPresentWithNullAndEmptyList(t *testing.T) {
 		t.Fatalf("request.findings has %d entries, want []", n)
 	}
 
-	assertKeys(t, "response", resp, "schema", "record", "call_id", "agent_id", "session", "started_at", "first_byte_us",
-		"duration_us", "outcome", "stages", "streamed", "response_id", "response_model", "stop_reason", "tokens",
-		"tool_calls", "findings")
+	assertKeys(t, "response", resp, "schema", "record", "call_id", "agent_id", "client_address", "session", "started_at",
+		"first_byte_us", "duration_us", "outcome", "stages", "streamed", "response_id", "response_model", "stop_reason",
+		"tokens", "tool_calls", "findings")
 	assertKeys(t, "response.outcome", asObject(t, "outcome", resp["outcome"]), "result", "upstream_status", "status")
 	rstage := asObject(t, "response.stages[0]", asArray(t, "response.stages", resp["stages"])[0])
 	assertKeys(t, "response.stages[0]", rstage, "name", "started_at", "duration_us", "observation")
@@ -164,7 +164,7 @@ func TestLogSink_EveryFieldPresentWithNullAndEmptyList(t *testing.T) {
 			t.Fatalf("tool_calls[0].%s = %#v, want null", k, v)
 		}
 	}
-	for _, k := range []string{"agent_id", "first_byte_us", "response_id", "response_model", "stop_reason", "tokens"} {
+	for _, k := range []string{"agent_id", "client_address", "first_byte_us", "response_id", "response_model", "stop_reason", "tokens"} {
 		if v, ok := resp[k]; !ok || v != nil {
 			t.Fatalf("response.%s = %#v, want null", k, v)
 		}

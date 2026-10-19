@@ -355,11 +355,12 @@ type Timestamp time.Time
 func (t Timestamp) MarshalJSON() ([]byte, error)
 
 type RequestRecord struct {
-	Schema      string         `json:"schema"`
-	Record      string         `json:"record"` // "request"
-	CallID      string         `json:"call_id"`
-	AgentID     *string        `json:"agent_id"`
-	Session     Session        `json:"session"`
+	Schema        string         `json:"schema"`
+	Record        string         `json:"record"` // "request"
+	CallID        string         `json:"call_id"`
+	AgentID       *string        `json:"agent_id"`
+	ClientAddress *string        `json:"client_address"` // the peer's address, no port; nil when it could not be determined
+	Session       Session        `json:"session"`
 	ReceivedAt  Timestamp      `json:"received_at"`
 	DurationUS  int64          `json:"duration_us"`
 	Model       *string        `json:"model"`
@@ -376,6 +377,7 @@ type ResponseRecord struct {
 	Record        string          `json:"record"` // "response"
 	CallID        string          `json:"call_id"`
 	AgentID       *string         `json:"agent_id"`
+	ClientAddress *string         `json:"client_address"` // the peer's address, no port; nil when it could not be determined
 	Session       Session         `json:"session"`
 	StartedAt     Timestamp       `json:"started_at"`
 	FirstByteUS   *int64          `json:"first_byte_us"`
@@ -589,6 +591,13 @@ func New(logger *zap.Logger, maxBodyBytes int64, sink trace.Sink, stages ...Stag
   facts meet the schema. `buildRequestRecord` also copies a stage's
   `detail` (specs/0004) into `RequestStage.Detail`; stages that set none
   encode `"detail": null`.
+- `records.go` also sets `ClientAddress` on both records from
+  `c.Request.RemoteAddr`, via `clientAddress(r *http.Request) *string`:
+  `net.SplitHostPort` strips the port when there is one; an address
+  already without a port is used as-is; empty gives `nil`. `RemoteAddr`
+  is set by `net/http` from the TCP connection, so it is always the
+  Gateway's listener's own view of the peer — unaffected by anything in
+  the request body or headers.
 - Outcome mapping for the request record:
   - `forwarded`: no denial.
   - `failed`: a stage error or panic. (A sink refusing the record no

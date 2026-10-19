@@ -17,20 +17,21 @@ func (t Timestamp) MarshalJSON() ([]byte, error) {
 }
 
 type RequestRecord struct {
-	Schema      string         `json:"schema"`
-	Record      string         `json:"record"` // "request"
-	CallID      string         `json:"call_id"`
-	AgentID     *string        `json:"agent_id"`
-	Session     Session        `json:"session"`
-	ReceivedAt  Timestamp      `json:"received_at"`
-	DurationUS  int64          `json:"duration_us"`
-	Model       *string        `json:"model"`
-	Stream      bool           `json:"stream"`
-	SizeBytes   *int64         `json:"size_bytes"` // nil when the body was not read in full (400, 413)
-	Outcome     RequestOutcome `json:"outcome"`
-	Stages      []RequestStage `json:"stages"`
-	ToolResults []ToolResult   `json:"tool_results"`
-	Findings    []Finding      `json:"findings"`
+	Schema        string         `json:"schema"`
+	Record        string         `json:"record"` // "request"
+	CallID        string         `json:"call_id"`
+	AgentID       *string        `json:"agent_id"`
+	ClientAddress *string        `json:"client_address"` // the peer's address, no port; nil when it could not be determined
+	Session       Session        `json:"session"`
+	ReceivedAt    Timestamp      `json:"received_at"`
+	DurationUS    int64          `json:"duration_us"`
+	Model         *string        `json:"model"`
+	Stream        bool           `json:"stream"`
+	SizeBytes     *int64         `json:"size_bytes"` // nil when the body was not read in full (400, 413)
+	Outcome       RequestOutcome `json:"outcome"`
+	Stages        []RequestStage `json:"stages"`
+	ToolResults   []ToolResult   `json:"tool_results"`
+	Findings      []Finding      `json:"findings"`
 }
 
 func (RequestRecord) recordType() string { return "request" }
@@ -40,6 +41,7 @@ type ResponseRecord struct {
 	Record        string          `json:"record"` // "response"
 	CallID        string          `json:"call_id"`
 	AgentID       *string         `json:"agent_id"`
+	ClientAddress *string         `json:"client_address"` // the peer's address, no port; nil when it could not be determined
 	Session       Session         `json:"session"`
 	StartedAt     Timestamp       `json:"started_at"`
 	FirstByteUS   *int64          `json:"first_byte_us"`

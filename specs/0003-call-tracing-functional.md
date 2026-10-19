@@ -438,6 +438,7 @@ request, before it is forwarded or refused (rule 5).
   "record": "request",
   "call_id": "ak_7f3c2b1d9e8a4f60",
   "agent_id": "acme-bot",
+  "client_address": "203.0.113.42",
   "session": {
     "id": "8d0c7a3e-5b1f-4c2a-9e6d-1f2a3b4c5d6e",
     "status": "claimed",
@@ -473,6 +474,10 @@ request, before it is forwarded or refused (rule 5).
 
 Field meanings, where the example does not make them obvious:
 
+- `client_address` — the IP address (no port) of the peer that sent the
+  agent's request, as the Gateway's listener saw it; identical in both
+  records of a call. `null` when it could not be determined. Behind NAT
+  or a shared proxy this names the proxy, not the agent's own machine.
 - `session` — always present, identical in both records of a call.
   `status` is `claimed`, `invalid` (rule 17) or `absent` (rule 16). `id`
   is set only when `claimed`. `source` is `header`, `body_field` or
@@ -514,6 +519,7 @@ for every request that reached the provider (rule 6).
   "record": "response",
   "call_id": "ak_7f3c2b1d9e8a4f60",
   "agent_id": "acme-bot",
+  "client_address": "203.0.113.42",
   "session": {
     "id": "8d0c7a3e-5b1f-4c2a-9e6d-1f2a3b4c5d6e",
     "status": "claimed",
@@ -555,6 +561,8 @@ for every request that reached the provider (rule 6).
 
 Field meanings, where the example does not make them obvious:
 
+- `client_address` — the same value as the request record's
+  `client_address` of this call.
 - `started_at` — when the Gateway forwarded the request to the provider.
   `first_byte_us` and `duration_us` are measured from it: time to the
   provider's first byte, and time until the response to the agent ended.
@@ -783,6 +791,11 @@ together (rule 18). A session holds one or more traces. A record whose
     the call completes, **then** the caller receives the whole response
     unchanged, and the response record has `tool_calls` `[]`, the finding
     `tool_calls_unread`, and tracing's `observation` `completed`.
+32. **Given** a request whose connection came from `203.0.113.42:51514`,
+    **when** the call completes, **then** both its request and response
+    records carry `client_address` `"203.0.113.42"` (no port); **given**
+    the Gateway cannot determine the peer's address, **then**
+    `client_address` is `null` on both.
 
 ## Relationship to 0005
 

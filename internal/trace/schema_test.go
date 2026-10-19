@@ -60,7 +60,7 @@ func schemaRecords() map[string]Record {
 	absent := Session{Status: "absent"}
 	return map[string]Record{
 		"request forwarded, every stage and a tool result": RequestRecord{
-			Schema: Schema, Record: "request", CallID: "ak_7f3c2b1d9e8a4f60", AgentID: ptr("acme-bot"),
+			Schema: Schema, Record: "request", CallID: "ak_7f3c2b1d9e8a4f60", AgentID: ptr("acme-bot"), ClientAddress: ptr("203.0.113.42"),
 			Session: claimed, ReceivedAt: schemaTS(402113), DurationUS: 1794, Model: ptr("claude-sonnet-5"), Stream: true,
 			SizeBytes: ptr(int64(48213)),
 			Outcome:   RequestOutcome{Result: "forwarded"},
@@ -90,7 +90,7 @@ func schemaRecords() map[string]Record {
 			ToolResults: []ToolResult{}, Findings: []Finding{},
 		},
 		"response delivered with tokens and tool calls": ResponseRecord{
-			Schema: Schema, Record: "response", CallID: "ak_7f3c2b1d9e8a4f60", AgentID: ptr("acme-bot"), Session: claimed,
+			Schema: Schema, Record: "response", CallID: "ak_7f3c2b1d9e8a4f60", AgentID: ptr("acme-bot"), ClientAddress: ptr("203.0.113.42"), Session: claimed,
 			StartedAt: schemaTS(403907), FirstByteUS: ptr(int64(620114)), DurationUS: 4180337,
 			Outcome:  ResponseOutcome{Result: "delivered", UpstreamStatus: ptr(200), Status: 200},
 			Stages:   []ResponseStage{{Name: "tracing", StartedAt: schemaTS(24021), DurationUS: 1840, Observation: "completed"}},

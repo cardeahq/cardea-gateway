@@ -1,24 +1,40 @@
 package pipeline
 
 import (
+	"net"
+	"net/http"
 	"time"
 
 	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
+// clientAddress returns the peer's address with any port stripped, or nil
+// when the request carries none.
+func clientAddress(r *http.Request) *string {
+	addr := r.RemoteAddr
+	if addr == "" {
+		return nil
+	}
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		addr = host
+	}
+	return &addr
+}
+
 func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, bodyRead bool, requestSize int64) trace.RequestRecord {
 	rec := trace.RequestRecord{
-		Schema:      trace.Schema,
-		Record:      "request",
-		CallID:      c.ID,
-		AgentID:     optional(c.AgentID),
-		Session:     trace.Session{Status: "absent"},
-		ReceivedAt:  trace.Timestamp(c.Received),
-		DurationUS:  time.Since(c.Received).Microseconds(),
-		Outcome:     trace.RequestOutcome{Result: "forwarded"},
-		Stages:      make([]trace.RequestStage, 0, len(results)),
-		ToolResults: []trace.ToolResult{},
-		Findings:    []trace.Finding{},
+		Schema:        trace.Schema,
+		Record:        "request",
+		CallID:        c.ID,
+		AgentID:       optional(c.AgentID),
+		ClientAddress: clientAddress(c.Request),
+		Session:       trace.Session{Status: "absent"},
+		ReceivedAt:    trace.Timestamp(c.Received),
+		DurationUS:    time.Since(c.Received).Microseconds(),
+		Outcome:       trace.RequestOutcome{Result: "forwarded"},
+		Stages:        make([]trace.RequestStage, 0, len(results)),
+		ToolResults:   []trace.ToolResult{},
+		Findings:      []trace.Finding{},
 	}
 	if bodyRead {
 		size := requestSize
@@ -61,6 +77,7 @@ func buildResponseRecord(c *Call, rec *bodyRecorder, info trace.ResponseInfo, ob
 		Record:        "response",
 		CallID:        c.ID,
 		AgentID:       optional(c.AgentID),
+		ClientAddress: clientAddress(c.Request),
 		Session:       trace.Session{Status: "absent"},
 		StartedAt:     trace.Timestamp(forwardedAt),
 		DurationUS:    ended.Sub(forwardedAt).Microseconds(),
