@@ -34,11 +34,10 @@ var _ pipeline.Stage = (*tracingStage)(nil)
 const (
 	gwTraceKeyEnv     = "AK_GW_TRACE_TEST_KEY"
 	gwAnthropicKeyEnv = "AK_GW_TRACE_TEST_ANTHROPIC_KEY"
-	gwAgentXKeyEnv    = "AK_GW_TRACE_TEST_AGENT_X_KEY"
-	gwAgentYKeyEnv    = "AK_GW_TRACE_TEST_AGENT_Y_KEY"
-	agentXKey         = "agent-x-opaque-api-key"
-	agentYKey         = "agent-y-opaque-api-key"
-	sessionUUID       = "8d0c7a3e-5b1f-4c2a-9e6d-1f2a3b4c5d6e"
+	// agentHeader is the header the withAgents() fixture's agent-type files
+	// match on; its value is also the resulting agent_id, for readability.
+	agentHeader = "X-Test-Agent"
+	sessionUUID = "8d0c7a3e-5b1f-4c2a-9e6d-1f2a3b4c5d6e"
 )
 
 // --- Fake Anthropic upstream ------------------------------------------------------
@@ -160,15 +159,28 @@ func tracingGatewayConfig(t *testing.T, upstreamURL string) config.Config {
 	}
 }
 
+// withAgents enables identification against a temp-dir registry of two
+// agent types, "agent-x" and "agent-y", each recognized by one exact-value
+// rule on agentHeader. Unlike specs/0002's per-agent credential, this has
+// nothing to do with authorization: a caller needs no secret to be
+// classified as agent-x or agent-y.
 func withAgents(t *testing.T, cfg config.Config) config.Config {
 	t.Helper()
-	t.Setenv(gwAgentXKeyEnv, agentXKey)
-	t.Setenv(gwAgentYKeyEnv, agentYKey)
+	dir := t.TempDir()
+	writeAgentTypeFile(t, dir, "agent-x.yaml", "agent-x", agentHeader, "agent-x")
+	writeAgentTypeFile(t, dir, "agent-y.yaml", "agent-y", agentHeader, "agent-y")
 	cfg.Pipeline.Stages.Identification = true
-	cfg.Agents = []config.AgentConfig{
-		{AgentID: "agent-x", APIKeyEnv: gwAgentXKeyEnv},
-		{AgentID: "agent-y", APIKeyEnv: gwAgentYKeyEnv},
-	}
+	cfg.Identification = config.IdentificationConfig{AgentTypesDir: dir}
+	return cfg
+}
+
+// withAuthorization enables the authorization stage with one configured
+// shared secret, read from secretEnv.
+func withAuthorization(t *testing.T, cfg config.Config, secretEnv, secret string) config.Config {
+	t.Helper()
+	t.Setenv(secretEnv, secret)
+	cfg.Pipeline.Stages.Authorization = true
+	cfg.Authorization = config.AuthorizationConfig{APIKeyEnvs: []string{secretEnv}}
 	return cfg
 }
 
@@ -509,18 +521,20 @@ func TestTracing_ToolLoopJoinsAcrossCalls(t *testing.T) {
 }
 
 func TestTracing_StageOrderAndDenialInRequestRecord(t *testing.T) {
+	const authzSecretEnv = "AK_GW_TEST_STAGE_ORDER_SECRET"
+	const authzSecret = "stage-order-test-secret"
 	f, url := newFakeAnthropic(t, loopResponder)
-	cfg := withAgents(t, tracingGatewayConfig(t, url))
+	cfg := withAuthorization(t, withAgents(t, tracingGatewayConfig(t, url)), authzSecretEnv, authzSecret)
 	g := newTracingGateway(t, cfg, zaptest.NewLogger(t))
 
 	t.Run("allowed", func(t *testing.T) {
-		serve(g, post(bodyA, "Authorization", "Bearer "+agentXKey))
+		serve(g, post(bodyA, "Authorization", "Bearer "+authzSecret, agentHeader, "agent-x"))
 		req, resp := callRecords(t, cfg.Tracing.Sink.Path)
 		var got []string
 		for _, s := range list(t, req, "stages") {
 			got = append(got, fmt.Sprintf("%s:%s", s["name"], s["decision"]))
 		}
-		if want := []string{"identification:allowed", "tracing:allowed"}; !slices.Equal(got, want) {
+		if want := []string{"authorization:allowed", "identification:allowed", "tracing:allowed"}; !slices.Equal(got, want) {
 			t.Fatalf("request stages = %v, want %v", got, want)
 		}
 		if req["agent_id"] != "agent-x" || resp["agent_id"] != "agent-x" {
@@ -531,16 +545,16 @@ func TestTracing_StageOrderAndDenialInRequestRecord(t *testing.T) {
 			respStages = append(respStages, s["name"].(string))
 		}
 		if want := []string{"tracing"}; !slices.Equal(respStages, want) {
-			t.Fatalf("response stages = %v, want %v (identification does not observe responses)", respStages, want)
+			t.Fatalf("response stages = %v, want %v (authorization and identification never observe a response)", respStages, want)
 		}
 	})
 
-	t.Run("denied by identification", func(t *testing.T) {
+	t.Run("denied by authorization", func(t *testing.T) {
 		f.mu.Lock()
 		before := len(f.requests)
 		f.mu.Unlock()
 
-		rec := serve(g, post(bodyA))
+		rec := serve(g, post(bodyA, agentHeader, "agent-x")) // no Authorization header
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want 401", rec.Code)
 		}
@@ -552,11 +566,14 @@ func TestTracing_StageOrderAndDenialInRequestRecord(t *testing.T) {
 		for _, s := range list(t, req, "stages") {
 			got = append(got, fmt.Sprintf("%s:%s", s["name"], s["decision"]))
 		}
-		if want := []string{"identification:denied", "tracing:not_run"}; !slices.Equal(got, want) {
+		if want := []string{"authorization:denied", "identification:not_run", "tracing:not_run"}; !slices.Equal(got, want) {
 			t.Fatalf("request stages = %v, want %v", got, want)
 		}
-		if field(req, "outcome", "result") != "denied" || field(req, "outcome", "status") != float64(401) || field(req, "outcome", "stage") != "identification" {
-			t.Fatalf("outcome = %v, want denied/401/identification", req["outcome"])
+		if field(req, "outcome", "result") != "denied" || field(req, "outcome", "status") != float64(401) || field(req, "outcome", "stage") != "authorization" {
+			t.Fatalf("outcome = %v, want denied/401/authorization", req["outcome"])
+		}
+		if req["agent_id"] != nil {
+			t.Fatalf("agent_id = %v, want null: authorization denied before identification ran", req["agent_id"])
 		}
 		if req["model"] != nil || field(req, "session", "status") != "absent" {
 			t.Fatalf("model/session = %v/%v, want null/absent: tracing never ran", req["model"], req["session"])
@@ -597,7 +614,7 @@ func TestTracing_SessionFromHeader(t *testing.T) {
 	cfg.Tracing.Sessions = []config.SessionSourceList{{Agents: []string{"agent-x"}, Sources: []config.SessionSource{{Header: "X-Session-Id"}}}}
 	g := newTracingGateway(t, cfg, zaptest.NewLogger(t))
 
-	serve(g, post(bodyA, "Authorization", "Bearer "+agentXKey, "X-Session-Id", "s1"))
+	serve(g, post(bodyA, agentHeader, "agent-x", "X-Session-Id", "s1"))
 
 	req, resp := callRecords(t, cfg.Tracing.Sink.Path)
 	for _, r := range []map[string]any{req, resp} {
@@ -624,7 +641,7 @@ func TestTracing_SessionPatternRecordsOnlyTheCapture(t *testing.T) {
 	g := newTracingGateway(t, cfg, logger)
 
 	body := `{"model":"claude-sonnet-5","stream":true,"metadata":{"user_id":"user_` + userMarker + `_account_` + accountMarker + `_session_` + sessionUUID + `"},"messages":[{"role":"user","content":"hi"}]}`
-	serve(g, post(body, "Authorization", "Bearer "+agentXKey))
+	serve(g, post(body, agentHeader, "agent-x"))
 
 	req, resp := callRecords(t, cfg.Tracing.Sink.Path)
 	for _, r := range []map[string]any{req, resp} {
@@ -675,8 +692,8 @@ func TestTracing_SameSessionFromTwoAgentsIsTwoSessions(t *testing.T) {
 	cfg.Tracing.Sessions = []config.SessionSourceList{{Default: true, Sources: []config.SessionSource{{Header: "X-Session-Id"}}}}
 	g := newTracingGateway(t, cfg, zaptest.NewLogger(t))
 
-	serve(g, post(bodyA, "Authorization", "Bearer "+agentXKey, "X-Session-Id", "s1"))
-	serve(g, post(bodyA, "Authorization", "Bearer "+agentYKey, "X-Session-Id", "s1"))
+	serve(g, post(bodyA, agentHeader, "agent-x", "X-Session-Id", "s1"))
+	serve(g, post(bodyA, agentHeader, "agent-y", "X-Session-Id", "s1"))
 
 	sessions := map[string]int{}
 	for _, r := range readRecords(t, cfg.Tracing.Sink.Path) {

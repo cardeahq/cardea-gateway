@@ -9,9 +9,10 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/cardeahq/cardea-gateway/internal/authorization"
 	"github.com/cardeahq/cardea-gateway/internal/config"
 	"github.com/cardeahq/cardea-gateway/internal/filtering"
-	"github.com/cardeahq/cardea-gateway/internal/identity"
+	"github.com/cardeahq/cardea-gateway/internal/identification"
 	"github.com/cardeahq/cardea-gateway/internal/pipeline"
 	"github.com/cardeahq/cardea-gateway/internal/policy"
 	"github.com/cardeahq/cardea-gateway/internal/provider"
@@ -117,13 +118,28 @@ func (g *Gateway) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace.CloseableSink, *policy.Engine, *filtering.Engine, error) {
 	var stages []pipeline.Stage
 	var sink trace.CloseableSink
-	if cfg.Pipeline.Stages.Identification {
-		registry, err := identity.NewRegistry(cfg.Agents)
+
+	if cfg.Pipeline.Stages.Authorization {
+		gate, err := authorization.NewGate(cfg.Authorization.APIKeyEnvs)
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("building agent registry: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("building authorization gate: %w", err)
 		}
-		stages = append(stages, &identityStage{registry: registry})
+		stages = append(stages, &authorizationStage{gate: gate})
 	}
+
+	var identRegistry *identification.Registry
+	if cfg.Pipeline.Stages.Identification {
+		var err error
+		identRegistry, err = identification.NewRegistry(cfg.Identification.AgentTypesDir)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("building identification registry: %w", err)
+		}
+		if err := validateTracingAgentTypes(cfg.Tracing.Sessions, identRegistry.IDs()); err != nil {
+			return nil, nil, nil, nil, err
+		}
+		stages = append(stages, &identificationStage{registry: identRegistry})
+	}
+
 	if cfg.Pipeline.Stages.Tracing {
 		tracer, err := trace.NewTracer(cfg.Tracing, logger)
 		if err != nil {
@@ -163,6 +179,26 @@ func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace
 		stages = append(stages, &filteringStage{engine: filterEngine, logger: logger})
 	}
 	return stages, sink, engine, filterEngine, nil
+}
+
+// validateTracingAgentTypes checks every name in sessions[].agents
+// against known, identified agent types (plus the reserved "unknown"),
+// replacing config.validateTracing's old cfg.Agents-based check — see
+// Design.
+func validateTracingAgentTypes(sessions []config.SessionSourceList, knownIDs []string) error {
+	known := make(map[string]bool, len(knownIDs)+1)
+	known[identification.Unknown] = true
+	for _, id := range knownIDs {
+		known[id] = true
+	}
+	for i, l := range sessions {
+		for _, a := range l.Agents {
+			if !known[a] {
+				return fmt.Errorf("tracing.sessions[%d]: agent %q is not a known agent type", i, a)
+			}
+		}
+	}
+	return nil
 }
 
 // buildSink returns the sink cfg.Sink selects: the local log, the Cardea

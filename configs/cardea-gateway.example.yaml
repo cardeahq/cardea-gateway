@@ -31,29 +31,30 @@ pipeline:
   # also the cap on how much of a response is retained for observation.
   max_body_bytes: 10485760 # 10 MiB
   stages:
-    identification: false # off by default — see note below
+    authorization: false # off by default — see note below
+    identification: true # on by default
     tracing: true # records every request and response; see tracing below
     policies: true # allows everything until policies.path is set; see policies below
     filtering: true # redacts PII before forwarding; see filtering below
 
-# Agents the Gateway recognizes once identification is enabled. Each
-# entry needs api_key_env, jwt_secret_env, or both. Credential values are
-# never written here — only the name of the environment variable holding
-# them, matching provider.api_key_env.
+# The shared-secret gate. Needed only when pipeline.stages.authorization
+# is true. Each entry names an environment variable holding one valid
+# secret; list two while rotating. Secret values are never written here.
 #
-# identification defaults to false, unlike every other pipeline stage:
-# enabled with zero agents registered denies every call, since no caller
-# could possibly be identified. Turning it on is a deliberate act paired
-# with registering at least one agent below.
-agents: []
-  # - agent_id: "acme-bot"
-  #   api_key_env: "AGENT_ACME_BOT_API_KEY"
-  # - agent_id: "beta-bot"
-  #   jwt_secret_env: "AGENT_BETA_BOT_JWT_SECRET"
-  # Claude Code: start it with ANTHROPIC_BASE_URL pointing at the Gateway
-  # and ANTHROPIC_AUTH_TOKEN set to this key (sent as a Bearer token).
-  # - agent_id: "claude-code"
-  #   api_key_env: "AGENT_CLAUDE_CODE_API_KEY"
+# authorization defaults to false, unlike every other pipeline stage:
+# enabled with zero secrets configured denies every call, since no
+# caller could possibly present a valid one. Turning it on is a
+# deliberate act paired with configuring at least one secret below.
+authorization:
+  api_key_envs: []
+  # - "GATEWAY_API_KEY"
+  # - "GATEWAY_API_KEY_NEXT" # during rotation
+
+# Agent-type recognition. agent_types_dir holds one YAML file per
+# recognized type; see configs/identification.example/ for Cardea's
+# built-in Claude Code and Open Code definitions to copy in.
+identification:
+  agent_types_dir: "" # "" = none configured; every call is "unknown"
 
 # Call tracing: one JSON record per request and per response, handed to the
 # trace sink. Records carry metadata and keyed fingerprints only — never
