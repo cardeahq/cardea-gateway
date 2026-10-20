@@ -72,7 +72,8 @@ emits (JSON Schema draft 2020-12). Two files:
   Cardea sink. A call produces a `request` record (agent to LLM: model,
   stream flag, outcome, stage decisions, tool results received) and a
   `response` record (LLM to agent: timings, outcome, tokens, stop reason,
-  tool calls requested). Both share `call_id`, `agent_id` and `session`.
+  tool calls requested). Both share `call_id`, `remote_addr`, `agent_id` and
+  `session`.
 - **[`cardea-intake-line.v1.schema.json`](schemas/cardea-intake-line.v1.schema.json)**:
   one line of the batch the Cardea sink POSTs to the platform: a gzip-compressed
   NDJSON body where each line is `{"seq": N, "record": <trace record>}`. `seq`

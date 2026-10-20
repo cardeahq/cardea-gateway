@@ -20,6 +20,7 @@ type RequestRecord struct {
 	Schema      string         `json:"schema"`
 	Record      string         `json:"record"` // "request"
 	CallID      string         `json:"call_id"`
+	RemoteAddr  string         `json:"remote_addr"`
 	AgentID     *string        `json:"agent_id"`
 	Session     Session        `json:"session"`
 	ReceivedAt  Timestamp      `json:"received_at"`
@@ -39,6 +40,7 @@ type ResponseRecord struct {
 	Schema        string          `json:"schema"`
 	Record        string          `json:"record"` // "response"
 	CallID        string          `json:"call_id"`
+	RemoteAddr    string          `json:"remote_addr"`
 	AgentID       *string         `json:"agent_id"`
 	Session       Session         `json:"session"`
 	StartedAt     Timestamp       `json:"started_at"`
