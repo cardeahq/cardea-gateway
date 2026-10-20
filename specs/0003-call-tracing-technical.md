@@ -119,6 +119,24 @@ still gets a request record. Tracing's own fields then take their
 not-applicable values: `session.status: "absent"`, `model: null`,
 `tool_results: []`.
 
+### Remote address
+
+Both records carry `remote_addr`: the caller's IP, taken directly from
+`c.Request.RemoteAddr` (the TCP connection, as `net/http` sets it) with the
+ephemeral port stripped via `net.SplitHostPort`. It needs no stage and no
+tracer state — `pipeline.buildRequestRecord` and `buildResponseRecord` set
+it straight from `c.Request`, which the pipeline already holds for the
+life of the call — so it is present even on a call denied before any
+stage ran. If `RemoteAddr` is not a `host:port` pair (never true for a
+real connection; only possible from a test harness that sets a bare host),
+the raw value is kept rather than dropped.
+
+This is the immediate peer address only: no `X-Forwarded-For` or similar
+header is read, since a caller-supplied header cannot be trusted as the
+real client address without the operator naming which proxies are
+trusted to set it — a non-goal here, left to a future spec if an operator
+needs it.
+
 ### Reading the request
 
 `Tracer.Request(r, body, agentID)` returns a `RequestInfo`:
@@ -358,6 +376,7 @@ type RequestRecord struct {
 	Schema      string         `json:"schema"`
 	Record      string         `json:"record"` // "request"
 	CallID      string         `json:"call_id"`
+	RemoteAddr  string         `json:"remote_addr"`
 	AgentID     *string        `json:"agent_id"`
 	Session     Session        `json:"session"`
 	ReceivedAt  Timestamp      `json:"received_at"`
@@ -375,6 +394,7 @@ type ResponseRecord struct {
 	Schema        string          `json:"schema"`
 	Record        string          `json:"record"` // "response"
 	CallID        string          `json:"call_id"`
+	RemoteAddr    string          `json:"remote_addr"`
 	AgentID       *string         `json:"agent_id"`
 	Session       Session         `json:"session"`
 	StartedAt     Timestamp       `json:"started_at"`

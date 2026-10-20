@@ -363,9 +363,9 @@ func TestRecords_EveryFieldPresent(t *testing.T) {
 	doRequest(t, p, sseUpstream(toolStream()), postBody(streamedBody))
 
 	req, resp := sink.one(t, "request"), sink.one(t, "response")
-	wantReq := []string{"schema", "record", "call_id", "agent_id", "session", "received_at", "duration_us",
+	wantReq := []string{"schema", "record", "call_id", "remote_addr", "agent_id", "session", "received_at", "duration_us",
 		"model", "stream", "size_bytes", "outcome", "stages", "tool_results", "findings"}
-	wantResp := []string{"schema", "record", "call_id", "agent_id", "session", "started_at", "first_byte_us",
+	wantResp := []string{"schema", "record", "call_id", "remote_addr", "agent_id", "session", "started_at", "first_byte_us",
 		"duration_us", "outcome", "stages", "streamed", "response_id", "response_model", "stop_reason", "tokens",
 		"tool_calls", "findings"}
 	if got := slices.Sorted(maps.Keys(req)); !slices.Equal(got, slices.Sorted(slices.Values(wantReq))) {
@@ -415,6 +415,35 @@ func TestRecords_AgentAndSessionAreOnBothRecords(t *testing.T) {
 			t.Fatalf("response agent_id = %#v, want null", v)
 		}
 	})
+}
+
+func TestRecords_RemoteAddrOnBothRecords(t *testing.T) {
+	tests := []struct {
+		name       string
+		remoteAddr string
+		want       string
+	}{
+		{"host:port is split, port dropped", "192.0.2.1:54321", "192.0.2.1"},
+		{"bracketed IPv6 host:port is split, port dropped", "[2001:db8::1]:54321", "2001:db8::1"},
+		{"no port: kept as is", "192.0.2.1", "192.0.2.1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sink := &fakeSink{}
+			p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+			req := postBody(streamedBody)
+			req.RemoteAddr = tt.remoteAddr
+			doRequest(t, p, sseUpstream(toolStream()), req)
+
+			reqRec, resp := sink.one(t, "request"), sink.one(t, "response")
+			if reqRec["remote_addr"] != tt.want {
+				t.Fatalf("request remote_addr = %v, want %q", reqRec["remote_addr"], tt.want)
+			}
+			if resp["remote_addr"] != tt.want {
+				t.Fatalf("response remote_addr = %v, want %q", resp["remote_addr"], tt.want)
+			}
+		})
+	}
 }
 
 // --- Stage results --------------------------------------------------------------------

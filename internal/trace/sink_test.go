@@ -23,6 +23,7 @@ func minimalRequestRecord(callID string) RequestRecord {
 		Schema:      Schema,
 		Record:      "request",
 		CallID:      callID,
+		RemoteAddr:  "203.0.113.42",
 		Session:     Session{Status: "absent"},
 		ReceivedAt:  ts,
 		Outcome:     RequestOutcome{Result: "forwarded"},
@@ -34,15 +35,16 @@ func minimalRequestRecord(callID string) RequestRecord {
 
 func minimalResponseRecord(callID string) ResponseRecord {
 	return ResponseRecord{
-		Schema:    Schema,
-		Record:    "response",
-		CallID:    callID,
-		Session:   Session{Status: "absent"},
-		StartedAt: ts,
-		Outcome:   ResponseOutcome{Result: "unanswered", Status: 502},
-		Stages:    []ResponseStage{{Name: "tracing", StartedAt: ts, Observation: "completed"}},
-		ToolCalls: []ToolCall{{ToolCallID: "toolu_1", ToolName: "bash", Outcome: "not_delivered"}},
-		Findings:  []Finding{},
+		Schema:     Schema,
+		Record:     "response",
+		CallID:     callID,
+		RemoteAddr: "203.0.113.42",
+		Session:    Session{Status: "absent"},
+		StartedAt:  ts,
+		Outcome:    ResponseOutcome{Result: "unanswered", Status: 502},
+		Stages:     []ResponseStage{{Name: "tracing", StartedAt: ts, Observation: "completed"}},
+		ToolCalls:  []ToolCall{{ToolCallID: "toolu_1", ToolName: "bash", Outcome: "not_delivered"}},
+		Findings:   []Finding{},
 	}
 }
 
@@ -126,7 +128,7 @@ func TestLogSink_EveryFieldPresentWithNullAndEmptyList(t *testing.T) {
 	_ = json.Unmarshal([]byte(lines[0]), &req)
 	_ = json.Unmarshal([]byte(lines[1]), &resp)
 
-	assertKeys(t, "request", req, "schema", "record", "call_id", "agent_id", "session", "received_at", "duration_us",
+	assertKeys(t, "request", req, "schema", "record", "call_id", "remote_addr", "agent_id", "session", "received_at", "duration_us",
 		"model", "stream", "size_bytes", "outcome", "stages", "tool_results", "findings")
 	assertKeys(t, "request.session", asObject(t, "session", req["session"]), "id", "status", "source", "source_name")
 	assertKeys(t, "request.outcome", asObject(t, "outcome", req["outcome"]), "result", "status", "stage", "reason")
@@ -150,7 +152,7 @@ func TestLogSink_EveryFieldPresentWithNullAndEmptyList(t *testing.T) {
 		t.Fatalf("request.findings has %d entries, want []", n)
 	}
 
-	assertKeys(t, "response", resp, "schema", "record", "call_id", "agent_id", "session", "started_at", "first_byte_us",
+	assertKeys(t, "response", resp, "schema", "record", "call_id", "remote_addr", "agent_id", "session", "started_at", "first_byte_us",
 		"duration_us", "outcome", "stages", "streamed", "response_id", "response_model", "stop_reason", "tokens",
 		"tool_calls", "findings")
 	assertKeys(t, "response.outcome", asObject(t, "outcome", resp["outcome"]), "result", "upstream_status", "status")

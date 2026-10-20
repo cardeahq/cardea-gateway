@@ -32,6 +32,10 @@
       "type": "string",
       "pattern": "^ak_.+"
     },
+    "remoteAddr": {
+      "description": "The caller's IP address, taken from the connection and with the ephemeral port stripped. Identical in both records of a call.",
+      "type": "string"
+    },
     "fingerprint": {
       "description": "Keyed HMAC of a value that is never recorded; equal values give equal fingerprints within one deployment key.",
       "type": ["string", "null"],
@@ -69,14 +73,15 @@
       "description": "Agent to Gateway to LLM. Written when every stage has decided on the request, before it is forwarded or refused.",
       "type": "object",
       "required": [
-        "schema", "record", "call_id", "agent_id", "session", "received_at",
-        "duration_us", "model", "stream", "size_bytes", "outcome", "stages",
-        "tool_results", "findings"
+        "schema", "record", "call_id", "remote_addr", "agent_id", "session",
+        "received_at", "duration_us", "model", "stream", "size_bytes",
+        "outcome", "stages", "tool_results", "findings"
       ],
       "properties": {
         "schema": { "const": "cardea-gateway.trace/v1" },
         "record": { "const": "request" },
         "call_id": { "$ref": "#/$defs/callId" },
+        "remote_addr": { "$ref": "#/$defs/remoteAddr" },
         "agent_id": {
           "description": "The identified agent, or null when identification is off or did not identify one.",
           "$ref": "#/$defs/stringOrNull"
@@ -206,6 +211,7 @@
           "schema": "cardea-gateway.trace/v1",
           "record": "request",
           "call_id": "ak_7f3c2b1d9e8a4f60",
+          "remote_addr": "203.0.113.42",
           "agent_id": "acme-bot",
           "session": {
             "id": "8d0c7a3e-5b1f-4c2a-9e6d-1f2a3b4c5d6e",
@@ -235,15 +241,16 @@
       "description": "LLM to Gateway to agent. Written when the response to the agent ends, for every request that reached the provider.",
       "type": "object",
       "required": [
-        "schema", "record", "call_id", "agent_id", "session", "started_at",
-        "first_byte_us", "duration_us", "outcome", "stages", "streamed",
-        "response_id", "response_model", "stop_reason", "tokens", "tool_calls",
-        "findings"
+        "schema", "record", "call_id", "remote_addr", "agent_id", "session",
+        "started_at", "first_byte_us", "duration_us", "outcome", "stages",
+        "streamed", "response_id", "response_model", "stop_reason", "tokens",
+        "tool_calls", "findings"
       ],
       "properties": {
         "schema": { "const": "cardea-gateway.trace/v1" },
         "record": { "const": "response" },
         "call_id": { "$ref": "#/$defs/callId" },
+        "remote_addr": { "$ref": "#/$defs/remoteAddr" },
         "agent_id": { "$ref": "#/$defs/stringOrNull" },
         "session": { "$ref": "#/$defs/session" },
         "started_at": {
@@ -374,6 +381,7 @@
           "schema": "cardea-gateway.trace/v1",
           "record": "response",
           "call_id": "ak_7f3c2b1d9e8a4f60",
+          "remote_addr": "203.0.113.42",
           "agent_id": "acme-bot",
           "session": {
             "id": "8d0c7a3e-5b1f-4c2a-9e6d-1f2a3b4c5d6e",

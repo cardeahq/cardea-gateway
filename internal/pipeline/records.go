@@ -1,16 +1,30 @@
 package pipeline
 
 import (
+	"net"
+	"net/http"
 	"time"
 
 	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
+
+// remoteAddr returns the caller's IP, with the ephemeral port stripped.
+// If r.RemoteAddr isn't a host:port pair (e.g. an unmodified request from a
+// test harness), it is returned unchanged rather than dropped.
+func remoteAddr(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
 
 func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, bodyRead bool, requestSize int64) trace.RequestRecord {
 	rec := trace.RequestRecord{
 		Schema:      trace.Schema,
 		Record:      "request",
 		CallID:      c.ID,
+		RemoteAddr:  remoteAddr(c.Request),
 		AgentID:     optional(c.AgentID),
 		Session:     trace.Session{Status: "absent"},
 		ReceivedAt:  trace.Timestamp(c.Received),
@@ -60,6 +74,7 @@ func buildResponseRecord(c *Call, rec *bodyRecorder, info trace.ResponseInfo, ob
 		Schema:        trace.Schema,
 		Record:        "response",
 		CallID:        c.ID,
+		RemoteAddr:    remoteAddr(c.Request),
 		AgentID:       optional(c.AgentID),
 		Session:       trace.Session{Status: "absent"},
 		StartedAt:     trace.Timestamp(forwardedAt),

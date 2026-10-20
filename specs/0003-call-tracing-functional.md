@@ -192,8 +192,8 @@ exactly as before, and nothing they send or receive is altered.
    has observed the outcome. Every request that reaches the provider gets
    exactly one response record. A refused request gets none: its request
    record says what the agent received instead.
-7. Both records carry the call's agent and session, so each can be
-   grouped on its own, without its partner.
+7. Both records carry the call's remote address, agent and session, so
+   each can be grouped on its own, without its partner.
 
 ### Tool calls in responses
 
@@ -437,6 +437,7 @@ request, before it is forwarded or refused (rule 5).
   "schema": "cardea-gateway.trace/v1",
   "record": "request",
   "call_id": "ak_7f3c2b1d9e8a4f60",
+  "remote_addr": "203.0.113.42",
   "agent_id": "acme-bot",
   "session": {
     "id": "8d0c7a3e-5b1f-4c2a-9e6d-1f2a3b4c5d6e",
@@ -473,6 +474,10 @@ request, before it is forwarded or refused (rule 5).
 
 Field meanings, where the example does not make them obvious:
 
+- `remote_addr` — the caller's IP, taken from the connection itself, with
+  the ephemeral port stripped; identical in both records of a call. This
+  is the immediate peer address, never a caller-supplied header such as
+  `X-Forwarded-For`.
 - `session` — always present, identical in both records of a call.
   `status` is `claimed`, `invalid` (rule 17) or `absent` (rule 16). `id`
   is set only when `claimed`. `source` is `header`, `body_field` or
@@ -513,6 +518,7 @@ for every request that reached the provider (rule 6).
   "schema": "cardea-gateway.trace/v1",
   "record": "response",
   "call_id": "ak_7f3c2b1d9e8a4f60",
+  "remote_addr": "203.0.113.42",
   "agent_id": "acme-bot",
   "session": {
     "id": "8d0c7a3e-5b1f-4c2a-9e6d-1f2a3b4c5d6e",
