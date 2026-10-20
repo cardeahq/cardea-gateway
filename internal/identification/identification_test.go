@@ -5,7 +5,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 // writeAgentType writes one agent-type YAML file into dir, named filename.
@@ -35,8 +38,8 @@ func TestNewRegistry_EmptyDirStringSucceedsWithZeroTypes(t *testing.T) {
 	if reg == nil {
 		t.Fatal(`NewRegistry("") returned a nil *Registry with a nil error`)
 	}
-	if ids := reg.IDs(); len(ids) != 0 {
-		t.Fatalf("IDs() = %v, want empty", ids)
+	if ids := reg.SessionSources(); len(ids) != 0 {
+		t.Fatalf("SessionSources() = %v, want empty", ids)
 	}
 }
 
@@ -319,34 +322,39 @@ func TestNewRegistry_RejectsFileWithNoAgentID(t *testing.T) {
 
 // --- IDs() ----------------------------------------------------------------------
 
-func TestRegistry_IDs_ReturnsEveryLoadedTypeAndNothingElse(t *testing.T) {
+func TestRegistry_SessionSources_OnlyTypesThatListSome(t *testing.T) {
 	dir := t.TempDir()
-	writeAgentType(t, dir, "a.yaml", "agent_id: \"agent-a\"\nmatch:\n  - header: \"X-A\"\n    value: \"a\"\n")
+	writeAgentType(t, dir, "a.yaml", "agent_id: \"agent-a\"\nmatch:\n  - header: \"X-A\"\n    value: \"a\"\nsession_sources:\n  - header: X-Session\n  - body_field: metadata.user_id\n    pattern: '(.+)'\n")
 	writeAgentType(t, dir, "b.yaml", "agent_id: \"agent-b\"\nmatch:\n  - header: \"X-B\"\n    value: \"b\"\n")
 
 	reg, err := NewRegistry(dir)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	ids := reg.IDs()
-	if len(ids) != 2 {
-		t.Fatalf("IDs() = %v, want exactly 2 entries", ids)
+	want := map[string][]config.SessionSource{
+		"agent-a": {{Header: "X-Session"}, {BodyField: "metadata.user_id", Pattern: "(.+)"}},
 	}
-	got := map[string]bool{}
-	for _, id := range ids {
-		got[id] = true
-	}
-	if !got["agent-a"] || !got["agent-b"] {
-		t.Fatalf("IDs() = %v, want {agent-a, agent-b}", ids)
+	if got := reg.SessionSources(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("SessionSources() = %+v, want %+v", got, want)
 	}
 }
 
-func TestRegistry_IDs_EmptyRegistryReturnsEmpty(t *testing.T) {
+func TestNewRegistry_RejectsSessionSourceSettingNoneOrManyKinds(t *testing.T) {
+	for _, src := range []string{"  - pattern: '(.+)'\n", "  - header: A\n    baggage: b\n"} {
+		dir := t.TempDir()
+		writeAgentType(t, dir, "a.yaml", "agent_id: \"agent-a\"\nmatch:\n  - header: \"X-A\"\n    value: \"a\"\nsession_sources:\n"+src)
+		if _, err := NewRegistry(dir); err == nil {
+			t.Fatalf("NewRegistry with session source %q = nil error, want error", src)
+		}
+	}
+}
+
+func TestRegistry_SessionSources_EmptyRegistryReturnsEmpty(t *testing.T) {
 	reg, err := NewRegistry("")
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	if ids := reg.IDs(); len(ids) != 0 {
-		t.Fatalf("IDs() = %v, want empty", ids)
+	if ids := reg.SessionSources(); len(ids) != 0 {
+		t.Fatalf("SessionSources() = %v, want empty", ids)
 	}
 }

@@ -134,14 +134,15 @@ func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("building identification registry: %w", err)
 		}
-		if err := validateTracingAgentTypes(cfg.Tracing.Sessions, identRegistry.IDs()); err != nil {
-			return nil, nil, nil, nil, err
-		}
 		stages = append(stages, &identificationStage{registry: identRegistry})
 	}
 
 	if cfg.Pipeline.Stages.Tracing {
-		tracer, err := trace.NewTracer(cfg.Tracing, logger)
+		var agentSources map[string][]config.SessionSource
+		if identRegistry != nil {
+			agentSources = identRegistry.SessionSources()
+		}
+		tracer, err := trace.NewTracer(cfg.Tracing, agentSources, logger)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("building tracer: %w", err)
 		}
@@ -179,26 +180,6 @@ func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace
 		stages = append(stages, &filteringStage{engine: filterEngine, logger: logger})
 	}
 	return stages, sink, engine, filterEngine, nil
-}
-
-// validateTracingAgentTypes checks every name in sessions[].agents
-// against known, identified agent types (plus the reserved "unknown"),
-// replacing config.validateTracing's old cfg.Agents-based check — see
-// Design.
-func validateTracingAgentTypes(sessions []config.SessionSourceList, knownIDs []string) error {
-	known := make(map[string]bool, len(knownIDs)+1)
-	known[identification.Unknown] = true
-	for _, id := range knownIDs {
-		known[id] = true
-	}
-	for i, l := range sessions {
-		for _, a := range l.Agents {
-			if !known[a] {
-				return fmt.Errorf("tracing.sessions[%d]: agent %q is not a known agent type", i, a)
-			}
-		}
-	}
-	return nil
 }
 
 // buildSink returns the sink cfg.Sink selects: the local log, the Cardea

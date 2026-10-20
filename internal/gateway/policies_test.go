@@ -524,7 +524,7 @@ func TestPolicies_SessionIsVisibleOnlyWhenClaimed(t *testing.T) {
 			_, url := newFakeAnthropic(t, loopResponder)
 			cfg := policyConfig(t, url, rules)
 			cfg.Pipeline.Stages.Tracing = tt.tracing
-			cfg.Tracing.Sessions = []config.SessionSourceList{{Default: true, Sources: []config.SessionSource{{Header: "X-Session-Id"}}}}
+			cfg.Tracing.DefaultSessionSources = []config.SessionSource{{Header: "X-Session-Id"}}
 			g := newTracingGateway(t, cfg, zaptest.NewLogger(t))
 			if rec := serve(g, post(policyBody("m"), tt.headers...)); rec.Code != tt.wantCode {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantCode)

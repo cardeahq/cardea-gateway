@@ -38,12 +38,17 @@ func testTracingConfig() config.TracingConfig {
 // adjusts the config before construction.
 func newTestTracer(t *testing.T, mutate func(*config.TracingConfig)) *Tracer {
 	t.Helper()
+	return newTestTracerWith(t, mutate, nil)
+}
+
+func newTestTracerWith(t *testing.T, mutate func(*config.TracingConfig), agentSources map[string][]config.SessionSource) *Tracer {
+	t.Helper()
 	t.Setenv(testKeyEnv, testKey)
 	cfg := testTracingConfig()
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	tr, err := NewTracer(cfg, zaptest.NewLogger(t))
+	tr, err := NewTracer(cfg, agentSources, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("NewTracer: %v", err)
 	}
@@ -107,7 +112,7 @@ func TestNewTracer_UnsetOrEmptyKeyVarGeneratesAKeyAndWarnsOnce(t *testing.T) {
 			cfg := testTracingConfig()
 			cfg.FingerprintKeyEnv = keyVar
 
-			tr, err := NewTracer(cfg, zap.New(core))
+			tr, err := NewTracer(cfg, nil, zap.New(core))
 			if err != nil {
 				t.Fatalf("NewTracer with %s key var = %v, want success: a missing key must not stop startup", tt.name, err)
 			}
@@ -136,7 +141,7 @@ func TestNewTracer_ConfiguredKeyIsNeverLogged(t *testing.T) {
 	t.Setenv(testKeyEnv, key)
 	core, logs := observer.New(zapcore.DebugLevel)
 
-	tr, err := NewTracer(testTracingConfig(), zap.New(core))
+	tr, err := NewTracer(testTracingConfig(), nil, zap.New(core))
 	if err != nil {
 		t.Fatalf("NewTracer: %v", err)
 	}
@@ -166,24 +171,21 @@ func TestNewTracer_Rejects(t *testing.T) {
 			name: "pattern that does not compile",
 			key:  testKey,
 			mutate: func(c *config.TracingConfig) {
-				c.Sessions = []config.SessionSourceList{{Default: true, Sources: []config.SessionSource{{Header: "X-Session-Id", Pattern: `(`}}}}
+				c.DefaultSessionSources = []config.SessionSource{{Header: "X-Session-Id", Pattern: `(`}}
 			},
 		},
 		{
 			name: "pattern with no capture group",
 			key:  testKey,
 			mutate: func(c *config.TracingConfig) {
-				c.Sessions = []config.SessionSourceList{{Default: true, Sources: []config.SessionSource{{Header: "X-Session-Id", Pattern: `^s-[a-z]+$`}}}}
+				c.DefaultSessionSources = []config.SessionSource{{Header: "X-Session-Id", Pattern: `^s-[a-z]+$`}}
 			},
 		},
 		{
 			name: "pattern with two capture groups",
 			key:  testKey,
 			mutate: func(c *config.TracingConfig) {
-				c.Sessions = []config.SessionSourceList{
-					{Agents: []string{"agent-x"}, Sources: []config.SessionSource{{Header: "X-Ok", Pattern: `^(.+)$`}}},
-					{Default: true, Sources: []config.SessionSource{{Header: "X-Ok"}, {BodyField: "metadata.user_id", Pattern: `^(a)(b)$`}}},
-				}
+				c.DefaultSessionSources = []config.SessionSource{{Header: "X-Ok"}, {BodyField: "metadata.user_id", Pattern: `^(a)(b)$`}}
 			},
 		},
 	}
@@ -194,7 +196,7 @@ func TestNewTracer_Rejects(t *testing.T) {
 			if tt.mutate != nil {
 				tt.mutate(&cfg)
 			}
-			tr, err := NewTracer(cfg, zaptest.NewLogger(t))
+			tr, err := NewTracer(cfg, nil, zaptest.NewLogger(t))
 			if err == nil {
 				t.Fatalf("NewTracer = %v, nil error; want an error", tr)
 			}
@@ -211,7 +213,7 @@ func TestNewTracer_Accepts(t *testing.T) {
 		{
 			name: "pattern with one capture group besides non-capturing groups",
 			mutate: func(c *config.TracingConfig) {
-				c.Sessions = []config.SessionSourceList{{Default: true, Sources: []config.SessionSource{{BodyField: "metadata.user_id", Pattern: `(?:user_[a-z]+_)?session_([0-9a-f-]{36})$`}}}}
+				c.DefaultSessionSources = []config.SessionSource{{BodyField: "metadata.user_id", Pattern: `(?:user_[a-z]+_)?session_([0-9a-f-]{36})$`}}
 			},
 		},
 	}
@@ -272,7 +274,7 @@ func TestFingerprint_DependsOnKey(t *testing.T) {
 		build := func() *Tracer {
 			cfg := testTracingConfig()
 			cfg.FingerprintKeyEnv = keyVar
-			tr, err := NewTracer(cfg, zaptest.NewLogger(t))
+			tr, err := NewTracer(cfg, nil, zaptest.NewLogger(t))
 			if err != nil {
 				t.Fatalf("NewTracer: %v", err)
 			}

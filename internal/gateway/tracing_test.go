@@ -166,8 +166,25 @@ func tracingGatewayConfig(t *testing.T, upstreamURL string) config.Config {
 // classified as agent-x or agent-y.
 func withAgents(t *testing.T, cfg config.Config) config.Config {
 	t.Helper()
+	return withAgentSessions(t, cfg, "")
+}
+
+// withAgentSessions is withAgents with agent-x's file also carrying
+// agentXExtra, e.g. a session_sources block.
+func withAgentSessions(t *testing.T, cfg config.Config, agentXExtra string) config.Config {
+	t.Helper()
 	dir := t.TempDir()
 	writeAgentTypeFile(t, dir, "agent-x.yaml", "agent-x", agentHeader, "agent-x")
+	if agentXExtra != "" {
+		f, err := os.OpenFile(filepath.Join(dir, "agent-x.yaml"), os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("opening agent-x.yaml: %v", err)
+		}
+		if _, err := f.WriteString(agentXExtra); err != nil {
+			t.Fatalf("appending to agent-x.yaml: %v", err)
+		}
+		_ = f.Close()
+	}
 	writeAgentTypeFile(t, dir, "agent-y.yaml", "agent-y", agentHeader, "agent-y")
 	cfg.Pipeline.Stages.Identification = true
 	cfg.Identification = config.IdentificationConfig{AgentTypesDir: dir}
@@ -415,14 +432,14 @@ func TestGatewayNew_TracingStartupChecks(t *testing.T) {
 		{
 			name: "session pattern that does not compile",
 			mutate: func(t *testing.T, c *config.Config) {
-				c.Tracing.Sessions = []config.SessionSourceList{{Default: true, Sources: []config.SessionSource{{Header: "X-Session-Id", Pattern: `([`}}}}
+				c.Tracing.DefaultSessionSources = []config.SessionSource{{Header: "X-Session-Id", Pattern: `([`}}
 			},
 			wantErr: true,
 		},
 		{
 			name: "session pattern with two capture groups",
 			mutate: func(t *testing.T, c *config.Config) {
-				c.Tracing.Sessions = []config.SessionSourceList{{Default: true, Sources: []config.SessionSource{{Header: "X-Session-Id", Pattern: `^(a)-(b)$`}}}}
+				c.Tracing.DefaultSessionSources = []config.SessionSource{{Header: "X-Session-Id", Pattern: `^(a)-(b)$`}}
 			},
 			wantErr: true,
 		},
@@ -610,8 +627,7 @@ func TestTracing_CallerTraceparentIsNeverRecordedOrEchoed(t *testing.T) {
 
 func TestTracing_SessionFromHeader(t *testing.T) {
 	f, url := newFakeAnthropic(t, loopResponder)
-	cfg := withAgents(t, tracingGatewayConfig(t, url))
-	cfg.Tracing.Sessions = []config.SessionSourceList{{Agents: []string{"agent-x"}, Sources: []config.SessionSource{{Header: "X-Session-Id"}}}}
+	cfg := withAgentSessions(t, tracingGatewayConfig(t, url), "session_sources:\n  - header: X-Session-Id\n")
 	g := newTracingGateway(t, cfg, zaptest.NewLogger(t))
 
 	serve(g, post(bodyA, agentHeader, "agent-x", "X-Session-Id", "s1"))
@@ -632,11 +648,8 @@ func TestTracing_SessionFromHeader(t *testing.T) {
 func TestTracing_SessionPatternRecordsOnlyTheCapture(t *testing.T) {
 	const userMarker, accountMarker = "abc123qqz", "def456qqz"
 	f, url := newFakeAnthropic(t, loopResponder)
-	cfg := withAgents(t, tracingGatewayConfig(t, url))
-	cfg.Tracing.Sessions = []config.SessionSourceList{{
-		Agents:  []string{"agent-x"},
-		Sources: []config.SessionSource{{BodyField: "metadata.user_id", Pattern: `_session_([0-9a-f-]{36})$`}},
-	}}
+	cfg := withAgentSessions(t, tracingGatewayConfig(t, url),
+		"session_sources:\n  - body_field: metadata.user_id\n    pattern: '_session_([0-9a-f-]{36})$'\n")
 	logger, logs := observed()
 	g := newTracingGateway(t, cfg, logger)
 
@@ -689,7 +702,7 @@ func TestTracing_NoSessionSourcesMeansAbsent(t *testing.T) {
 func TestTracing_SameSessionFromTwoAgentsIsTwoSessions(t *testing.T) {
 	_, url := newFakeAnthropic(t, loopResponder)
 	cfg := withAgents(t, tracingGatewayConfig(t, url))
-	cfg.Tracing.Sessions = []config.SessionSourceList{{Default: true, Sources: []config.SessionSource{{Header: "X-Session-Id"}}}}
+	cfg.Tracing.DefaultSessionSources = []config.SessionSource{{Header: "X-Session-Id"}}
 	g := newTracingGateway(t, cfg, zaptest.NewLogger(t))
 
 	serve(g, post(bodyA, agentHeader, "agent-x", "X-Session-Id", "s1"))

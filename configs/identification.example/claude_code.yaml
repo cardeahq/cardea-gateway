@@ -4,3 +4,9 @@ match:
     pattern: "."
   - header: "user-agent"
     prefix: "claude-cli/"
+# Claude Code sends its session ID in a header, and again in the body
+# inside metadata.user_id (a JSON-encoded string) as a fallback.
+session_sources:
+  - header: "X-Claude-Code-Session-Id"
+  - body_field: "metadata.user_id"
+    pattern: '"session_id":"([0-9a-f-]{36})"'

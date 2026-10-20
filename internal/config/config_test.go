@@ -221,8 +221,8 @@ func TestLoad_TracingDefaults(t *testing.T) {
 	if cfg.Tracing.FingerprintKeyEnv != want.FingerprintKeyEnv || cfg.Tracing.MaxReadBytes != want.MaxReadBytes || cfg.Tracing.Sink != want.Sink {
 		t.Fatalf("Tracing = %+v, want %+v", cfg.Tracing, want)
 	}
-	if len(cfg.Tracing.Sessions) != 0 {
-		t.Fatalf("Tracing.Sessions = %+v, want empty by default", cfg.Tracing.Sessions)
+	if len(cfg.Tracing.DefaultSessionSources) != 0 {
+		t.Fatalf("Tracing.DefaultSessionSources = %+v, want empty by default", cfg.Tracing.DefaultSessionSources)
 	}
 
 	d := defaults()
@@ -273,32 +273,26 @@ func TestLoad_TracingEnvVarOverrides(t *testing.T) {
 	}
 }
 
-func TestLoad_TracingSessionsWellFormedListUnmarshalsCleanly(t *testing.T) {
-	// Unlike specs/0002, the agent names here need no corresponding
-	// registration anywhere in config.Config: that cross-check moved to
-	// gateway.buildStages (see specs/0008 technical, Design).
+func TestLoad_TracingDefaultSessionSourcesWellFormedListUnmarshalsCleanly(t *testing.T) {
 	yaml := "tracing:\n" +
-		"  sessions:\n" +
-		"    - agents: [\"agent-alpha\"]\n" +
-		"      sources:\n" +
-		"        - body_field: metadata.user_id\n" +
-		"          pattern: '_session_([0-9a-f-]{36})$'\n" +
-		"    - default: true\n" +
-		"      sources:\n" +
-		"        - header: X-Session-Id\n" +
-		"        - baggage: session.id\n"
+		"  default_session_sources:\n" +
+		"    - header: X-Session-Id\n" +
+		"    - baggage: session.id\n" +
+		"    - body_field: metadata.user_id\n" +
+		"      pattern: '_session_([0-9a-f-]{36})$'\n"
 	path := writeConfigFile(t, yaml)
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := []SessionSourceList{
-		{Agents: []string{"agent-alpha"}, Sources: []SessionSource{{BodyField: "metadata.user_id", Pattern: `_session_([0-9a-f-]{36})$`}}},
-		{Default: true, Sources: []SessionSource{{Header: "X-Session-Id"}, {Baggage: "session.id"}}},
+	want := []SessionSource{
+		{Header: "X-Session-Id"},
+		{Baggage: "session.id"},
+		{BodyField: "metadata.user_id", Pattern: `_session_([0-9a-f-]{36})$`},
 	}
-	if !reflect.DeepEqual(cfg.Tracing.Sessions, want) {
-		t.Fatalf("Tracing.Sessions = %+v, want %+v", cfg.Tracing.Sessions, want)
+	if !reflect.DeepEqual(cfg.Tracing.DefaultSessionSources, want) {
+		t.Fatalf("Tracing.DefaultSessionSources = %+v, want %+v", cfg.Tracing.DefaultSessionSources, want)
 	}
 }
 
@@ -311,46 +305,16 @@ func TestLoad_TracingRejections(t *testing.T) {
 		{"zero max_read_bytes", "tracing:\n  max_read_bytes: 0\n"},
 		{"negative max_read_bytes", "tracing:\n  max_read_bytes: -1\n"},
 		{
-			"sessions entry with neither agents nor default",
-			"tracing:\n  sessions:\n    - sources:\n        - header: X-Session-Id\n",
-		},
-		{
-			"sessions entry with empty agents and no default",
-			"tracing:\n  sessions:\n    - agents: []\n      sources:\n        - header: X-Session-Id\n",
-		},
-		{
-			"sessions entry with both agents and default",
-			"tracing:\n  sessions:\n    - agents: [\"agent-alpha\"]\n      default: true\n      sources:\n        - header: X-Session-Id\n",
-		},
-		{
-			"default given twice",
-			"tracing:\n  sessions:\n    - default: true\n      sources:\n        - header: A\n    - default: true\n      sources:\n        - header: B\n",
-		},
-		{
-			"agent in two entries",
-			"tracing:\n  sessions:\n" +
-				"    - agents: [\"agent-alpha\"]\n      sources:\n        - header: A\n" +
-				"    - agents: [\"agent-beta\", \"agent-alpha\"]\n      sources:\n        - header: B\n",
-		},
-		{
-			"entry with no sources",
-			"tracing:\n  sessions:\n    - default: true\n      sources: []\n",
-		},
-		{
 			"source setting no kind",
-			"tracing:\n  sessions:\n    - default: true\n      sources:\n        - pattern: '(.+)'\n",
+			"tracing:\n  default_session_sources:\n    - pattern: '(.+)'\n",
 		},
 		{
 			"source setting two kinds",
-			"tracing:\n  sessions:\n    - default: true\n      sources:\n        - header: X-Session-Id\n          baggage: session.id\n",
-		},
-		{
-			"unknown key in a sessions entry",
-			"tracing:\n  sessions:\n    - defualt: true\n      sources:\n        - header: X-Session-Id\n",
+			"tracing:\n  default_session_sources:\n    - header: X-Session-Id\n      baggage: session.id\n",
 		},
 		{
 			"unknown key in a source",
-			"tracing:\n  sessions:\n    - default: true\n      sources:\n        - headr: X-Session-Id\n",
+			"tracing:\n  default_session_sources:\n    - headr: X-Session-Id\n",
 		},
 	}
 	for _, tt := range tests {

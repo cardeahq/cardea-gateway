@@ -39,12 +39,42 @@ func checkSession(t *testing.T, got Session, want wantSession) {
 	}
 }
 
-func defaultList(s ...config.SessionSource) config.SessionSourceList {
-	return config.SessionSourceList{Default: true, Sources: s}
+// sessionList is a test-only grouping: sources for the named Agents, or
+// for every other agent when Default is set.
+type sessionList struct {
+	Agents  []string
+	Default bool
+	Sources []config.SessionSource
 }
 
-func agentList(agents []string, s ...config.SessionSource) config.SessionSourceList {
-	return config.SessionSourceList{Agents: agents, Sources: s}
+func defaultList(s ...config.SessionSource) sessionList {
+	return sessionList{Default: true, Sources: s}
+}
+
+func agentList(agents []string, s ...config.SessionSource) sessionList {
+	return sessionList{Agents: agents, Sources: s}
+}
+
+// splitLists maps lists onto NewTracer's inputs: the default sources and
+// the per-agent sources.
+func splitLists(lists []sessionList) ([]config.SessionSource, map[string][]config.SessionSource) {
+	var defaults []config.SessionSource
+	agents := map[string][]config.SessionSource{}
+	for _, l := range lists {
+		if l.Default {
+			defaults = l.Sources
+		}
+		for _, a := range l.Agents {
+			agents[a] = l.Sources
+		}
+	}
+	return defaults, agents
+}
+
+func newListsTracer(t *testing.T, lists ...sessionList) *Tracer {
+	t.Helper()
+	defaults, agents := splitLists(lists)
+	return newTestTracerWith(t, func(c *config.TracingConfig) { c.DefaultSessionSources = defaults }, agents)
 }
 
 func bodyWithUserID(v string) string {
@@ -60,7 +90,7 @@ func TestRequest_Session(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		lists   []config.SessionSourceList
+		lists   []sessionList
 		agentID string
 		headers map[string]string
 		body    string
@@ -69,79 +99,79 @@ func TestRequest_Session(t *testing.T) {
 		// Each source kind (criteria 17, 20).
 		{
 			name:    "header source",
-			lists:   []config.SessionSourceList{defaultList(xSession)},
+			lists:   []sessionList{defaultList(xSession)},
 			headers: map[string]string{"X-Session-Id": "s1"},
 			want:    wantSession{"claimed", "s1", "header", "X-Session-Id"},
 		},
 		{
 			name:    "empty header value counts as absent",
-			lists:   []config.SessionSourceList{defaultList(xSession)},
+			lists:   []sessionList{defaultList(xSession)},
 			headers: map[string]string{"X-Session-Id": ""},
 			want:    absent,
 		},
 		{
 			name:  "body field source",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  bodyWithUserID(sessionUUID),
 			want:  wantSession{"claimed", sessionUUID, "body_field", "metadata.user_id"},
 		},
 		{
 			name:  "missing body field counts as absent",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  `{"model":"m","metadata":{},"messages":[]}`,
 			want:  absent,
 		},
 		{
 			name:  "body path through a non-object counts as absent",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  `{"model":"m","metadata":"flat","messages":[]}`,
 			want:  absent,
 		},
 		{
 			name:  "non-JSON body counts as absent",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  `not json`,
 			want:  absent,
 		},
 		{
 			name:  "non-string body field is invalid",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  `{"model":"m","metadata":{"user_id":12345},"messages":[]}`,
 			want:  wantSession{"invalid", "", "body_field", "metadata.user_id"},
 		},
 		{
 			name:  "object body field is invalid",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  `{"model":"m","metadata":{"user_id":{"id":"s1"}},"messages":[]}`,
 			want:  wantSession{"invalid", "", "body_field", "metadata.user_id"},
 		},
 		{
 			name:    "baggage source",
-			lists:   []config.SessionSourceList{defaultList(baggage)},
+			lists:   []sessionList{defaultList(baggage)},
 			headers: map[string]string{"baggage": "session.id=s9,other=x"},
 			want:    wantSession{"claimed", "s9", "baggage", "session.id"},
 		},
 		{
 			name:    "baggage member properties are dropped",
-			lists:   []config.SessionSourceList{defaultList(baggage)},
+			lists:   []sessionList{defaultList(baggage)},
 			headers: map[string]string{"baggage": "other=x,session.id=s9;ttl=30;flag"},
 			want:    wantSession{"claimed", "s9", "baggage", "session.id"},
 		},
 		{
 			name:    "baggage value is percent-decoded",
-			lists:   []config.SessionSourceList{defaultList(baggage)},
+			lists:   []sessionList{defaultList(baggage)},
 			headers: map[string]string{"baggage": "session.id=a%2Fb%3Dc"},
 			want:    wantSession{"claimed", "a/b=c", "baggage", "session.id"},
 		},
 		{
 			name:    "first baggage member with the key wins",
-			lists:   []config.SessionSourceList{defaultList(baggage)},
+			lists:   []sessionList{defaultList(baggage)},
 			headers: map[string]string{"baggage": "session.id=first,session.id=second"},
 			want:    wantSession{"claimed", "first", "baggage", "session.id"},
 		},
 		{
 			name:    "baggage without the key counts as absent",
-			lists:   []config.SessionSourceList{defaultList(baggage)},
+			lists:   []sessionList{defaultList(baggage)},
 			headers: map[string]string{"baggage": "other=x"},
 			want:    absent,
 		},
@@ -149,25 +179,25 @@ func TestRequest_Session(t *testing.T) {
 		// Order and fallback (criterion 19).
 		{
 			name:    "first source wins when both are present",
-			lists:   []config.SessionSourceList{defaultList(config.SessionSource{Header: "A"}, config.SessionSource{Header: "B"})},
+			lists:   []sessionList{defaultList(config.SessionSource{Header: "A"}, config.SessionSource{Header: "B"})},
 			headers: map[string]string{"A": "from-a", "B": "from-b"},
 			want:    wantSession{"claimed", "from-a", "header", "A"},
 		},
 		{
 			name:    "falls back to the next source when the first is absent",
-			lists:   []config.SessionSourceList{defaultList(config.SessionSource{Header: "A"}, config.SessionSource{Header: "B"})},
+			lists:   []sessionList{defaultList(config.SessionSource{Header: "A"}, config.SessionSource{Header: "B"})},
 			headers: map[string]string{"B": "from-b"},
 			want:    wantSession{"claimed", "from-b", "header", "B"},
 		},
 		{
 			name:    "an invalid value from the first source decides; no fallback",
-			lists:   []config.SessionSourceList{defaultList(config.SessionSource{Header: "A"}, config.SessionSource{Header: "B"})},
+			lists:   []sessionList{defaultList(config.SessionSource{Header: "A"}, config.SessionSource{Header: "B"})},
 			headers: map[string]string{"A": strings.Repeat("x", 300), "B": "from-b"},
 			want:    wantSession{"invalid", "", "header", "A"},
 		},
 		{
 			name:  "no source yields a value",
-			lists: []config.SessionSourceList{defaultList(xSession, userID, baggage)},
+			lists: []sessionList{defaultList(xSession, userID, baggage)},
 			body:  `{"model":"m","messages":[]}`,
 			want:  absent,
 		},
@@ -175,19 +205,19 @@ func TestRequest_Session(t *testing.T) {
 		// Patterns (criterion 18).
 		{
 			name:  "pattern keeps only capture group 1",
-			lists: []config.SessionSourceList{defaultList(config.SessionSource{BodyField: "metadata.user_id", Pattern: `_session_([0-9a-f-]{36})$`})},
+			lists: []sessionList{defaultList(config.SessionSource{BodyField: "metadata.user_id", Pattern: `_session_([0-9a-f-]{36})$`})},
 			body:  bodyWithUserID("user_abc_account_def_session_" + sessionUUID),
 			want:  wantSession{"claimed", sessionUUID, "body_field", "metadata.user_id"},
 		},
 		{
 			name:  "pattern non-match counts as absent",
-			lists: []config.SessionSourceList{defaultList(config.SessionSource{BodyField: "metadata.user_id", Pattern: `_session_([0-9a-f-]{36})$`})},
+			lists: []sessionList{defaultList(config.SessionSource{BodyField: "metadata.user_id", Pattern: `_session_([0-9a-f-]{36})$`})},
 			body:  bodyWithUserID("user_abc_account_def"),
 			want:  absent,
 		},
 		{
 			name: "pattern non-match falls back to the next source",
-			lists: []config.SessionSourceList{defaultList(
+			lists: []sessionList{defaultList(
 				config.SessionSource{Header: "X-Session-Id", Pattern: `^sess-(.+)$`},
 				config.SessionSource{Header: "X-Fallback"},
 			)},
@@ -196,7 +226,7 @@ func TestRequest_Session(t *testing.T) {
 		},
 		{
 			name:    "pattern applies to headers too",
-			lists:   []config.SessionSourceList{defaultList(config.SessionSource{Header: "X-Session-Id", Pattern: `^sess-(.+)$`})},
+			lists:   []sessionList{defaultList(config.SessionSource{Header: "X-Session-Id", Pattern: `^sess-(.+)$`})},
 			headers: map[string]string{"X-Session-Id": "sess-42"},
 			want:    wantSession{"claimed", "42", "header", "X-Session-Id"},
 		},
@@ -204,49 +234,49 @@ func TestRequest_Session(t *testing.T) {
 		// Validity (criterion 22).
 		{
 			name:    "128 characters is valid",
-			lists:   []config.SessionSourceList{defaultList(xSession)},
+			lists:   []sessionList{defaultList(xSession)},
 			headers: map[string]string{"X-Session-Id": strings.Repeat("a", 128)},
 			want:    wantSession{"claimed", strings.Repeat("a", 128), "header", "X-Session-Id"},
 		},
 		{
 			name:    "129 characters is invalid",
-			lists:   []config.SessionSourceList{defaultList(xSession)},
+			lists:   []sessionList{defaultList(xSession)},
 			headers: map[string]string{"X-Session-Id": strings.Repeat("a", 129)},
 			want:    wantSession{"invalid", "", "header", "X-Session-Id"},
 		},
 		{
 			name:  "every printable non-space ASCII character is valid",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  bodyWithUserID("!~azAZ09-_.:/{}\"\\"),
 			want:  wantSession{"claimed", "!~azAZ09-_.:/{}\"\\", "body_field", "metadata.user_id"},
 		},
 		{
 			name:  "a newline is invalid",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  bodyWithUserID("abc\ndef"),
 			want:  wantSession{"invalid", "", "body_field", "metadata.user_id"},
 		},
 		{
 			name:  "a space is invalid",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  bodyWithUserID("abc def"),
 			want:  wantSession{"invalid", "", "body_field", "metadata.user_id"},
 		},
 		{
 			name:  "non-ASCII is invalid",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  bodyWithUserID("café"),
 			want:  wantSession{"invalid", "", "body_field", "metadata.user_id"},
 		},
 		{
 			name:  "DEL is invalid",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  bodyWithUserID("abc\x7fdef"),
 			want:  wantSession{"invalid", "", "body_field", "metadata.user_id"},
 		},
 		{
 			name:  "an empty body field is invalid",
-			lists: []config.SessionSourceList{defaultList(userID)},
+			lists: []sessionList{defaultList(userID)},
 			body:  bodyWithUserID(""),
 			want:  wantSession{"invalid", "", "body_field", "metadata.user_id"},
 		},
@@ -254,42 +284,42 @@ func TestRequest_Session(t *testing.T) {
 		// Which list applies (criteria 20, 21).
 		{
 			name:    "an agent with its own list uses it, not the default",
-			lists:   []config.SessionSourceList{agentList([]string{"agent-x"}, xSession), defaultList(baggage)},
+			lists:   []sessionList{agentList([]string{"agent-x"}, xSession), defaultList(baggage)},
 			agentID: "agent-x",
 			headers: map[string]string{"X-Session-Id": "own", "baggage": "session.id=dflt"},
 			want:    wantSession{"claimed", "own", "header", "X-Session-Id"},
 		},
 		{
 			name:    "an agent with its own list does not fall back to the default",
-			lists:   []config.SessionSourceList{agentList([]string{"agent-x"}, xSession), defaultList(baggage)},
+			lists:   []sessionList{agentList([]string{"agent-x"}, xSession), defaultList(baggage)},
 			agentID: "agent-x",
 			headers: map[string]string{"baggage": "session.id=dflt"},
 			want:    absent,
 		},
 		{
 			name:    "an agent without its own list uses the default",
-			lists:   []config.SessionSourceList{agentList([]string{"agent-x"}, xSession), defaultList(baggage)},
+			lists:   []sessionList{agentList([]string{"agent-x"}, xSession), defaultList(baggage)},
 			agentID: "agent-y",
 			headers: map[string]string{"X-Session-Id": "own", "baggage": "session.id=s9,other=x"},
 			want:    wantSession{"claimed", "s9", "baggage", "session.id"},
 		},
 		{
 			name:    "a list shared by several agents applies to each",
-			lists:   []config.SessionSourceList{agentList([]string{"agent-x", "agent-y"}, xSession)},
+			lists:   []sessionList{agentList([]string{"agent-x", "agent-y"}, xSession)},
 			agentID: "agent-y",
 			headers: map[string]string{"X-Session-Id": "shared"},
 			want:    wantSession{"claimed", "shared", "header", "X-Session-Id"},
 		},
 		{
 			name:    "no agent (identification disabled) uses the default",
-			lists:   []config.SessionSourceList{agentList([]string{"agent-x"}, xSession), defaultList(baggage)},
+			lists:   []sessionList{agentList([]string{"agent-x"}, xSession), defaultList(baggage)},
 			agentID: "",
 			headers: map[string]string{"X-Session-Id": "own", "baggage": "session.id=dflt"},
 			want:    wantSession{"claimed", "dflt", "baggage", "session.id"},
 		},
 		{
 			name:    "an agent without a list and no default reads no session",
-			lists:   []config.SessionSourceList{agentList([]string{"agent-x"}, xSession)},
+			lists:   []sessionList{agentList([]string{"agent-x"}, xSession)},
 			agentID: "agent-y",
 			headers: map[string]string{"X-Session-Id": "s1"},
 			want:    absent,
@@ -304,7 +334,7 @@ func TestRequest_Session(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tr := newTestTracer(t, func(c *config.TracingConfig) { c.Sessions = tt.lists })
+			tr := newListsTracer(t, tt.lists...)
 			body := tt.body
 			if body == "" {
 				body = `{"model":"m","messages":[]}`
@@ -334,9 +364,7 @@ func TestRequest_InvalidSessionValueLeavesNoTrace(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tr := newTestTracer(t, func(c *config.TracingConfig) {
-				c.Sessions = []config.SessionSourceList{defaultList(config.SessionSource{BodyField: "metadata.user_id"})}
-			})
+			tr := newListsTracer(t, defaultList(config.SessionSource{BodyField: "metadata.user_id"}))
 			body := bodyWithUserID(tt.value)
 			info, err := tr.Request(newRequest(t, body), []byte(body), "")
 			if err != nil {
@@ -355,9 +383,7 @@ func TestRequest_InvalidSessionValueLeavesNoTrace(t *testing.T) {
 }
 
 func TestRequest_PatternRecordsOnlyTheCapturedPart(t *testing.T) {
-	tr := newTestTracer(t, func(c *config.TracingConfig) {
-		c.Sessions = []config.SessionSourceList{defaultList(config.SessionSource{BodyField: "metadata.user_id", Pattern: `_session_([0-9a-f-]{36})$`})}
-	})
+	tr := newListsTracer(t, defaultList(config.SessionSource{BodyField: "metadata.user_id", Pattern: `_session_([0-9a-f-]{36})$`}))
 	body := bodyWithUserID("user_abc123xyz_account_def456uvw_session_" + sessionUUID)
 	info, err := tr.Request(newRequest(t, body), []byte(body), "")
 	if err != nil {

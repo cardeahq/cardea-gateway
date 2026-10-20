@@ -27,10 +27,11 @@ type Tracer struct {
 // NewTracer reads the fingerprint key from the env var cfg names. If the
 // var is unset or empty, it generates a random 32-byte key and logs a
 // warning naming the var; if it is set but shorter than 32 bytes, it
-// fails. It compiles every session pattern, rejecting one that does not
+// fails. agentSources holds each agent's own session sources, keyed by
+// agent ID; cfg.DefaultSessionSources serve every other agent. It compiles every session pattern, rejecting one that does not
 // compile or has a capture-group count other than one. Its errors name
 // the offending source by list and position.
-func NewTracer(cfg config.TracingConfig, logger *zap.Logger) (*Tracer, error) {
+func NewTracer(cfg config.TracingConfig, agentSources map[string][]config.SessionSource, logger *zap.Logger) (*Tracer, error) {
 	t := &Tracer{maxReadBytes: cfg.MaxReadBytes, agentSources: map[string][]source{}}
 
 	key := os.Getenv(cfg.FingerprintKeyEnv)
@@ -48,20 +49,13 @@ func NewTracer(cfg config.TracingConfig, logger *zap.Logger) (*Tracer, error) {
 		t.key = []byte(key)
 	}
 
-	for i, list := range cfg.Sessions {
-		srcs := make([]source, len(list.Sources))
-		for j, s := range list.Sources {
-			src, err := compileSource(s)
-			if err != nil {
-				return nil, fmt.Errorf("tracing.sessions[%d].sources[%d]: %w", i, j, err)
-			}
-			srcs[j] = src
-		}
-		if list.Default {
-			t.defaultSrcs = srcs
-		}
-		for _, a := range list.Agents {
-			t.agentSources[a] = srcs
+	var err error
+	if t.defaultSrcs, err = compileSources(cfg.DefaultSessionSources); err != nil {
+		return nil, fmt.Errorf("tracing.default_session_sources: %w", err)
+	}
+	for agent, list := range agentSources {
+		if t.agentSources[agent], err = compileSources(list); err != nil {
+			return nil, fmt.Errorf("agent %q session_sources: %w", agent, err)
 		}
 	}
 	return t, nil
@@ -119,6 +113,18 @@ func (t *Tracer) sourcesFor(agentID string) []source {
 		return srcs
 	}
 	return t.defaultSrcs
+}
+
+func compileSources(list []config.SessionSource) ([]source, error) {
+	srcs := make([]source, len(list))
+	for i, s := range list {
+		src, err := compileSource(s)
+		if err != nil {
+			return nil, fmt.Errorf("[%d]: %w", i, err)
+		}
+		srcs[i] = src
+	}
+	return srcs, nil
 }
 
 func compileSource(s config.SessionSource) (source, error) {
