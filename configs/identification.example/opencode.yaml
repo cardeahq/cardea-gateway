@@ -1,0 +1,4 @@
+agent_id: "opencode"
+match:
+  - header: "x-opencode-session"
+    pattern: "."

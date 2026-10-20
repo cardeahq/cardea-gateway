@@ -18,15 +18,16 @@ import (
 const EnvPrefix = "CARDEA_GATEWAY"
 
 type Config struct {
-	Server    ServerConfig    `mapstructure:"server"`
-	Logging   LoggingConfig   `mapstructure:"logging"`
-	Rules     RulesConfig     `mapstructure:"rules"`
-	Provider  ProviderConfig  `mapstructure:"provider"`
-	Pipeline  PipelineConfig  `mapstructure:"pipeline"`
-	Agents    []AgentConfig   `mapstructure:"agents"`
-	Tracing   TracingConfig   `mapstructure:"tracing"`
-	Policies  PoliciesConfig  `mapstructure:"policies"`
-	Filtering FilteringConfig `mapstructure:"filtering"`
+	Server         ServerConfig         `mapstructure:"server"`
+	Logging        LoggingConfig        `mapstructure:"logging"`
+	Rules          RulesConfig          `mapstructure:"rules"`
+	Provider       ProviderConfig       `mapstructure:"provider"`
+	Pipeline       PipelineConfig       `mapstructure:"pipeline"`
+	Authorization  AuthorizationConfig  `mapstructure:"authorization"`
+	Identification IdentificationConfig `mapstructure:"identification"`
+	Tracing        TracingConfig        `mapstructure:"tracing"`
+	Policies       PoliciesConfig       `mapstructure:"policies"`
+	Filtering      FilteringConfig      `mapstructure:"filtering"`
 }
 
 type ServerConfig struct {
@@ -62,6 +63,7 @@ type PipelineConfig struct {
 }
 
 type StagesConfig struct {
+	Authorization  bool `mapstructure:"authorization"`
 	Identification bool `mapstructure:"identification"`
 	Tracing        bool `mapstructure:"tracing"`
 	Policies       bool `mapstructure:"policies"`
@@ -95,15 +97,19 @@ type PoliciesConfig struct {
 	EvalTimeout time.Duration `mapstructure:"eval_timeout"`
 }
 
-// AgentConfig is one operator-registered agent. At least one of
-// APIKeyEnv/JWTSecretEnv must be set; both may be, e.g. while migrating an
-// agent from an API key to a JWT. Credential values are never written here
-// — only the name of the environment variable holding them, matching
-// ProviderConfig.APIKeyEnv.
-type AgentConfig struct {
-	AgentID      string `mapstructure:"agent_id"`
-	APIKeyEnv    string `mapstructure:"api_key_env"`
-	JWTSecretEnv string `mapstructure:"jwt_secret_env"`
+// AuthorizationConfig configures the shared-secret gate. Secret values
+// are never written here — only the names of the environment variables
+// holding them, matching ProviderConfig.APIKeyEnv.
+type AuthorizationConfig struct {
+	APIKeyEnvs []string `mapstructure:"api_key_envs"`
+}
+
+// IdentificationConfig configures agent-type recognition.
+type IdentificationConfig struct {
+	// AgentTypesDir holds one YAML file per recognized agent type. ""
+	// means none configured — every call resolves to
+	// identification.Unknown.
+	AgentTypesDir string `mapstructure:"agent_types_dir"`
 }
 
 type TracingConfig struct {
@@ -190,13 +196,15 @@ func defaults() Config {
 		Pipeline: PipelineConfig{
 			MaxBodyBytes: 10485760,
 			Stages: StagesConfig{
-				Identification: false,
+				Authorization:  false,
+				Identification: true,
 				Tracing:        true,
 				Policies:       true,
 				Filtering:      true,
 			},
 		},
-		Agents: nil,
+		Authorization:  AuthorizationConfig{APIKeyEnvs: nil},
+		Identification: IdentificationConfig{AgentTypesDir: ""},
 		Tracing: TracingConfig{
 			FingerprintKeyEnv: "TRACE_FINGERPRINT_KEY",
 			MaxReadBytes:      16777216,
@@ -240,10 +248,13 @@ func Load(cfgFile string) (Config, error) {
 	v.SetDefault("provider.base_url", d.Provider.BaseURL)
 	v.SetDefault("provider.api_key_env", d.Provider.APIKeyEnv)
 	v.SetDefault("pipeline.max_body_bytes", d.Pipeline.MaxBodyBytes)
+	v.SetDefault("pipeline.stages.authorization", d.Pipeline.Stages.Authorization)
 	v.SetDefault("pipeline.stages.identification", d.Pipeline.Stages.Identification)
 	v.SetDefault("pipeline.stages.tracing", d.Pipeline.Stages.Tracing)
 	v.SetDefault("pipeline.stages.policies", d.Pipeline.Stages.Policies)
 	v.SetDefault("pipeline.stages.filtering", d.Pipeline.Stages.Filtering)
+	v.SetDefault("authorization.api_key_envs", d.Authorization.APIKeyEnvs)
+	v.SetDefault("identification.agent_types_dir", d.Identification.AgentTypesDir)
 	v.SetDefault("filtering.categories.email", d.Filtering.Categories.Email)
 	v.SetDefault("filtering.categories.ssn", d.Filtering.Categories.SSN)
 	v.SetDefault("filtering.categories.api_key", d.Filtering.Categories.APIKey)
@@ -308,12 +319,20 @@ func Load(cfgFile string) (Config, error) {
 		return Config{}, fmt.Errorf("unmarshalling policies: %w", err)
 	}
 
-	var agents []AgentConfig
-	err = v.UnmarshalKey("agents", &agents, func(dc *mapstructure.DecoderConfig) {
+	var authz AuthorizationConfig
+	err = v.UnmarshalKey("authorization", &authz, func(dc *mapstructure.DecoderConfig) {
 		dc.ErrorUnused = true
 	})
 	if err != nil {
-		return Config{}, fmt.Errorf("unmarshalling agents: %w", err)
+		return Config{}, fmt.Errorf("unmarshalling authorization: %w", err)
+	}
+
+	var ident IdentificationConfig
+	err = v.UnmarshalKey("identification", &ident, func(dc *mapstructure.DecoderConfig) {
+		dc.ErrorUnused = true
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("unmarshalling identification: %w", err)
 	}
 
 	var sessions []SessionSourceList
@@ -347,28 +366,14 @@ func Load(cfgFile string) (Config, error) {
 		return Config{}, fmt.Errorf("policies.watch_settle must be positive, got %s", cfg.Policies.WatchSettle)
 	}
 
-	seenAgentIDs := make(map[string]bool, len(cfg.Agents))
-	for _, a := range cfg.Agents {
-		if a.AgentID == "" {
-			return Config{}, fmt.Errorf("agents entry has an empty agent_id")
-		}
-		if seenAgentIDs[a.AgentID] {
-			return Config{}, fmt.Errorf("agents: duplicate agent_id %q", a.AgentID)
-		}
-		seenAgentIDs[a.AgentID] = true
-		if a.APIKeyEnv == "" && a.JWTSecretEnv == "" {
-			return Config{}, fmt.Errorf("agents: agent_id %q must set api_key_env, jwt_secret_env, or both", a.AgentID)
-		}
-	}
-
-	if err := validateTracing(cfg.Tracing, seenAgentIDs); err != nil {
+	if err := validateTracing(cfg.Tracing); err != nil {
 		return Config{}, err
 	}
 
 	return cfg, nil
 }
 
-func validateTracing(t TracingConfig, agents map[string]bool) error {
+func validateTracing(t TracingConfig) error {
 	switch t.Sink.Type {
 	case "logging", "cardea", "logging+cardea":
 	default:
@@ -399,9 +404,6 @@ func validateTracing(t TracingConfig, agents map[string]bool) error {
 			hasDefault = true
 		}
 		for _, a := range l.Agents {
-			if !agents[a] {
-				return fmt.Errorf("%s: agent %q is not registered in agents", where, a)
-			}
 			if listed[a] {
 				return fmt.Errorf("%s: agent %q appears in more than one session source list", where, a)
 			}

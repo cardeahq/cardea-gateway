@@ -141,7 +141,11 @@ func everything(t *testing.T, tracePath, logs string, recs ...*httptest.Response
 
 func buildCfg(t *testing.T, identification, tracing, policies bool, policyPath string) config.Config {
 	t.Helper()
-	cfg := config.Config{
+	// Identification enabled with no agent_types_dir configured is a valid,
+	// if maximally unclassifying, configuration (every call is "unknown");
+	// this helper only needs the stage present or absent, not an actual
+	// agent-type match.
+	return config.Config{
 		Pipeline: config.PipelineConfig{
 			MaxBodyBytes: 1 << 20,
 			Stages:       config.StagesConfig{Identification: identification, Tracing: tracing, Policies: policies},
@@ -149,11 +153,6 @@ func buildCfg(t *testing.T, identification, tracing, policies bool, policyPath s
 		Tracing:  fileSinkTracing(t),
 		Policies: config.PoliciesConfig{Path: policyPath, WatchSettle: time.Second, EvalTimeout: time.Second},
 	}
-	if identification {
-		t.Setenv("AK_GW_TEST_POLICY_AGENT_KEY", "policy-agent-key")
-		cfg.Agents = []config.AgentConfig{{AgentID: "agent-a", APIKeyEnv: "AK_GW_TEST_POLICY_AGENT_KEY"}}
-	}
-	return cfg
 }
 
 func TestBuildStages_PoliciesComesThirdAndFollowsItsConfigBoolean(t *testing.T) {
@@ -474,10 +473,10 @@ func TestPolicies_AgentRule(t *testing.T) {
 	cfg := withAgents(t, policyConfig(t, url, `deny contains "agent-x-banned" if { input.agent.id == "agent-x" }`))
 	g := newTracingGateway(t, cfg, zaptest.NewLogger(t))
 
-	if rec := serve(g, post(policyBody("m"), "Authorization", "Bearer "+agentXKey)); rec.Code != http.StatusForbidden {
+	if rec := serve(g, post(policyBody("m"), agentHeader, "agent-x")); rec.Code != http.StatusForbidden {
 		t.Fatalf("agent-x status = %d, want 403", rec.Code)
 	}
-	if rec := serve(g, post(policyBody("m"), "Authorization", "Bearer "+agentYKey)); rec.Code != http.StatusOK {
+	if rec := serve(g, post(policyBody("m"), agentHeader, "agent-y")); rec.Code != http.StatusOK {
 		t.Fatalf("agent-y status = %d, want 200", rec.Code)
 	}
 	if f.count() != 1 {
@@ -485,14 +484,19 @@ func TestPolicies_AgentRule(t *testing.T) {
 	}
 }
 
+// TestPolicies_EarlierDenialMeansPoliciesNotRun covers specs/0001's "a
+// stage denies before policies run" contract. Identification itself never
+// denies (specs/0008), so the earlier denial here comes from authorization
+// instead — the stage that still fails closed.
 func TestPolicies_EarlierDenialMeansPoliciesNotRun(t *testing.T) {
 	f, url := newFakeAnthropic(t, loopResponder)
-	cfg := withAgents(t, policyConfig(t, url, `deny contains "always" if { true }`))
+	cfg := withAuthorization(t, policyConfig(t, url, `deny contains "always" if { true }`),
+		"AK_GW_TEST_POLICY_EARLY_DENY_SECRET", "policy-early-deny-secret")
 	g := newTracingGateway(t, cfg, zaptest.NewLogger(t))
 
 	rec := serve(g, post(policyBody("m"))) // no credentials
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want identification's 401", rec.Code)
+		t.Fatalf("status = %d, want authorization's 401", rec.Code)
 	}
 	if f.count() != 0 {
 		t.Fatal("the provider received a refused call")

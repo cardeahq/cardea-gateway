@@ -3,6 +3,12 @@
 **Date:** 2026-09-21
 **Functional spec:** specs/0002-agent-identification-functional.md
 
+> **Superseded by specs/0008-authorization-and-identification-technical.md.**
+> `internal/identity`'s per-agent registry, JWT verification, and
+> `config.AgentConfig` (`api_key_env`/`jwt_secret_env`) described below are
+> removed, not extended. Kept here for history; do not implement against
+> this file.
+
 ## Context
 
 The staging pipeline (0001) gives every governance stage a fixed slot and

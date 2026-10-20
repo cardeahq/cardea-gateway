@@ -73,118 +73,133 @@ func TestLoad_RejectsNonPositiveMaxBodyBytes(t *testing.T) {
 	}
 }
 
-func TestDefaults_IdentificationDisabledUnlikeTracing(t *testing.T) {
+// --- authorization and identification (specs/0008) ---------------------------
+//
+// specs/0008 replaces specs/0002's single identification stage (default
+// off, backed by an agents: registry) with two independent stages:
+// authorization (default off, a shared-secret gate) and identification
+// (default ON, a header-matching classifier with no registry at this
+// layer). See specs/0008-authorization-and-identification-technical.md.
+
+func TestDefaults_AuthorizationDisabledIdentificationEnabled(t *testing.T) {
 	d := defaults()
-	if d.Pipeline.Stages.Identification {
-		t.Fatal("defaults().Pipeline.Stages.Identification = true, want false")
+	if d.Pipeline.Stages.Authorization {
+		t.Fatal("defaults().Pipeline.Stages.Authorization = true, want false")
 	}
-	if len(d.Agents) != 0 {
-		t.Fatalf("defaults().Agents = %+v, want empty", d.Agents)
+	if len(d.Authorization.APIKeyEnvs) != 0 {
+		t.Fatalf("defaults().Authorization.APIKeyEnvs = %+v, want empty", d.Authorization.APIKeyEnvs)
+	}
+	if !d.Pipeline.Stages.Identification {
+		t.Fatal("defaults().Pipeline.Stages.Identification = false, want true: unlike specs/0002, identification no longer carves out an exception")
+	}
+	if d.Identification.AgentTypesDir != "" {
+		t.Fatalf("defaults().Identification.AgentTypesDir = %q, want empty", d.Identification.AgentTypesDir)
 	}
 	if !d.Pipeline.Stages.Tracing {
-		t.Fatal("defaults().Pipeline.Stages.Tracing = false, want true: identification's default deliberately diverges from every other stage's default of true")
+		t.Fatal("defaults().Pipeline.Stages.Tracing = false, want true")
 	}
 }
 
-func TestLoad_IdentificationAndAgentsDefaultToDisabledAndEmpty(t *testing.T) {
+func TestLoad_AuthorizationAndIdentificationDefaults(t *testing.T) {
 	path := writeConfigFile(t, "") // empty file: every value must come from defaults()
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Pipeline.Stages.Identification {
-		t.Fatal("Pipeline.Stages.Identification = true, want false by default")
+	if cfg.Pipeline.Stages.Authorization {
+		t.Fatal("Pipeline.Stages.Authorization = true, want false by default")
 	}
-	if len(cfg.Agents) != 0 {
-		t.Fatalf("Agents = %+v, want empty by default", cfg.Agents)
+	if len(cfg.Authorization.APIKeyEnvs) != 0 {
+		t.Fatalf("Authorization.APIKeyEnvs = %+v, want empty by default", cfg.Authorization.APIKeyEnvs)
 	}
-	if !cfg.Pipeline.Stages.Tracing {
-		t.Fatal("Pipeline.Stages.Tracing = false, want true: unlike identification, this stage still defaults to on")
+	if !cfg.Pipeline.Stages.Identification {
+		t.Fatal("Pipeline.Stages.Identification = false, want true by default")
+	}
+	if cfg.Identification.AgentTypesDir != "" {
+		t.Fatalf("Identification.AgentTypesDir = %q, want empty by default", cfg.Identification.AgentTypesDir)
 	}
 }
 
-func TestLoad_AgentsWellFormedListUnmarshalsCleanly(t *testing.T) {
-	yaml := "agents:\n" +
-		"  - agent_id: \"acme-bot\"\n" +
-		"    api_key_env: \"AGENT_ACME_BOT_API_KEY\"\n" +
-		"  - agent_id: \"beta-bot\"\n" +
-		"    jwt_secret_env: \"AGENT_BETA_BOT_JWT_SECRET\"\n" +
-		"  - agent_id: \"gamma-bot\"\n" +
-		"    api_key_env: \"AGENT_GAMMA_BOT_API_KEY\"\n" +
-		"    jwt_secret_env: \"AGENT_GAMMA_BOT_JWT_SECRET\"\n"
+func TestLoad_AuthorizationAPIKeyEnvsWellFormedListUnmarshalsCleanly(t *testing.T) {
+	yaml := "authorization:\n" +
+		"  api_key_envs:\n" +
+		"    - \"GATEWAY_API_KEY\"\n" +
+		"    - \"GATEWAY_API_KEY_NEXT\"\n"
 	path := writeConfigFile(t, yaml)
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-
-	want := []AgentConfig{
-		{AgentID: "acme-bot", APIKeyEnv: "AGENT_ACME_BOT_API_KEY"},
-		{AgentID: "beta-bot", JWTSecretEnv: "AGENT_BETA_BOT_JWT_SECRET"},
-		{AgentID: "gamma-bot", APIKeyEnv: "AGENT_GAMMA_BOT_API_KEY", JWTSecretEnv: "AGENT_GAMMA_BOT_JWT_SECRET"},
-	}
-	if !reflect.DeepEqual(cfg.Agents, want) {
-		t.Fatalf("Agents = %+v, want %+v", cfg.Agents, want)
+	want := []string{"GATEWAY_API_KEY", "GATEWAY_API_KEY_NEXT"}
+	if !reflect.DeepEqual(cfg.Authorization.APIKeyEnvs, want) {
+		t.Fatalf("Authorization.APIKeyEnvs = %+v, want %+v", cfg.Authorization.APIKeyEnvs, want)
 	}
 }
 
-func TestLoad_RejectsDuplicateAgentID(t *testing.T) {
-	yaml := "agents:\n" +
-		"  - agent_id: \"dup-bot\"\n" +
-		"    api_key_env: \"AGENT_DUP_BOT_API_KEY_1\"\n" +
-		"  - agent_id: \"dup-bot\"\n" +
-		"    api_key_env: \"AGENT_DUP_BOT_API_KEY_2\"\n"
-	path := writeConfigFile(t, yaml)
+func TestLoad_IdentificationAgentTypesDirFromFile(t *testing.T) {
+	path := writeConfigFile(t, "identification:\n  agent_types_dir: \"/etc/cardea-gateway/agent-types\"\n")
 
-	if _, err := Load(path); err == nil {
-		t.Fatal("Load with two agents sharing one agent_id = nil error, want error naming the conflict")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Identification.AgentTypesDir != "/etc/cardea-gateway/agent-types" {
+		t.Fatalf("Identification.AgentTypesDir = %q, want %q", cfg.Identification.AgentTypesDir, "/etc/cardea-gateway/agent-types")
 	}
 }
 
-func TestLoad_RejectsEmptyAgentID(t *testing.T) {
-	yaml := "agents:\n" +
-		"  - agent_id: \"\"\n" +
-		"    api_key_env: \"AGENT_EMPTY_ID_API_KEY\"\n"
-	path := writeConfigFile(t, yaml)
+func TestLoad_AuthorizationEnvVarOverride(t *testing.T) {
+	path := writeConfigFile(t, "")
+	t.Setenv("CARDEA_GATEWAY_PIPELINE_STAGES_AUTHORIZATION", "true")
 
-	if _, err := Load(path); err == nil {
-		t.Fatal("Load with an empty agent_id = nil error, want error")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
 	}
-}
-
-func TestLoad_RejectsAgentWithNeitherAPIKeyEnvNorJWTSecretEnvSet(t *testing.T) {
-	yaml := "agents:\n" +
-		"  - agent_id: \"no-credential-bot\"\n"
-	path := writeConfigFile(t, yaml)
-
-	if _, err := Load(path); err == nil {
-		t.Fatal("Load with an agent entry setting neither api_key_env nor jwt_secret_env = nil error, want error")
+	if !cfg.Pipeline.Stages.Authorization {
+		t.Fatal("Pipeline.Stages.Authorization = false, want true: an env var override must be honored")
 	}
 }
 
 func TestLoad_IdentificationEnvVarOverride(t *testing.T) {
 	path := writeConfigFile(t, "")
-	t.Setenv("CARDEA_GATEWAY_PIPELINE_STAGES_IDENTIFICATION", "true")
+	t.Setenv("CARDEA_GATEWAY_PIPELINE_STAGES_IDENTIFICATION", "false")
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Pipeline.Stages.Identification {
-		t.Fatal("Pipeline.Stages.Identification = false, want true: an env var override must be honored")
+	if cfg.Pipeline.Stages.Identification {
+		t.Fatal("Pipeline.Stages.Identification = true, want false: an env var override must be honored even against a true default")
 	}
 }
 
-func TestLoad_RejectsUnknownKeyInAgentsEntry(t *testing.T) {
-	yaml := "agents:\n" +
-		"  - agent_id: \"typo-bot\"\n" +
-		"    jwt_secert_env: \"AGENT_TYPO_BOT_JWT_SECRET\"\n" // misspelled key
-	path := writeConfigFile(t, yaml)
+func TestLoad_IdentificationAgentTypesDirEnvVarOverride(t *testing.T) {
+	path := writeConfigFile(t, "")
+	t.Setenv("CARDEA_GATEWAY_IDENTIFICATION_AGENT_TYPES_DIR", "/env/agent-types")
 
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Identification.AgentTypesDir != "/env/agent-types" {
+		t.Fatalf("Identification.AgentTypesDir = %q, want %q", cfg.Identification.AgentTypesDir, "/env/agent-types")
+	}
+}
+
+func TestLoad_RejectsUnknownKeyUnderAuthorization(t *testing.T) {
+	path := writeConfigFile(t, "authorization:\n  api_key_evns:\n    - \"X\"\n") // misspelled key
 	if _, err := Load(path); err == nil {
-		t.Fatal("Load with an unknown key inside an agents entry = nil error, want error")
+		t.Fatal("Load with an unknown key under authorization = nil error, want error")
+	}
+}
+
+func TestLoad_RejectsUnknownKeyUnderIdentification(t *testing.T) {
+	path := writeConfigFile(t, "identification:\n  agent_typse_dir: \"/x\"\n") // misspelled key
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load with an unknown key under identification = nil error, want error")
 	}
 }
 
@@ -258,15 +273,11 @@ func TestLoad_TracingEnvVarOverrides(t *testing.T) {
 	}
 }
 
-const tracingAgentsYAML = "agents:\n" +
-	"  - agent_id: \"agent-alpha\"\n" +
-	"    api_key_env: \"AGENT_ALPHA_API_KEY\"\n" +
-	"  - agent_id: \"agent-beta\"\n" +
-	"    api_key_env: \"AGENT_BETA_API_KEY\"\n"
-
 func TestLoad_TracingSessionsWellFormedListUnmarshalsCleanly(t *testing.T) {
-	yaml := tracingAgentsYAML +
-		"tracing:\n" +
+	// Unlike specs/0002, the agent names here need no corresponding
+	// registration anywhere in config.Config: that cross-check moved to
+	// gateway.buildStages (see specs/0008 technical, Design).
+	yaml := "tracing:\n" +
 		"  sessions:\n" +
 		"    - agents: [\"agent-alpha\"]\n" +
 		"      sources:\n" +
@@ -309,7 +320,7 @@ func TestLoad_TracingRejections(t *testing.T) {
 		},
 		{
 			"sessions entry with both agents and default",
-			tracingAgentsYAML + "tracing:\n  sessions:\n    - agents: [\"agent-alpha\"]\n      default: true\n      sources:\n        - header: X-Session-Id\n",
+			"tracing:\n  sessions:\n    - agents: [\"agent-alpha\"]\n      default: true\n      sources:\n        - header: X-Session-Id\n",
 		},
 		{
 			"default given twice",
@@ -317,13 +328,9 @@ func TestLoad_TracingRejections(t *testing.T) {
 		},
 		{
 			"agent in two entries",
-			tracingAgentsYAML + "tracing:\n  sessions:\n" +
+			"tracing:\n  sessions:\n" +
 				"    - agents: [\"agent-alpha\"]\n      sources:\n        - header: A\n" +
 				"    - agents: [\"agent-beta\", \"agent-alpha\"]\n      sources:\n        - header: B\n",
-		},
-		{
-			"agent not registered in agents[]",
-			tracingAgentsYAML + "tracing:\n  sessions:\n    - agents: [\"agent-gamma\"]\n      sources:\n        - header: X-Session-Id\n",
 		},
 		{
 			"entry with no sources",

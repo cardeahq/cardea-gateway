@@ -1,0 +1,6 @@
+agent_id: "claude-code"
+match:
+  - header: "X-Claude-Code-Session-Id"
+    pattern: "."
+  - header: "user-agent"
+    prefix: "claude-cli/"

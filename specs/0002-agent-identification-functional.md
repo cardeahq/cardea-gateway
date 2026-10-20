@@ -3,6 +3,15 @@
 **Date:** 2026-09-19
 **Technical spec:** specs/0002-agent-identification-technical.md
 
+> **Superseded by specs/0008-authorization-and-identification-functional.md.**
+> This spec's single stage — one credential (API key or JWT) that both
+> gates access and establishes an `agent_id` — is split into two
+> independent stages: an on/off shared-secret **authorization** gate, and
+> a non-blocking, header-based **identification** stage that classifies
+> the caller's agent *type* instead of authenticating a per-agent
+> identity. JWT support and per-agent credentials are removed entirely.
+> Kept here for history; do not implement against this file.
+
 ## Context
 
 The staging pipeline (specs/0001) gives every governance stage a fixed slot
