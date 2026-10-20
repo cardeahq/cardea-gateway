@@ -110,7 +110,7 @@ func newTestTracer(t *testing.T, maxReadBytes int64) *trace.Tracer {
 		FingerprintKeyEnv: testTraceKeyEnv,
 		MaxReadBytes:      maxReadBytes,
 		Sink:              config.TraceSinkConfig{Type: "logging"},
-	}, zaptest.NewLogger(t))
+	}, nil, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("trace.NewTracer: %v", err)
 	}

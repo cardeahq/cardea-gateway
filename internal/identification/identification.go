@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+
+	"github.com/cardeahq/cardea-gateway/internal/config"
 )
 
 // Unknown is the agent type attached to a call that matches no
@@ -45,8 +47,9 @@ func (r compiledRule) matches(req *http.Request) bool {
 
 // agentType is one loaded, compiled agent-type definition.
 type agentType struct {
-	id    string
-	rules []compiledRule
+	id             string
+	rules          []compiledRule
+	sessionSources []config.SessionSource
 }
 
 // Registry holds every loaded agent type, in file-load order — also
@@ -56,14 +59,16 @@ type Registry struct {
 	types []agentType
 }
 
-// IDs returns every loaded agent type's ID, in no particular order. Used
-// by gateway.buildStages to cross-validate tracing.sessions[].agents.
-func (r *Registry) IDs() []string {
-	ids := make([]string, len(r.types))
-	for i, t := range r.types {
-		ids[i] = t.id
+// SessionSources returns each loaded agent type's session sources, keyed
+// by agent ID. Types that list none are absent. Used to build the tracer.
+func (r *Registry) SessionSources() map[string][]config.SessionSource {
+	m := map[string][]config.SessionSource{}
+	for _, t := range r.types {
+		if len(t.sessionSources) > 0 {
+			m[t.id] = t.sessionSources
+		}
 	}
-	return ids
+	return m
 }
 
 // Identify returns the first matching agent type's ID, or Unknown.

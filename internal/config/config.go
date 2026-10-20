@@ -119,9 +119,11 @@ type TracingConfig struct {
 	FingerprintKeyEnv string `mapstructure:"fingerprint_key_env"`
 	// MaxReadBytes caps what the response tap buffers: one streamed tool
 	// call's arguments, one SSE event, or a whole non-streamed body.
-	MaxReadBytes int64               `mapstructure:"max_read_bytes"`
-	Sink         TraceSinkConfig     `mapstructure:"sink"`
-	Sessions     []SessionSourceList `mapstructure:"sessions"`
+	MaxReadBytes int64           `mapstructure:"max_read_bytes"`
+	Sink         TraceSinkConfig `mapstructure:"sink"`
+	// DefaultSessionSources are tried, in order, for every agent whose
+	// agent-type file lists no session_sources of its own.
+	DefaultSessionSources []SessionSource `mapstructure:"default_session_sources"`
 }
 
 type TraceSinkConfig struct {
@@ -158,22 +160,28 @@ func (t TraceSinkConfig) UsesLogging() bool {
 	return t.Type == "logging" || t.Type == "logging+cardea"
 }
 
-// SessionSourceList applies to the named Agents, or to every agent
-// without a list of its own when Default is true. Exactly one of the two
-// is set.
-type SessionSourceList struct {
-	Agents  []string        `mapstructure:"agents"`
-	Default bool            `mapstructure:"default"`
-	Sources []SessionSource `mapstructure:"sources"`
-}
-
 // SessionSource sets exactly one of Header, BodyField, Baggage. Pattern is
 // an optional RE2 regexp with exactly one capture group.
 type SessionSource struct {
-	Header    string `mapstructure:"header"`
-	BodyField string `mapstructure:"body_field"`
-	Baggage   string `mapstructure:"baggage"`
-	Pattern   string `mapstructure:"pattern"`
+	Header    string `mapstructure:"header" yaml:"header"`
+	BodyField string `mapstructure:"body_field" yaml:"body_field"`
+	Baggage   string `mapstructure:"baggage" yaml:"baggage"`
+	Pattern   string `mapstructure:"pattern" yaml:"pattern"`
+}
+
+// Validate reports whether s names exactly one of Header, BodyField,
+// Baggage.
+func (s SessionSource) Validate() error {
+	kinds := 0
+	for _, v := range []string{s.Header, s.BodyField, s.Baggage} {
+		if v != "" {
+			kinds++
+		}
+	}
+	if kinds != 1 {
+		return fmt.Errorf("set exactly one of header, body_field, baggage")
+	}
+	return nil
 }
 
 func defaults() Config {
@@ -335,12 +343,12 @@ func Load(cfgFile string) (Config, error) {
 		return Config{}, fmt.Errorf("unmarshalling identification: %w", err)
 	}
 
-	var sessions []SessionSourceList
-	err = v.UnmarshalKey("tracing.sessions", &sessions, func(dc *mapstructure.DecoderConfig) {
+	var defaultSessions []SessionSource
+	err = v.UnmarshalKey("tracing.default_session_sources", &defaultSessions, func(dc *mapstructure.DecoderConfig) {
 		dc.ErrorUnused = true
 	})
 	if err != nil {
-		return Config{}, fmt.Errorf("unmarshalling tracing.sessions: %w", err)
+		return Config{}, fmt.Errorf("unmarshalling tracing.default_session_sources: %w", err)
 	}
 
 	// discardFiltering exists only to run an ErrorUnused decode of
@@ -388,40 +396,9 @@ func validateTracing(t TracingConfig) error {
 		return fmt.Errorf("tracing.max_read_bytes must be positive, got %d", t.MaxReadBytes)
 	}
 
-	hasDefault := false
-	listed := make(map[string]bool)
-	for i, l := range t.Sessions {
-		where := fmt.Sprintf("tracing.sessions[%d]", i)
-		switch {
-		case l.Default && len(l.Agents) > 0:
-			return fmt.Errorf("%s: set either agents or default, not both", where)
-		case !l.Default && len(l.Agents) == 0:
-			return fmt.Errorf("%s: set a non-empty agents list or default: true", where)
-		case l.Default:
-			if hasDefault {
-				return fmt.Errorf("%s: the default session source list is given twice", where)
-			}
-			hasDefault = true
-		}
-		for _, a := range l.Agents {
-			if listed[a] {
-				return fmt.Errorf("%s: agent %q appears in more than one session source list", where, a)
-			}
-			listed[a] = true
-		}
-		if len(l.Sources) == 0 {
-			return fmt.Errorf("%s: at least one source is required", where)
-		}
-		for j, s := range l.Sources {
-			kinds := 0
-			for _, v := range []string{s.Header, s.BodyField, s.Baggage} {
-				if v != "" {
-					kinds++
-				}
-			}
-			if kinds != 1 {
-				return fmt.Errorf("%s.sources[%d]: set exactly one of header, body_field, baggage", where, j)
-			}
+	for i, src := range t.DefaultSessionSources {
+		if err := src.Validate(); err != nil {
+			return fmt.Errorf("tracing.default_session_sources[%d]: %w", i, err)
 		}
 	}
 	return nil

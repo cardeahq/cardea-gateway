@@ -85,24 +85,15 @@ tracing:
       batch_max_delay: 1s
       request_timeout: 10s
       shutdown_timeout: 10s # time to deliver held records on exit; 0 skips
-  # Where each agent carries its own session identifier, tried in order.
-  # A source is one of header, body_field (dot-separated path into the
-  # JSON body) or baggage (a key of the W3C baggage header), with an
-  # optional pattern whose single capture group is the session. An entry
-  # applies to the listed agents, or with default: true to every agent
-  # without a list of its own.
-  sessions: []
-  # Claude Code sends its session ID in a header, and again in the body
-  # inside metadata.user_id (a JSON-encoded string) as a fallback.
-  # - agents: ["claude-code"]
-  #   sources:
-  #     - header: X-Claude-Code-Session-Id
-  #     - body_field: metadata.user_id
-  #       pattern: '"session_id":"([0-9a-f-]{36})"'
-  # - default: true
-  #   sources:
-  #     - header: X-Session-Id
-  #     - baggage: session.id
+  # Where to find the session identifier of an agent whose agent-type
+  # file (see identification.agent_types_dir) lists no session_sources of
+  # its own, tried in order. A source is one of header, body_field
+  # (dot-separated path into the JSON body) or baggage (a key of the W3C
+  # baggage header), with an optional pattern whose single capture group
+  # is the session.
+  default_session_sources: []
+  # - header: X-Session-Id
+  # - baggage: session.id
 
 # Policy rules: a Rego file decides whether each request is forwarded.
 # Rules live in `package cardea.policy` and add rule identifiers to the
