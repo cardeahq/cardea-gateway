@@ -1,0 +1,3 @@
+# Default owner for everything in the repository.
+# With "Require review from Code Owners" enabled on main, every PR needs this approval.
+* @gmarabout
