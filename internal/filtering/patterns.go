@@ -22,7 +22,9 @@ var categoryPatterns = map[Category][]*regexp.Regexp{
 
 var (
 	// reEmail: local-part@dotted-host, at least one dot in the host.
-	reEmail = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+`)
+	// The final domain label (TLD) must contain at least one letter to
+	// avoid matching version strings like bun@1.3.3.
+	reEmail = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z][A-Za-z0-9-]*`)
 
 	// reSSNUS: ###-##-####, excluding the area codes 000, 666 and 900-999
 	// and the group 00, which the SSA never issues. Written as explicit
