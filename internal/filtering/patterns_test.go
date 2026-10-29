@@ -90,3 +90,37 @@ func TestReAPIKey_NoVendorPrefixIsNeverMatched(t *testing.T) {
 		}
 	}
 }
+
+func TestReEmail_DoesNotMatchNumericOnlyDomains(t *testing.T) {
+	// Ensure that version strings like bun@1.3.3 in Dockerfiles are not matched
+	// as email addresses.
+	tests := []string{
+		"bun@1.3.3",
+		"RUN npm install -g bun@1.3.3",
+		"package@1.2.3",
+		"user@192.168.1.1",
+	}
+	for _, s := range tests {
+		if reEmail.MatchString(s) {
+			t.Fatalf("reEmail matched %q, want no match (numeric-only domains should be excluded)", s)
+		}
+	}
+}
+
+func TestReEmail_MatchesValidEmails(t *testing.T) {
+	// Ensure that valid email addresses are still matched after the fix
+	// for numeric-only domains.
+	tests := []string{
+		"person@example.com",
+		"user.name@domain.io",
+		"first.last@sub.domain.co.uk",
+		"user+tag@domain.com",
+		"user_name@domain.org",
+	}
+
+	for _, s := range tests {
+		if !reEmail.MatchString(s) {
+			t.Fatalf("reEmail did not match valid email %q, want match", s)
+		}
+	}
+}
