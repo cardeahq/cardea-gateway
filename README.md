@@ -17,7 +17,7 @@ privacy, and observability without any change to the client:
   provider; it's fixed in config, so switching providers needs no client
   changes.
 
-Anthropic is the only upstream provider implemented today; see
+Anthropic and Mistral are the upstream providers implemented today; see
 [`internal/provider`](internal/provider).
 
 ## Requirements
