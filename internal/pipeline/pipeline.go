@@ -120,16 +120,18 @@ type ResponseObserver interface {
 }
 
 type Pipeline struct {
-	logger  *zap.Logger
-	maxBody int64
-	sink    trace.Sink
-	stages  []Stage
+	logger   *zap.Logger
+	maxBody  int64
+	provider string
+	sink     trace.Sink
+	stages   []Stage
 }
 
-// New's sink is nil when tracing is disabled; the pipeline then builds no
-// records.
-func New(logger *zap.Logger, maxBodyBytes int64, sink trace.Sink, stages ...Stage) *Pipeline {
-	return &Pipeline{logger: logger, maxBody: maxBodyBytes, sink: sink, stages: stages}
+// New's provider is the name of the upstream every call is forwarded to,
+// written to both records of a call. Its sink is nil when tracing is
+// disabled; the pipeline then builds no records.
+func New(logger *zap.Logger, maxBodyBytes int64, provider string, sink trace.Sink, stages ...Stage) *Pipeline {
+	return &Pipeline{logger: logger, maxBody: maxBodyBytes, provider: provider, sink: sink, stages: stages}
 }
 
 // stageResult is one stage's decision on the request, kept for the
@@ -251,7 +253,7 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 		}
 
 		if p.sink != nil {
-			rec := buildRequestRecord(c, results, denial, stageErr != nil, bodyRead, requestSize)
+			rec := buildRequestRecord(c, p.provider, results, denial, stageErr != nil, bodyRead, requestSize)
 			if err := p.sink.Write(rec); err != nil {
 				p.logger.Error("trace sink did not accept the request record; the record is lost",
 					zap.String("call_id", c.ID), zap.String("stage", "tracing"), zap.String("record", "request"), zap.Error(err))
@@ -306,7 +308,7 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 			if tapObs != nil {
 				observations = append([]observation{*tapObs}, observations...)
 			}
-			resp := buildResponseRecord(c, rec, info, observations, forwardedAt, ended)
+			resp := buildResponseRecord(c, p.provider, rec, info, observations, forwardedAt, ended)
 			if err := p.sink.Write(resp); err != nil {
 				p.logger.Error("trace sink did not accept the response record; the record is lost",
 					zap.String("call_id", c.ID), zap.String("stage", "tracing"), zap.String("record", "response"), zap.Error(err))

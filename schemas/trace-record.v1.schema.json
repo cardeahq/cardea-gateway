@@ -36,6 +36,11 @@
       "description": "The caller's IP address, taken from the connection and with the ephemeral port stripped. Identical in both records of a call.",
       "type": "string"
     },
+    "provider": {
+      "description": "The upstream LLM provider the Gateway forwards every call to, as configured (provider.name); identical in both records of a call. Added within v1: the Gateway always writes it, but records from Gateways that predate it do not carry it, so it is not required and consumers must treat its absence as unknown. Known values: anthropic, mistral.",
+      "type": "string",
+      "examples": ["anthropic", "mistral"]
+    },
     "fingerprint": {
       "description": "Keyed HMAC of a value that is never recorded; equal values give equal fingerprints within one deployment key.",
       "type": ["string", "null"],
@@ -95,6 +100,7 @@
           "description": "How long the Gateway took to forward or refuse the request: its own overhead on the way in.",
           "$ref": "#/$defs/durationUs"
         },
+        "provider": { "$ref": "#/$defs/provider" },
         "model": {
           "description": "The model the caller requested, as named in the request.",
           "$ref": "#/$defs/stringOrNull"
@@ -221,6 +227,7 @@
           },
           "received_at": "2026-09-27T14:03:11.402113Z",
           "duration_us": 1794,
+          "provider": "anthropic",
           "model": "claude-sonnet-5",
           "stream": true,
           "size_bytes": 48213,
@@ -307,6 +314,7 @@
           "description": "The provider's own identifier for the response; null when the provider did not send one.",
           "$ref": "#/$defs/stringOrNull"
         },
+        "provider": { "$ref": "#/$defs/provider" },
         "response_model": {
           "description": "The model that produced the response, as the provider reports it; may differ from the request record's model.",
           "$ref": "#/$defs/stringOrNull"
@@ -398,6 +406,7 @@
           ],
           "streamed": true,
           "response_id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+          "provider": "anthropic",
           "response_model": "claude-sonnet-5-20260801",
           "stop_reason": "tool_use",
           "tokens": { "sent": 1834, "received": 212 },

@@ -911,7 +911,7 @@ func TestPoliciesStage_AgainstARealEngine(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			eng := realEngine(t, sessionRule)
-			p := pipeline.New(zaptest.NewLogger(t), 1<<20, nil, tt.stages(eng)...)
+			p := pipeline.New(zaptest.NewLogger(t), 1<<20, "anthropic", nil, tt.stages(eng)...)
 			var forwarded bool
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwarded = true })
 			rec := httptest.NewRecorder()
@@ -931,7 +931,7 @@ func TestPoliciesStage_DenyReasonCarriesOnlyIdsAndRevision(t *testing.T) {
 deny contains "a-rule" if { input.model == "m" }`)
 	logger, logs := observed()
 	sink := &captureSink{}
-	p := pipeline.New(logger, 1<<20, sink, &policiesStage{engine: eng})
+	p := pipeline.New(logger, 1<<20, "anthropic", sink, &policiesStage{engine: eng})
 	rec := httptest.NewRecorder()
 	p.Handler(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(policyBody("m"))))
 
@@ -956,7 +956,7 @@ deny contains "a-rule" if { input.model == "m" }`)
 func TestPoliciesStage_EngineErrorBecomesTheUnavailableDenialThroughThePipeline(t *testing.T) {
 	eng := realEngine(t, `deny contains "r" if { input.model == "never" }`)
 	sink := &captureSink{}
-	p := pipeline.New(zaptest.NewLogger(t), 1<<20, sink, &policiesStage{engine: eng})
+	p := pipeline.New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &policiesStage{engine: eng})
 	rec := httptest.NewRecorder()
 	p.Handler(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":`)))
 

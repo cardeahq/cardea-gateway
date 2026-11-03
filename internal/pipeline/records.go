@@ -19,7 +19,7 @@ func remoteAddr(r *http.Request) string {
 	return host
 }
 
-func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, bodyRead bool, requestSize int64) trace.RequestRecord {
+func buildRequestRecord(c *Call, provider string, results []stageResult, denial *Denial, failed, bodyRead bool, requestSize int64) trace.RequestRecord {
 	rec := trace.RequestRecord{
 		Schema:      trace.Schema,
 		Record:      "request",
@@ -29,6 +29,7 @@ func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, 
 		Session:     trace.Session{Status: "absent"},
 		ReceivedAt:  trace.Timestamp(c.Received),
 		DurationUS:  time.Since(c.Received).Microseconds(),
+		Provider:    provider,
 		Outcome:     trace.RequestOutcome{Result: "forwarded"},
 		Stages:      make([]trace.RequestStage, 0, len(results)),
 		ToolResults: []trace.ToolResult{},
@@ -69,7 +70,7 @@ func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, 
 	return rec
 }
 
-func buildResponseRecord(c *Call, rec *bodyRecorder, info trace.ResponseInfo, observations []observation, forwardedAt, ended time.Time) trace.ResponseRecord {
+func buildResponseRecord(c *Call, provider string, rec *bodyRecorder, info trace.ResponseInfo, observations []observation, forwardedAt, ended time.Time) trace.ResponseRecord {
 	resp := trace.ResponseRecord{
 		Schema:        trace.Schema,
 		Record:        "response",
@@ -82,6 +83,7 @@ func buildResponseRecord(c *Call, rec *bodyRecorder, info trace.ResponseInfo, ob
 		Stages:        make([]trace.ResponseStage, 0, len(observations)),
 		Streamed:      info.Streamed,
 		ResponseID:    info.ResponseID,
+		Provider:      provider,
 		ResponseModel: info.ResponseModel,
 		StopReason:    info.StopReason,
 		Tokens:        info.Tokens,

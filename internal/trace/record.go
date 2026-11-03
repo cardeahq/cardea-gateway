@@ -25,6 +25,7 @@ type RequestRecord struct {
 	Session     Session        `json:"session"`
 	ReceivedAt  Timestamp      `json:"received_at"`
 	DurationUS  int64          `json:"duration_us"`
+	Provider    string         `json:"provider"`
 	Model       *string        `json:"model"`
 	Stream      bool           `json:"stream"`
 	SizeBytes   *int64         `json:"size_bytes"` // nil when the body was not read in full (400, 413)
@@ -50,6 +51,7 @@ type ResponseRecord struct {
 	Stages        []ResponseStage `json:"stages"`
 	Streamed      bool            `json:"streamed"`
 	ResponseID    *string         `json:"response_id"`
+	Provider      string          `json:"provider"`
 	ResponseModel *string         `json:"response_model"`
 	StopReason    *string         `json:"stop_reason"`
 	Tokens        *Tokens         `json:"tokens"`

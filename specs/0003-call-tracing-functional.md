@@ -447,6 +447,7 @@ request, before it is forwarded or refused (rule 5).
   },
   "received_at": "2026-09-27T14:03:11.402113Z",
   "duration_us": 1794,
+  "provider": "anthropic",
   "model": "claude-sonnet-5",
   "stream": true,
   "size_bytes": 48213,
@@ -486,6 +487,12 @@ Field meanings, where the example does not make them obvious:
 - `received_at`, `duration_us` — when the Gateway received the request,
   and how long it took to forward or refuse it: the Gateway's own
   overhead on the way in.
+- `provider` — the upstream LLM provider the Gateway forwards every call
+  to, as configured (`provider.name`, e.g. `anthropic`); identical in both
+  records of a call, and set whether or not the call was forwarded. Added
+  after the first v1 records: records from earlier Gateways lack it, so
+  the schema does not require it and a consumer reads its absence as
+  unknown.
 - `model` — the model the caller **requested**, as named in the request.
   `stream` — whether the caller asked for a streamed response.
 - `size_bytes` — the size of the request body. `null` when the Gateway
@@ -539,6 +546,7 @@ for every request that reached the provider (rule 6).
   ],
   "streamed": true,
   "response_id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+  "provider": "anthropic",
   "response_model": "claude-sonnet-5-20260801",
   "stop_reason": "tool_use",
   "tokens": { "sent": 1834, "received": 212 },
@@ -580,6 +588,7 @@ Field meanings, where the example does not make them obvious:
 - `response_id` — the provider's own identifier for the response, as
   the provider sent it, so a record can be matched against the
   provider's side (for example its usage console or a support request).
+- `provider` — as in the request record.
 - `response_model` — the model that actually produced the response, as
   the provider reports it. It can differ from the request record's
   `model`, for example when that is an alias the provider resolves to a
