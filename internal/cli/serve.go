@@ -29,9 +29,12 @@ func newServeCmd() *cobra.Command {
 			defer func() { _ = logger.Sync() }()
 
 			var prov provider.Provider
-			if cfg.Provider.Name == "anthropic" {
+			switch cfg.Provider.Name {
+			case "anthropic":
 				prov, err = provider.NewAnthropicProvider(cfg.Provider.BaseURL, cfg.Provider.APIKeyEnv)
-			} else {
+			case "mistral":
+				prov, err = provider.NewMistralProvider(cfg.Provider.BaseURL, cfg.Provider.APIKeyEnv)
+			default:
 				prov, err = provider.NewHTTPProxy(cfg.Provider.Name, cfg.Provider.BaseURL)
 			}
 			if err != nil {
