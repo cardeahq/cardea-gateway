@@ -48,7 +48,7 @@ func New(cfg config.Config, logger *zap.Logger, prov provider.Provider) (*Gatewa
 	if sink != nil {
 		pipelineSink = sink
 	}
-	pl := pipeline.New(logger, cfg.Pipeline.MaxBodyBytes, pipelineSink, stages...)
+	pl := pipeline.New(logger, cfg.Pipeline.MaxBodyBytes, prov.Name(), pipelineSink, stages...)
 
 	mux.HandleFunc("/healthz", g.handleHealthz)
 	mux.Handle("/", pl.Handler(prov.Handler()))

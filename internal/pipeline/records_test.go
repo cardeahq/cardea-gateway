@@ -297,7 +297,7 @@ func parseTS(t *testing.T, v any) time.Time {
 
 func TestRecords_ForwardedCallGetsOneRequestAndOneResponseRecord(t *testing.T) {
 	sink := &fakeSink{}
-	p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 
 	rec := doRequest(t, p, sseUpstream(toolStream()), postBody(streamedBody))
 	if rec.Code != http.StatusOK {
@@ -359,14 +359,14 @@ func TestRecords_ForwardedCallGetsOneRequestAndOneResponseRecord(t *testing.T) {
 
 func TestRecords_EveryFieldPresent(t *testing.T) {
 	sink := &fakeSink{}
-	p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	doRequest(t, p, sseUpstream(toolStream()), postBody(streamedBody))
 
 	req, resp := sink.one(t, "request"), sink.one(t, "response")
 	wantReq := []string{"schema", "record", "call_id", "remote_addr", "agent_id", "session", "received_at", "duration_us",
-		"model", "stream", "size_bytes", "outcome", "stages", "tool_results", "findings"}
+		"provider", "model", "stream", "size_bytes", "outcome", "stages", "tool_results", "findings"}
 	wantResp := []string{"schema", "record", "call_id", "remote_addr", "agent_id", "session", "started_at", "first_byte_us",
-		"duration_us", "outcome", "stages", "streamed", "response_id", "response_model", "stop_reason", "tokens",
+		"duration_us", "outcome", "stages", "streamed", "response_id", "provider", "response_model", "stop_reason", "tokens",
 		"tool_calls", "findings"}
 	if got := slices.Sorted(maps.Keys(req)); !slices.Equal(got, slices.Sorted(slices.Values(wantReq))) {
 		t.Fatalf("request record keys = %v, want %v", got, wantReq)
@@ -384,10 +384,33 @@ func TestRecords_EveryFieldPresent(t *testing.T) {
 	}
 }
 
+func TestRecords_ProviderIsOnBothRecords(t *testing.T) {
+	t.Run("forwarded", func(t *testing.T) {
+		sink := &fakeSink{}
+		p := New(zaptest.NewLogger(t), 1<<20, "openai", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+		doRequest(t, p, sseUpstream(toolStream()), postBody(streamedBody))
+
+		req, resp := sink.one(t, "request"), sink.one(t, "response")
+		if req["provider"] != "openai" || resp["provider"] != "openai" {
+			t.Fatalf("provider = %v / %v, want openai on both records", req["provider"], resp["provider"])
+		}
+	})
+
+	t.Run("denied before tracing ran", func(t *testing.T) {
+		sink := &fakeSink{}
+		p := New(zaptest.NewLogger(t), 1<<20, "openai", sink, denyStage("identification", http.StatusUnauthorized, "no", "no", nil))
+		doRequest(t, p, sseUpstream(toolStream()), postBody(streamedBody))
+
+		if req := sink.one(t, "request"); req["provider"] != "openai" {
+			t.Fatalf("provider = %v, want openai: the provider is known whether or not the call is forwarded", req["provider"])
+		}
+	})
+}
+
 func TestRecords_AgentAndSessionAreOnBothRecords(t *testing.T) {
 	t.Run("with an identified agent", func(t *testing.T) {
 		sink := &fakeSink{}
-		p := New(zaptest.NewLogger(t), 1<<20, sink, &agentStage{agentID: "agent-x"}, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+		p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &agentStage{agentID: "agent-x"}, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 		doRequest(t, p, sseUpstream(toolStream()), postBody(streamedBody))
 
 		req, resp := sink.one(t, "request"), sink.one(t, "response")
@@ -404,7 +427,7 @@ func TestRecords_AgentAndSessionAreOnBothRecords(t *testing.T) {
 
 	t.Run("without identification", func(t *testing.T) {
 		sink := &fakeSink{}
-		p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+		p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 		doRequest(t, p, sseUpstream(toolStream()), postBody(streamedBody))
 
 		req, resp := sink.one(t, "request"), sink.one(t, "response")
@@ -430,7 +453,7 @@ func TestRecords_RemoteAddrOnBothRecords(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sink := &fakeSink{}
-			p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+			p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 			req := postBody(streamedBody)
 			req.RemoteAddr = tt.remoteAddr
 			doRequest(t, p, sseUpstream(toolStream()), req)
@@ -501,7 +524,7 @@ func TestRecords_RequestStageDecisionsAndOutcome(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sink := &fakeSink{}
-			p := New(zaptest.NewLogger(t), 1<<20, sink, tt.stages()...)
+			p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, tt.stages()...)
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 			rec := doRequest(t, p, next, postBody(`{"model":"m"}`))
 
@@ -590,7 +613,7 @@ func TestRecords_CallRefusedBeforeTracingRanHasTracingDefaults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sink := &fakeSink{}
-			p := New(zaptest.NewLogger(t), tt.maxBody, sink, tt.stages(newTestTracer(t, 1<<20))...)
+			p := New(zaptest.NewLogger(t), tt.maxBody, "anthropic", sink, tt.stages(newTestTracer(t, 1<<20))...)
 			next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("upstream must not be called") })
 			rec := doRequest(t, p, next, tt.req)
 			if rec.Code != tt.status {
@@ -631,7 +654,7 @@ func TestRecords_RequestSizeBytes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sink := &fakeSink{}
-			p := New(zaptest.NewLogger(t), tt.maxBody, sink, allowStage("s1", nil))
+			p := New(zaptest.NewLogger(t), tt.maxBody, "anthropic", sink, allowStage("s1", nil))
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 			doRequest(t, p, next, tt.req)
 
@@ -656,7 +679,7 @@ func (s *shrinkBodyStage) Request(_ context.Context, c *Call) (Decision, error) 
 
 func TestRecords_RequestSizeBytesIsCapturedBeforeAnyStageCanChangeTheBody(t *testing.T) {
 	sink := &fakeSink{}
-	p := New(zaptest.NewLogger(t), 1<<20, sink, &shrinkBodyStage{name: "filtering"})
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &shrinkBodyStage{name: "filtering"})
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	doRequest(t, p, next, postBody(streamedBody))
 
@@ -668,7 +691,7 @@ func TestRecords_RequestSizeBytesIsCapturedBeforeAnyStageCanChangeTheBody(t *tes
 
 func TestRecords_TracingReadFailureFailsClosed(t *testing.T) {
 	sink := &fakeSink{}
-	p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	var upstreamCalled atomic.Bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { upstreamCalled.Store(true) })
 
@@ -697,7 +720,7 @@ func TestRecords_TracingReadFailureFailsClosed(t *testing.T) {
 func TestRecords_RequestRecordBeforeUpstreamResponseRecordAfterObservers(t *testing.T) {
 	log := &eventLog{}
 	sink := &fakeSink{log: log}
-	p := New(zaptest.NewLogger(t), 1<<20, sink,
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink,
 		allowStage("s1", log),
 		&tracingTestStage{tracer: newTestTracer(t, 1<<20), log: log},
 		allowStage("s3", log),
@@ -717,7 +740,7 @@ func TestRecords_RequestRecordBeforeUpstreamResponseRecordAfterObservers(t *test
 func TestRecords_ResponseStagesListTracingFirstThenObserversInRunOrder(t *testing.T) {
 	sink := &fakeSink{}
 	plain := &fakeStage{name: "plain", decision: Allow()} // not an observer: not listed
-	p := New(zaptest.NewLogger(t), 1<<20, sink,
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink,
 		allowStage("a", nil),
 		&tracingTestStage{tracer: newTestTracer(t, 1<<20)},
 		plain,
@@ -745,7 +768,7 @@ func TestRecords_ResponseStagesListTracingFirstThenObserversInRunOrder(t *testin
 func TestRecords_ObserverPanicIsObservationFailedAndStillDelivered(t *testing.T) {
 	sink := &fakeSink{}
 	panicky := &fakeObserverStage{fakeStage: &fakeStage{name: "audit", decision: Allow()}, panicResponse: true}
-	p := New(zaptest.NewLogger(t), 1<<20, sink, panicky, allowStage("other", nil))
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, panicky, allowStage("other", nil))
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("upstream-ok"))
@@ -788,7 +811,7 @@ func errorEntryFor(logs *observer.ObservedLogs, callID, recordType string) (obse
 func TestRecords_SinkRefusingRequestRecordDoesNotDenyTheCall(t *testing.T) {
 	logger, logs := observedLogger()
 	sink := &fakeSink{fail: func(string) error { return errSinkDown }}
-	p := New(logger, 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(logger, 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	var upstreamCalls atomic.Int32
 	events := toolStream()
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -826,7 +849,7 @@ func TestRecords_SinkRefusingRequestRecordDoesNotDenyTheCall(t *testing.T) {
 func TestRecords_SinkThatKeepsRefusingNeverDeniesAnyCall(t *testing.T) {
 	logger, _ := observedLogger()
 	sink := &fakeSink{fail: func(string) error { return errSinkDown }}
-	p := New(logger, 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(logger, 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	var upstreamCalls atomic.Int32
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamCalls.Add(1)
@@ -845,7 +868,7 @@ func TestRecords_SinkThatKeepsRefusingNeverDeniesAnyCall(t *testing.T) {
 func TestRecords_SinkThatRecoversRecordsTheNextCall(t *testing.T) {
 	logger, _ := observedLogger()
 	sink := &fakeSink{fail: func(string) error { return errSinkDown }}
-	p := New(logger, 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(logger, 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	next := sseUpstream(toolStream())
 
 	if rec := doRequest(t, p, next, postBody(streamedBody)); rec.Code != http.StatusOK {
@@ -867,7 +890,7 @@ func TestRecords_SinkRefusingOnlyTheRequestRecordStillGetsTheResponseRecord(t *t
 		}
 		return nil
 	}}
-	p := New(logger, 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(logger, 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	rec := doRequest(t, p, sseUpstream(toolStream()), postBody(streamedBody))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -881,7 +904,7 @@ func TestRecords_SinkRefusingOnlyTheRequestRecordStillGetsTheResponseRecord(t *t
 func TestRecords_TracingStageErrorStillDeniesEvenWhenTheSinkAlsoFails(t *testing.T) {
 	logger, _ := observedLogger()
 	sink := &fakeSink{fail: func(string) error { return errSinkDown }}
-	p := New(logger, 1<<20, sink, errStage("tracing", errors.New("unreadable tool_result"), nil))
+	p := New(logger, 1<<20, "anthropic", sink, errStage("tracing", errors.New("unreadable tool_result"), nil))
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("upstream must not be called") })
 
 	rec := doRequest(t, p, next, postBody(streamedBody))
@@ -898,7 +921,7 @@ func TestRecords_TracingStageErrorStillDeniesEvenWhenTheSinkAlsoFails(t *testing
 func TestRecords_SinkRefusingRequestRecordOfARefusedCallKeepsTheRefusal(t *testing.T) {
 	logger, logs := observedLogger()
 	sink := &fakeSink{fail: func(string) error { return errSinkDown }}
-	p := New(logger, 1<<20, sink, denyStage("identification", http.StatusUnauthorized, "could not identify caller", "no credential", nil))
+	p := New(logger, 1<<20, "anthropic", sink, denyStage("identification", http.StatusUnauthorized, "could not identify caller", "no credential", nil))
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("upstream must not be called") })
 
 	rec := doRequest(t, p, next, postBody(`{}`))
@@ -925,7 +948,7 @@ func TestRecords_SinkRefusingResponseRecordLogsItAndNextCallIsProxiedNormally(t 
 		}
 		return errSinkDown
 	}
-	p := New(logger, 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(logger, 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	events := toolStream()
 	var upstreamCalls atomic.Int32
 	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -975,7 +998,7 @@ func TestRecords_StreamingWithTracingIsByteIdenticalAndUnbuffered(t *testing.T) 
 	})
 
 	sink := &fakeSink{}
-	p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	srv := httptest.NewServer(p.Handler(next))
 	defer srv.Close()
 
@@ -1018,7 +1041,7 @@ func TestRecords_ToolCallPastMaxBodyBytesIsRecorded(t *testing.T) {
 	events = append(events, messageEnd()...)
 
 	sink := &fakeSink{}
-	p := New(zaptest.NewLogger(t), maxBody, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(zaptest.NewLogger(t), maxBody, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	body := `{"model":"m","stream":true,"messages":[]}`
 	if len(body) > maxBody {
 		t.Fatalf("test setup: request body %d bytes exceeds max_body_bytes", len(body))
@@ -1040,7 +1063,7 @@ func TestRecords_ToolCallPastMaxBodyBytesIsRecorded(t *testing.T) {
 
 func TestRecords_NonStreamedBodyOverReadLimitIsUnreadButCompleted(t *testing.T) {
 	sink := &fakeSink{}
-	p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 256)})
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 256)})
 	upstreamBody := `{"id":"msg_01","model":"m-1","content":[{"type":"text","text":"` + strings.Repeat("x", 1000) +
 		`"},{"type":"tool_use","id":"toolu_01","name":"bash","input":{"command":"ls"}}],"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":2}}`
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1080,7 +1103,7 @@ func TestRecords_UnansweredUpstream(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sink := &fakeSink{}
-			p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+			p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				f, ok := w.(interface{ UpstreamFailed() })
 				if !ok {
@@ -1132,7 +1155,7 @@ func TestRecords_ClientDisconnectMarksUnrelayedToolCallNotDelivered(t *testing.T
 	events = append(events, messageEnd()...)
 
 	sink := &fakeSink{}
-	p := New(zaptest.NewLogger(t), 1<<20, sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	// message_start, the first tool call, and the second's start get through;
 	// the second's delta is the first write to fail.
 	w := &failingWriter{ResponseRecorder: httptest.NewRecorder(), ok: 5}
@@ -1152,7 +1175,7 @@ func TestRecords_ClientDisconnectMarksUnrelayedToolCallNotDelivered(t *testing.T
 
 func TestRecords_NilSinkWritesNoRecordsAndStillRelays(t *testing.T) {
 	events := toolStream()
-	p := New(zaptest.NewLogger(t), 1<<20, nil, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", nil, &tracingTestStage{tracer: newTestTracer(t, 1<<20)})
 	rec := doRequest(t, p, sseUpstream(events), postBody(streamedBody))
 
 	if rec.Code != http.StatusOK || rec.Body.String() != strings.Join(events, "") {
@@ -1204,7 +1227,7 @@ func TestRequestRecord_StageDetail(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sink := &fakeSink{}
-			p := New(zaptest.NewLogger(t), 1<<20, sink, tt.stage)
+			p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, tt.stage)
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 			rec := doRequest(t, p, next, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}")))
 			if rec.Code != tt.wantStatus {
@@ -1244,7 +1267,7 @@ func TestRequestRecord_StageDetail(t *testing.T) {
 
 func TestRequestRecord_StageWithoutDetailEncodesNull(t *testing.T) {
 	sink := &fakeSink{}
-	p := New(zaptest.NewLogger(t), 1<<20, sink, allowStage("identification", nil), &detailStage{name: "policies", detail: trace.StageDetail{Revision: "r", Rules: []string{}}}, denyStage("later", http.StatusForbidden, "no", "no", nil))
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, allowStage("identification", nil), &detailStage{name: "policies", detail: trace.StageDetail{Revision: "r", Rules: []string{}}}, denyStage("later", http.StatusForbidden, "no", "no", nil))
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {})
 	doRequest(t, p, next, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}")))
 
@@ -1265,7 +1288,7 @@ func TestRequestRecord_StageWithoutDetailEncodesNull(t *testing.T) {
 
 func TestRequestRecord_NotRunStageHasNullDetail(t *testing.T) {
 	sink := &fakeSink{}
-	p := New(zaptest.NewLogger(t), 1<<20, sink, denyStage("identification", http.StatusUnauthorized, "no", "no", nil), &detailStage{name: "policies", detail: trace.StageDetail{Revision: "r"}})
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, denyStage("identification", http.StatusUnauthorized, "no", "no", nil), &detailStage{name: "policies", detail: trace.StageDetail{Revision: "r"}})
 	doRequest(t, p, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}")))
 
 	stages := stagesOf(t, sink.one(t, "request"))
@@ -1281,11 +1304,11 @@ func TestDecision_WithDetailStillDeniesAndStillAllows(t *testing.T) {
 	var nextCalled atomic.Bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { nextCalled.Store(true) })
 
-	p := New(zaptest.NewLogger(t), 1<<20, nil, &detailStage{name: "policies", deny: true, detail: trace.StageDetail{Revision: "r", Rules: []string{"x"}}})
+	p := New(zaptest.NewLogger(t), 1<<20, "anthropic", nil, &detailStage{name: "policies", deny: true, detail: trace.StageDetail{Revision: "r", Rules: []string{"x"}}})
 	if rec := doRequest(t, p, next, httptest.NewRequest(http.MethodPost, "/", nil)); rec.Code != http.StatusForbidden || nextCalled.Load() {
 		t.Fatalf("a denial with detail: status=%d forwarded=%v, want 403 and not forwarded", rec.Code, nextCalled.Load())
 	}
-	p = New(zaptest.NewLogger(t), 1<<20, nil, &detailStage{name: "policies", detail: trace.StageDetail{Revision: "r", Rules: []string{}}})
+	p = New(zaptest.NewLogger(t), 1<<20, "anthropic", nil, &detailStage{name: "policies", detail: trace.StageDetail{Revision: "r", Rules: []string{}}})
 	if rec := doRequest(t, p, next, httptest.NewRequest(http.MethodPost, "/", nil)); rec.Code != http.StatusOK || !nextCalled.Load() {
 		t.Fatalf("an allow with detail: status=%d forwarded=%v, want 200 and forwarded", rec.Code, nextCalled.Load())
 	}

@@ -71,7 +71,7 @@ Anthropic wire format, sessions, fingerprints and the sink in a new
 cli.serve → config.Config → zap.Logger → provider.Provider → gateway.Gateway
                                                               │
       gateway.New builds: trace.Tracer, trace.Sink, stages ───┘
-      pipeline.New(logger, maxBody, sink, identification, tracing)
+      pipeline.New(logger, maxBody, provider.Name(), sink, identification, tracing)
 ```
 
 Tracing inspects both requests and responses and changes neither.
@@ -381,6 +381,7 @@ type RequestRecord struct {
 	Session     Session        `json:"session"`
 	ReceivedAt  Timestamp      `json:"received_at"`
 	DurationUS  int64          `json:"duration_us"`
+	Provider    string         `json:"provider"`
 	Model       *string        `json:"model"`
 	Stream      bool           `json:"stream"`
 	SizeBytes   *int64         `json:"size_bytes"` // nil when the body was not read in full (400, 413)
@@ -404,6 +405,7 @@ type ResponseRecord struct {
 	Stages        []ResponseStage `json:"stages"`
 	Streamed      bool            `json:"streamed"`
 	ResponseID    *string         `json:"response_id"`
+	Provider      string          `json:"provider"`
 	ResponseModel *string         `json:"response_model"`
 	StopReason    *string         `json:"stop_reason"`
 	Tokens        *Tokens         `json:"tokens"`
@@ -595,9 +597,10 @@ type Decision struct {
 // request, plus the tap that will read its response.
 func AllowTraced(info trace.RequestInfo, tap *trace.ResponseTap) Decision
 
-// New's sink is nil when tracing is disabled; the pipeline then builds
-// no records.
-func New(logger *zap.Logger, maxBodyBytes int64, sink trace.Sink, stages ...Stage) *Pipeline
+// New's provider is the configured provider's name, written to both
+// records of a call. Its sink is nil when tracing is disabled; the
+// pipeline then builds no records.
+func New(logger *zap.Logger, maxBodyBytes int64, provider string, sink trace.Sink, stages ...Stage) *Pipeline
 ```
 
 - `observe` returns whether the observer completed, so a panic becomes

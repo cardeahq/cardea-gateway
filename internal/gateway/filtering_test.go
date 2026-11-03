@@ -105,7 +105,7 @@ func TestFilteringStage_RedactionAttachesDetailAndLogsCategoriesInFixedOrder(t *
 
 	logger, logs := observed()
 	sink := &captureSink{}
-	p := pipeline.New(logger, 1<<20, sink, &filteringStage{engine: eng, logger: logger})
+	p := pipeline.New(logger, 1<<20, "anthropic", sink, &filteringStage{engine: eng, logger: logger})
 
 	var upstreamCalled bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -165,7 +165,7 @@ func TestFilteringStage_ZeroRedactionsAttachesNoDetailAndLogsNothing(t *testing.
 
 	logger, logs := observed()
 	sink := &captureSink{}
-	p := pipeline.New(logger, 1<<20, sink, &filteringStage{engine: eng, logger: logger})
+	p := pipeline.New(logger, 1<<20, "anthropic", sink, &filteringStage{engine: eng, logger: logger})
 
 	rec := httptest.NewRecorder()
 	p.Handler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })).
@@ -196,7 +196,7 @@ func TestFilteringStage_EngineErrorBecomesThe503AndTheUpstreamIsNeverCalled(t *t
 
 	logger, logs := observed()
 	sink := &captureSink{}
-	p := pipeline.New(logger, 1<<20, sink, &filteringStage{engine: eng, logger: logger})
+	p := pipeline.New(logger, 1<<20, "anthropic", sink, &filteringStage{engine: eng, logger: logger})
 
 	var upstreamCalled bool
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { upstreamCalled = true })

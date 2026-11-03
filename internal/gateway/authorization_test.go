@@ -270,7 +270,7 @@ func TestAuthorizationStage_FullPipeline_DeniedBeforeIdentificationRuns(t *testi
 	authzStage := &authorizationStage{gate: newTwoSecretGate(t)}
 	identStage := &identificationStage{registry: newOneTypeRegistry(t)}
 	capture := &capturingStage{}
-	p := pipeline.New(zaptest.NewLogger(t), 1<<20, nil, authzStage, identStage, capture)
+	p := pipeline.New(zaptest.NewLogger(t), 1<<20, "anthropic", nil, authzStage, identStage, capture)
 
 	var providerCalled bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -298,7 +298,7 @@ func TestAuthorizationStage_FullPipeline_PassingAuthorizationLetsIdentificationR
 	authzStage := &authorizationStage{gate: newTwoSecretGate(t)}
 	identStage := &identificationStage{registry: newOneTypeRegistry(t)}
 	capture := &capturingStage{}
-	p := pipeline.New(zaptest.NewLogger(t), 1<<20, nil, authzStage, identStage, capture)
+	p := pipeline.New(zaptest.NewLogger(t), 1<<20, "anthropic", nil, authzStage, identStage, capture)
 
 	var providerCalled bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

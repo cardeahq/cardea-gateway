@@ -194,7 +194,7 @@ func TestBuildStages_IdentificationNonexistentDirFailsConstruction(t *testing.T)
 func TestIdentificationStage_FullPipeline_DisabledMeansAgentIDStaysEmpty(t *testing.T) {
 	capture := &capturingStage{}
 	// No identificationStage at all: identification disabled.
-	p := pipeline.New(zaptest.NewLogger(t), 1<<20, nil, capture)
+	p := pipeline.New(zaptest.NewLogger(t), 1<<20, "anthropic", nil, capture)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	req.Header.Set(testAgentTypeHeader, testAgentTypeValue)
