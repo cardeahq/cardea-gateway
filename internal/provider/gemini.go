@@ -6,6 +6,8 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 // geminiProvider forwards requests to the Gemini API, injecting the API
@@ -49,3 +51,7 @@ func NewGeminiProvider(baseURL, apiKeyEnv string) (Provider, error) {
 func (p *geminiProvider) Name() string { return "gemini" }
 
 func (p *geminiProvider) Handler() http.Handler { return p.proxy }
+
+// ResponseFormat is nil: Gemini's response format is not read yet, so its
+// calls are traced without identifiers, usage or tool calls.
+func (p *geminiProvider) ResponseFormat() trace.ResponseFormat { return nil }

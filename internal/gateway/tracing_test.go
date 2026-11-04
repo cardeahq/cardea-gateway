@@ -370,7 +370,7 @@ func loopResponder(w http.ResponseWriter, body []byte) {
 
 func TestBuildStages_TracingFollowsIdentification(t *testing.T) {
 	cfg := withAgents(t, tracingGatewayConfig(t, "http://127.0.0.1:1"))
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestBuildStages_TracingOffGivesNoSinkAndNoRecords(t *testing.T) {
 	cfg := tracingGatewayConfig(t, url)
 	cfg.Pipeline.Stages.Tracing = false
 
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -1172,5 +1172,73 @@ func TestTracing_StatelessAcrossInstances(t *testing.T) {
 				t.Fatalf("with generated keys, two instances gave the same fingerprint %v", singleFP)
 			}
 		})
+	}
+}
+
+// --- Mistral (OpenAI-compatible format) -----------------------------------------------
+
+const gwMistralKeyEnv = "AK_GW_TRACE_TEST_MISTRAL_KEY"
+
+func newMistralTracingGateway(t *testing.T, cfg config.Config, logger *zap.Logger) *Gateway {
+	t.Helper()
+	cfg.Provider.Name = "mistral"
+	cfg.Provider.APIKeyEnv = gwMistralKeyEnv
+	t.Setenv(gwMistralKeyEnv, "sk-test-upstream")
+	prov, err := provider.NewMistralProvider(cfg.Provider.BaseURL, gwMistralKeyEnv)
+	if err != nil {
+		t.Fatalf("NewMistralProvider: %v", err)
+	}
+	set, table := singleSetAndTable(cfg.Provider.Name, "mistral", prov)
+	g, err := New(cfg, logger, set, table)
+	if err != nil {
+		t.Fatalf("gateway.New: %v", err)
+	}
+	return g
+}
+
+func postOpenAI(body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+const mistralBody = `{"model":"mistral-large-latest","messages":[{"role":"user","content":"hi"}]}`
+
+func TestTracing_MistralJSONResponseRecordsUsage(t *testing.T) {
+	_, url := newFakeAnthropic(t, func(w http.ResponseWriter, _ []byte) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"cmpl-1","object":"chat.completion","model":"mistral-large-latest",` +
+			`"choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],` +
+			`"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}`))
+	})
+	cfg := tracingGatewayConfig(t, url)
+	g := newMistralTracingGateway(t, cfg, zaptest.NewLogger(t))
+
+	if rec := serve(g, postOpenAI(mistralBody)); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	_, resp := callRecords(t, cfg.Tracing.Sink.Path)
+	if field(resp, "tokens", "sent") != float64(11) || field(resp, "tokens", "received") != float64(7) {
+		t.Fatalf("tokens = %v, want sent 11, received 7", resp["tokens"])
+	}
+}
+
+func TestTracing_MistralStreamedResponseRecordsUsageFromTheFinalChunk(t *testing.T) {
+	_, url := newFakeAnthropic(t, streamResponder([]string{
+		"data: " + `{"id":"cmpl-1","choices":[{"index":0,"delta":{"role":"assistant","content":"hel"},"finish_reason":null}]}` + "\n\n",
+		"data: " + `{"id":"cmpl-1","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":null}]}` + "\n\n",
+		"data: " + `{"id":"cmpl-1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}` + "\n\n",
+		"data: [DONE]\n\n",
+	}))
+	cfg := tracingGatewayConfig(t, url)
+	g := newMistralTracingGateway(t, cfg, zaptest.NewLogger(t))
+
+	if rec := serve(g, postOpenAI(mistralBody)); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	_, resp := callRecords(t, cfg.Tracing.Sink.Path)
+	if field(resp, "tokens", "sent") != float64(11) || field(resp, "tokens", "received") != float64(7) {
+		t.Fatalf("tokens = %v, want sent 11, received 7", resp["tokens"])
 	}
 }

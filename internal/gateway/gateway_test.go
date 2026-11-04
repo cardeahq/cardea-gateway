@@ -62,6 +62,8 @@ type stubProvider struct {
 func (stubProvider) Name() string            { return "stub" }
 func (p stubProvider) Handler() http.Handler { return p.handler }
 
+func (stubProvider) ResponseFormat() trace.ResponseFormat { return nil }
+
 // fileSinkTracing is a tracing config whose records go to a temp file, so
 // tests that enable tracing never write to stdout.
 func fileSinkTracing(t *testing.T) config.TracingConfig {
@@ -164,7 +166,7 @@ func TestBuildStages_RespectsConfigBooleans(t *testing.T) {
 				},
 				Tracing: fileSinkTracing(t),
 			}
-			stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+			stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -186,7 +188,7 @@ func TestBuildStages_TracingStageIsNamedAfterItsConfigKey(t *testing.T) {
 		},
 		Tracing: fileSinkTracing(t),
 	}
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -407,7 +409,7 @@ func TestBuildStages_SinkTypeSelectsTheImplementation(t *testing.T) {
 			}
 			cfg.Tracing.Sink.Type = tt.sinkType
 			cfg.Tracing.Sink.Cardea = gwCardeaSettings(p.srv.URL + "/in")
-			_, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+			_, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -679,7 +681,7 @@ func TestBuildStages_PolicyEngineFailureClosesTheSinkAlreadyBuilt(t *testing.T) 
 	cfg.Tracing.Sink.Path = path
 	cfg.Tracing.Sink.Cardea = gwCardeaSettings(p.srv.URL + "/in")
 
-	if _, _, _, _, err := buildStages(cfg, logger, testSingleTable()); err == nil {
+	if _, _, _, _, err := buildStages(cfg, logger, testSingleTable(), nil); err == nil {
 		t.Fatal("buildStages = nil error, want the policy failure")
 	}
 	if hasWriter() {

@@ -6,6 +6,8 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 // mistralProvider forwards requests to the Mistral API, injecting the API
@@ -50,3 +52,5 @@ func NewMistralProvider(baseURL, apiKeyEnv string) (Provider, error) {
 func (p *mistralProvider) Name() string { return "mistral" }
 
 func (p *mistralProvider) Handler() http.Handler { return p.proxy }
+
+func (p *mistralProvider) ResponseFormat() trace.ResponseFormat { return mistralFormat{} }

@@ -74,7 +74,7 @@ func TestBuildStages_FilteringComesAfterPoliciesAndFollowsItsConfigBoolean(t *te
 			cfg.Pipeline.Stages.Filtering = tt.filterEnabled
 			cfg.Filtering = filteringCfg()
 
-			stages, sink, _, fEng, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+			stages, sink, _, fEng, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}

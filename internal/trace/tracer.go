@@ -118,8 +118,10 @@ func (t *Tracer) Request(r *http.Request, body []byte, agentID string, opts Requ
 	return info, nil
 }
 
-func (t *Tracer) NewResponseTap(readUsage bool) *ResponseTap {
-	return &ResponseTap{key: t.key, maxReadBytes: t.maxReadBytes, readUsage: readUsage}
+// NewResponseTap's format reads the provider's responses; with a nil
+// format the tap records only whether the response was streamed.
+func (t *Tracer) NewResponseTap(format ResponseFormat) *ResponseTap {
+	return &ResponseTap{key: t.key, maxReadBytes: t.maxReadBytes, format: format}
 }
 
 func (t *Tracer) sourcesFor(agentID string) []source {

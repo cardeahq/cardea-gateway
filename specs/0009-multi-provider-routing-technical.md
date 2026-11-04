@@ -160,10 +160,13 @@ and forwards the request as sent (functional rule 4).
   and also sets `stream` for a Gemini `streamGenerateContent` action. It
   reads tool results for every call routed by the single route
   (`c.Route.Single`), exactly as today, and in list mode only when the
-  format is `anthropic`. The response tap reads token usage for single-
-  route calls and for `anthropic`-format calls; otherwise it leaves
-  `Tokens` nil, because the Anthropic usage reader would record an
-  OpenAI-style `usage` object as zero tokens.
+  format is `anthropic`. The response tap reads the response with the
+  routed provider's `ResponseFormat()` (specs/0003, `format.go`), looked
+  up in the `provider.Set` by `c.Route.Provider`, so usage is read in the
+  provider's own shape in both modes. Gemini's format is nil for now, so
+  its responses are not read. *(Amended: originally a `readUsage` flag
+  left `Tokens` nil for list-mode non-Anthropic calls, because the only
+  usage reader was Anthropic's.)*
 - **Request records** take `provider` from `Call.Route`. They take `model`
   from `c.Trace.Model` when the call went through the single route (as
   today), and otherwise from `Call.Model`, never falling back to tracing.
@@ -486,17 +489,18 @@ type RequestOptions struct {
 }
 
 func (t *Tracer) Request(r *http.Request, body []byte, agentID string, opts RequestOptions) (RequestInfo, error)
-func (t *Tracer) NewResponseTap(readUsage bool) *ResponseTap
+func (t *Tracer) NewResponseTap(format ResponseFormat) *ResponseTap
 ```
 
-The tracing stage sets `ToolResults` and `readUsage` to
-`c.Route == nil || c.Route.Single || c.Format == routing.FormatAnthropic`.
+The tracing stage holds the `provider.Set` and passes the routed
+provider's `ResponseFormat()` to `NewResponseTap`; with no route, or a
+provider missing from the set, the format is nil. It sets `ToolResults`
+to `c.Route == nil || c.Route.Single || c.Format == routing.FormatAnthropic`.
 A nil route only happens in a pipeline built without a routing stage
 (stage tests); it keeps today's behavior. `GeminiStream` is
 `c.Format == routing.FormatGemini && routing.GeminiStreams(path)`. `Request` reads session, `model` and
 `stream` as today, sets `Stream` when `GeminiStream`, and reads tool
-results only when `ToolResults`. With `readUsage` false the tap leaves
-`Tokens` nil; everything else it reads is unchanged.
+results only when `ToolResults`.
 `schemas/trace-record.v1.schema.json`: the
 `provider` description changes from "every call" to "the provider this
 call was routed to", lists `gemini`, and says the key is absent when the
@@ -662,8 +666,9 @@ credential headers (`credentialHeaders` in `policy/input.go`). The new
   generic policy groups and no redaction; tracing reads tool results and
   usage for the single route whatever the format (single Mistral on
   `/v1/messages` keeps its `tool_results`, as today), for `anthropic` in
-  list mode, and not for list-mode Mistral; a list-mode Mistral JSON
-  response with an OpenAI-style `usage` has `tokens: null`; a 300-byte
+  list mode, and not for list-mode Mistral; in list mode, an Anthropic
+  call and a Mistral call through one gateway each record the tokens and
+  stop reason their own provider reported; a 300-byte
   model is truncated in the request record in both modes; in list mode an
   OpenAI-style body `{"Model":"x"}` (wrong case, so routing finds no
   model and uses the default) records `model: null`;

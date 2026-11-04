@@ -21,8 +21,19 @@ Defined in `internal/provider/provider.go`:
 type Provider interface {
     Name() string
     Handler() http.Handler
+    ResponseFormat() trace.ResponseFormat
 }
 ```
+
+`ResponseFormat` is how tracing reads the provider's responses (response
+ID, model, stop reason, token usage, tool calls). It returns nil when the
+Gateway does not know the upstream's wire format; responses are then
+relayed and traced without any of those fields. A format implements
+`trace.ResponseFormat` (`ReadBody` for a non-streamed JSON body,
+`NewStreamReader` for one SSE stream) and reports what it reads through
+the `*trace.ResponseSink` it is given. Everything format-neutral
+(encodings, SSE framing, read limits, disconnects, timing, fingerprints)
+stays in the tap. See `anthropic_format.go` and `mistral_format.go`.
 
 ## Two ways to add a provider
 
@@ -40,7 +51,8 @@ provider:
 
 This is built via `provider.NewHTTPProxy` (see
 `internal/provider/httpproxy.go`), constructed directly in
-`internal/cli/serve.go` from `cfg.Provider`.
+`internal/cli/serve.go` from `cfg.Provider`. Its `ResponseFormat` is nil,
+so tracing records no usage or tool calls for it.
 
 ### 2. Custom provider (auth injection, request rewriting, streaming quirks)
 
@@ -50,7 +62,7 @@ one, rewriting the request path/body, or special SSE handling — implement
 `Provider` directly:
 
 1. Add a new file `internal/provider/<name>.go` with a type implementing
-   `Name() string` and `Handler() http.Handler`. Model it on
+   `Provider`. Model it on
    `httpProxyProvider` in `httpproxy.go` — typically an
    `httputil.ReverseProxy` with a custom `Director` or
    `ModifyResponse` for the parts that differ.
@@ -58,10 +70,16 @@ one, rewriting the request path/body, or special SSE handling — implement
    that validates its inputs and returns an error rather than panicking,
    matching `NewHTTPProxy`'s validation style (reject empty names,
    non-absolute URLs, etc.).
-3. Wire it into `internal/cli/serve.go` where the provider is
+3. If the upstream's wire format is new, add
+   `internal/provider/<name>_format.go` implementing `trace.ResponseFormat`
+   and return it from `ResponseFormat()`; a provider speaking an existing
+   format returns that one. Test it through a real tap, as
+   `mistral_format_test.go` does: a body, a stream (with a tool call), and
+   a response missing usage.
+4. Wire it into `internal/cli/serve.go` where the provider is
    constructed — e.g. dispatch on the configured `Name` to pick
    `NewHTTPProxy` vs. the new constructor.
-4. Add a test file `internal/provider/<name>_test.go` following the
+5. Add a test file `internal/provider/<name>_test.go` following the
    pattern in `httpproxy_test.go`: spin up an `httptest.Server` standing
    in for the upstream, assert the request the provider actually sends
    (headers, path, body) and that the response comes back untouched.

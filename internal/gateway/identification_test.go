@@ -150,7 +150,7 @@ func identCfg(t *testing.T, enabled bool, agentTypesDir string) config.Config {
 
 func TestBuildStages_OmitsIdentificationWhenDisabled(t *testing.T) {
 	cfg := identCfg(t, false, "")
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestBuildStages_OmitsIdentificationWhenDisabled(t *testing.T) {
 
 func TestBuildStages_IdentificationEnabledWithEmptyDirStillBuilds(t *testing.T) {
 	cfg := identCfg(t, true, "")
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestBuildStages_IdentificationEnabledWithEmptyDirStillBuilds(t *testing.T) 
 
 func TestBuildStages_IdentificationNonexistentDirFailsConstruction(t *testing.T) {
 	cfg := identCfg(t, true, filepath.Join(t.TempDir(), "does-not-exist"))
-	stages, _, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+	stages, _, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 	if err == nil {
 		t.Fatal("buildStages with a nonexistent agent_types_dir = nil error, want error")
 	}

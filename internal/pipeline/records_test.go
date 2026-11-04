@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/cardeahq/cardea-gateway/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/provider"
 	"github.com/cardeahq/cardea-gateway/internal/routing"
 	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
@@ -119,11 +121,24 @@ func newTestTracer(t *testing.T, maxReadBytes int64) *trace.Tracer {
 }
 
 // tracingTestStage mirrors gateway's tracingStage, which this package
-// cannot import.
+// cannot import, reading responses as the Anthropic provider does.
 type tracingTestStage struct {
 	tracer *trace.Tracer
 	log    *eventLog
 }
+
+// anthropicResponses is the Anthropic provider's response format. Building
+// the provider needs its API key in the environment; the format does not
+// use it.
+var anthropicResponses = sync.OnceValue(func() trace.ResponseFormat {
+	const keyEnv = "AK_PIPELINE_TEST_ANTHROPIC_KEY"
+	_ = os.Setenv(keyEnv, "unused")
+	p, err := provider.NewAnthropicProvider("http://127.0.0.1:1", keyEnv)
+	if err != nil {
+		panic(err)
+	}
+	return p.ResponseFormat()
+})
 
 func (s *tracingTestStage) Name() string { return "tracing" }
 
@@ -138,7 +153,7 @@ func (s *tracingTestStage) Request(_ context.Context, c *Call) (Decision, error)
 	if err != nil {
 		return Decision{}, err
 	}
-	return AllowTraced(info, s.tracer.NewResponseTap(true)), nil
+	return AllowTraced(info, s.tracer.NewResponseTap(anthropicResponses())), nil
 }
 
 type agentStage struct{ agentID string }

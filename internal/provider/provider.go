@@ -2,11 +2,18 @@
 // route requests to different upstream LLM APIs interchangeably.
 package provider
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/cardeahq/cardea-gateway/internal/trace"
+)
 
 type Provider interface {
 	Name() string
 	Handler() http.Handler
+	// ResponseFormat reads this provider's responses for tracing; nil when
+	// the Gateway does not know the upstream's format.
+	ResponseFormat() trace.ResponseFormat
 }
 
 // stripCallerCredentials deletes every caller-supplied credential from
