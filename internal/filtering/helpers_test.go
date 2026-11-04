@@ -45,12 +45,6 @@ func testEngineWithCategories(cats ...Category) *Engine {
 	return &Engine{patterns: patterns}
 }
 
-// anthropicRequest builds a Request targeting the Anthropic messages
-// route, the shape almost every filtering test needs.
-func anthropicRequest(callID, path string, body []byte) Request {
-	return Request{CallID: callID, Path: path, Body: body, Format: "anthropic"}
-}
-
 // --- Placeholder parsing -----------------------------------------------------
 
 var placeholderPattern = regexp.MustCompile(`\[(email|ssn|api_key):([0-9a-f-]{36})\]`)
