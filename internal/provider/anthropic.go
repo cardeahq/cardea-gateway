@@ -6,6 +6,8 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 // anthropicProvider forwards requests to the Anthropic API, injecting the
@@ -49,3 +51,5 @@ func NewAnthropicProvider(baseURL, apiKeyEnv string) (Provider, error) {
 func (p *anthropicProvider) Name() string { return "anthropic" }
 
 func (p *anthropicProvider) Handler() http.Handler { return p.proxy }
+
+func (p *anthropicProvider) ResponseFormat() trace.ResponseFormat { return anthropicFormat{} }

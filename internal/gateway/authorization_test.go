@@ -189,7 +189,7 @@ func authzCfg(t *testing.T, authzEnabled bool, secretEnv string) config.Config {
 
 func TestBuildStages_PrependsAuthorizationAheadOfIdentificationWhenBothEnabled(t *testing.T) {
 	cfg := authzCfg(t, true, "AK_GW_TEST_BUILD_AUTHZ_SECRET")
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestBuildStages_PrependsAuthorizationAheadOfIdentificationWhenBothEnabled(t
 
 func TestBuildStages_OmitsAuthorizationWhenDisabled(t *testing.T) {
 	cfg := authzCfg(t, false, "")
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestBuildStages_RoutingStagePresentEvenWithEveryOtherStageDisabled(t *testi
 	cfg := config.Config{
 		Pipeline: config.PipelineConfig{MaxBodyBytes: 1 << 20},
 	}
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestBuildStages_ReturnsErrorNotPartialStagesOnGateFailure(t *testing.T) {
 		},
 		Authorization: config.AuthorizationConfig{APIKeyEnvs: []string{"AK_GW_TEST_UNSET_AUTHZ_ENV_VAR_ABC123"}},
 	}
-	stages, _, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+	stages, _, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable(), nil)
 	if err == nil {
 		t.Fatal("buildStages with a gate construction failure = nil error, want error")
 	}

@@ -38,7 +38,7 @@ func New(cfg config.Config, logger *zap.Logger, set *provider.Set, table *routin
 		set:    set,
 	}
 
-	stages, sink, engine, filterEngine, err := buildStages(cfg, logger, table)
+	stages, sink, engine, filterEngine, err := buildStages(cfg, logger, table, set)
 	if err != nil {
 		return nil, err
 	}
@@ -192,8 +192,8 @@ func (g *Gateway) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // constructor for each stage whose config boolean is true. A new stage
 // spec adds its constructor at its position here. The returned sink is
 // nil exactly when tracing is disabled, and the engine exactly when the
-// policies stage is.
-func buildStages(cfg config.Config, logger *zap.Logger, table *routing.Table) ([]pipeline.Stage, trace.CloseableSink, *policy.Engine, *filtering.Engine, error) {
+// policies stage is. set gives the tracing stage each routed call's provider.
+func buildStages(cfg config.Config, logger *zap.Logger, table *routing.Table, set *provider.Set) ([]pipeline.Stage, trace.CloseableSink, *policy.Engine, *filtering.Engine, error) {
 	var stages []pipeline.Stage
 	var sink trace.CloseableSink
 
@@ -230,7 +230,7 @@ func buildStages(cfg config.Config, logger *zap.Logger, table *routing.Table) ([
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
-		stages = append(stages, &tracingStage{tracer: tracer})
+		stages = append(stages, &tracingStage{tracer: tracer, providers: set})
 	}
 	var engine *policy.Engine
 	if cfg.Pipeline.Stages.Policies {

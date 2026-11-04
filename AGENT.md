@@ -66,7 +66,10 @@ Run the gateway directly: `go run ./cmd/gateway serve [--config path.yaml]`.
   `internal/`, so a future multi-format provider (specs/0011) reuses it
   unchanged.
 - `internal/provider` — the `Provider` interface (`Name() string`,
-  `Handler() http.Handler`). `NewHTTPProxy` covers any upstream reachable
+  `Handler() http.Handler`, `ResponseFormat() trace.ResponseFormat`). The
+  response format is how tracing reads that provider's responses
+  (`anthropic_format.go`, `mistral_format.go`); nil for an upstream whose
+  format the Gateway does not know. `NewHTTPProxy` covers any upstream reachable
   by forwarding the request as-is; providers needing custom auth
   injection or request rewriting implement `Provider` directly (see the
   `add-provider` skill) — Anthropic, Mistral and Gemini do, each

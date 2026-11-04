@@ -186,13 +186,16 @@ keeps the model name:
     gets a request record with no provider field. In single mode this is
     one visible change from today: a call refused by authorization or
     identification no longer names the provider in its record.
-18. Trace records read conversation and response details (tool results
-    sent back, response identifier, model, stop reason, tokens, tool
-    calls) as today, with readers built for the Anthropic format. For
-    calls in list mode that are not in the Anthropic format, tool results
-    and token counts are left empty rather than misread, and any other
-    detail those readers do not recognize is also empty. Gemini responses
-    therefore carry outcome and timing only.
+18. Trace records read conversation details (tool results sent back) as
+    today, with a reader built for the Anthropic format; for calls in
+    list mode that are not in the Anthropic format, tool results are left
+    empty rather than misread. Response details (response identifier,
+    model, stop reason, tokens, tool calls) are read in the format of the
+    provider the call was routed to: Anthropic and Mistral responses carry
+    all of them. Gemini's format is not read yet, so Gemini responses
+    carry outcome and timing only. *(Amended by the provider response
+    formats change: originally list-mode non-Anthropic calls had no
+    tokens either.)*
 19. Changes to the provider list take effect on restart. A policy reload
     does not change routing.
 

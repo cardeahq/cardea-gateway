@@ -574,6 +574,39 @@ func TestMultiProvider_TraceRecordsAndPolicyInputNameTheProvider(t *testing.T) {
 	}
 }
 
+func TestMultiProvider_EachResponseIsReadInItsRoutedProvidersFormat(t *testing.T) {
+	s := newMPSetup(t)
+	s.anthropic.respond = func(w http.ResponseWriter, _ []byte) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-sonnet-5","content":[],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":2}}`))
+	}
+	s.mistral.respond = func(w http.ResponseWriter, _ []byte) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-1","model":"mistral-large-latest","choices":[{"message":{"content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":7}}`))
+	}
+	cfg := mpConfig(t, s, false, "")
+	g := mpBuild(t, cfg)
+
+	for _, tt := range []struct {
+		req            *http.Request
+		provider, stop string
+		sent, received float64
+	}{
+		{anthropicCall("claude-sonnet-5"), "anthropic", "end_turn", 5, 2},
+		{openAICall("/v1/chat/completions", "mistral-large-latest"), "mistral", "stop", 11, 7},
+	} {
+		if rec := serve(g, tt.req); rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", tt.provider, rec.Code)
+		}
+		_, resp := callRecords(t, cfg.Tracing.Sink.Path)
+		if resp["provider"] != tt.provider || resp["stop_reason"] != tt.stop ||
+			field(resp, "tokens", "sent") != tt.sent || field(resp, "tokens", "received") != tt.received {
+			t.Fatalf("%s response record = provider %v, stop_reason %v, tokens %v; want %s, %s, sent %v received %v",
+				tt.provider, resp["provider"], resp["stop_reason"], resp["tokens"], tt.provider, tt.stop, tt.sent, tt.received)
+		}
+	}
+}
+
 // --- AC20: authorization denies before routing, no routing warning ---------
 
 func TestMultiProvider_AuthorizationDeniesBeforeRoutingAndLogsNoRoutingWarning(t *testing.T) {

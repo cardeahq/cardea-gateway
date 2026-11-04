@@ -58,7 +58,9 @@ Anthropic wire format, sessions, fingerprints and the sink in a new
   provider, records are still written, but the fields read from bodies
   (`model`, `tool_results`, `tool_calls`, `response_id`, …) take their
   not-applicable values. The next provider's spec adds its parser.
-- Content encodings other than identity and gzip on responses.
+- Response content encodings other than identity, `gzip`, `br`, `zstd`
+  and `deflate` *(amended: originally identity and gzip only)*. A
+  `Content-Encoding` listing several codings is not read.
 - A running token total. The `token_counting` stage (0001) was removed
   after this spec: its only output was a log line, and each response
   record's `tokens` now carries the call's usage.
@@ -204,10 +206,21 @@ needs it.
 | `application/json` | **JSON**: buffer the body; parse it in `Result` |
 | anything else | **none**: nothing is parsed |
 
-With `Content-Encoding: gzip`, SSE mode pipes bytes through a
-`gzip.Reader` in one goroutine per call, and JSON mode decompresses in
-`Result`. Any other encoding leaves the tap unable to read: its result
-is `Failed` with no tool calls, and an error is logged.
+With a `Content-Encoding` of `gzip`, `br`, `zstd` or `deflate` (matched
+case-insensitively; `deflate` is the zlib format, per RFC 9110), SSE mode
+pipes bytes through the matching decoder in one goroutine per call, and
+JSON mode decompresses in `Result`. The decoders live in `encoding.go`:
+the standard library's for gzip and deflate,
+`github.com/andybalholm/brotli` for `br`, and
+`github.com/klauspost/compress/zstd` (one goroutine-free decoder per
+call, closed with the reader, refusing windows over HTTP's 8 MB cap from
+RFC 9659) for `zstd`. The tap decodes only for
+itself; the agent always receives the bytes the provider sent. These are
+the codings agents' HTTP clients advertise (Node's `fetch` and Python's
+httpx with `brotli` installed send `br`), and `Accept-Encoding` is
+forwarded unchanged, so the provider picks among them. Any other encoding
+leaves the tap unable to read: its result is `Failed` with no tool calls,
+and an error is logged.
 
 In SSE mode the tap splits lines, collects `data:` payloads until the
 blank line that ends an event, and decodes each event:
@@ -262,7 +275,7 @@ reach the relay or the process. Two `recover`s cover it:
   call gets `recorded: false`. Parsing then goes on with the next event,
   so later tool calls and `message_delta`'s `stop_reason` are still
   recorded (acceptance criterion 26).
-- **gzip goroutine.** The goroutine's body starts with a deferred
+- **Decoder goroutine.** The goroutine's body starts with a deferred
   `recover`. On a panic it marks the tap `Failed`, then drains the pipe
   with `io.Copy(io.Discard, pr)`, so the relaying goroutine's writes
   never block and the process never crashes. `Result` closes the pipe's
@@ -275,10 +288,10 @@ outside event handling, such as line splitting. After such a panic the
 tap is not called again. Every tool call still open gets `recorded:
 false`, and events after the panic are not read.
 
-In gzip SSE mode, `relayed_at` is the time the parser goroutine decodes
-`content_block_stop`. The pipe hands bytes over synchronously, so that
-time falls within the relay of the compressed bytes carrying the event,
-up to the `gzip.Reader`'s internal buffering.
+In compressed SSE mode, `relayed_at` is the time the parser goroutine
+decodes `content_block_stop`. The pipe hands bytes over synchronously, so
+that time falls within the relay of the compressed bytes carrying the
+event, up to the decoder's internal buffering.
 
 #### Result
 
@@ -519,8 +532,34 @@ type RequestInfo struct {
 // for tool_result blocks it cannot read.
 func (t *Tracer) Request(r *http.Request, body []byte, agentID string) (RequestInfo, error)
 
-func (t *Tracer) NewResponseTap() *ResponseTap
+// NewResponseTap's format is the provider's (provider.Provider's
+// ResponseFormat); nil leaves the response unread.
+func (t *Tracer) NewResponseTap(format ResponseFormat) *ResponseTap
 ```
+
+`format.go` is the seam between the tap and a provider's wire format. The
+tap keeps everything format-neutral: content encodings, SSE line and event
+framing, the read limit, disconnects, relay timing and fingerprints. A
+format only reads bodies and events and reports what they say:
+
+```go
+type ResponseFormat interface {
+	ReadBody(body []byte, out *ResponseSink) // a whole non-streamed JSON body
+	NewStreamReader() StreamReader          // one per streamed response
+}
+
+type StreamReader interface {
+	Event(data []byte, out *ResponseSink) // one SSE event's data
+}
+
+// ResponseSink is concrete; its methods record identifiers, the stop
+// reason, token usage, and tool calls opened, extended and closed by an
+// index the format chooses.
+type ResponseSink struct { /* the tap, and the relay time of the bytes being read */ }
+```
+
+The Anthropic Messages format lives in `internal/provider/anthropic_format.go`,
+Mistral's (OpenAI-compatible chat completions) in `mistral_format.go`.
 
 `tap.go`:
 
@@ -551,7 +590,7 @@ func (t *ResponseTap) Result() ResponseInfo
 ```
 
 `session.go` holds session-source matching and baggage parsing.
-`anthropic.go` holds the Messages request and response shapes.
+`anthropic.go` holds the Messages request shapes.
 `canonical.go` holds `canonicalJSON(raw []byte) ([]byte, error)` and the
 HMAC. None of these export anything beyond the above.
 
@@ -642,6 +681,7 @@ func (r *bodyRecorder) UpstreamFailed()
 ```go
 type tracingStage struct {
 	tracer *trace.Tracer
+	format trace.ResponseFormat // the provider's; set by buildStages
 }
 
 func (s *tracingStage) Name() string { return "tracing" }
@@ -651,7 +691,7 @@ func (s *tracingStage) Request(_ context.Context, c *pipeline.Call) (pipeline.De
 	if err != nil {
 		return pipeline.Decision{}, err
 	}
-	return pipeline.AllowTraced(info, s.tracer.NewResponseTap()), nil
+	return pipeline.AllowTraced(info, s.tracer.NewResponseTap(s.format)), nil
 }
 ```
 
@@ -813,11 +853,11 @@ startup: an operator who set one meant to use it.
 | Sink refuses the request record *(amended by 0005)* | Error log with `call_id`; the record is lost; the call proceeds (an allowed call is forwarded, a refused one stays refused). Originally a 503 denial |
 | Tap panics while handling an event | Relay unaffected; that event's tool call `recorded: false`; parsing continues with the next event; tracing `observation: failed`; error log with `call_id` |
 | Tap panics outside event handling | Relay unaffected; tap not called again; open tool calls `recorded: false`; later events not read; tracing `observation: failed`; error log |
-| gzip parser goroutine panics | Recovered in the goroutine; pipe drained so the relay never blocks; tracing `observation: failed`; error log |
+| Decoder goroutine panics | Recovered in the goroutine; pipe drained so the relay never blocks; tracing `observation: failed`; error log |
 | Tool-call arguments not valid JSON | That tool call `recorded: false`; relay unaffected; tracing `observation: failed` |
 | Tool-call arguments or one SSE event over `max_read_bytes` | That tool call `recorded: false`; tracing `observation: completed`; no error log |
 | Non-streamed body over `max_read_bytes` | No tool calls read; finding `tool_calls_unread`; tracing `observation: completed`; no error log |
-| Response encoding other than identity/gzip | No tool calls read; tracing `observation: failed`; error log |
+| Response encoding other than identity, `gzip`, `br`, `zstd`, `deflate` | No tool calls read; tracing `observation: failed`; error log |
 | Observer panics | Recovered (0001); that stage `observation: failed` |
 | Sink refuses the response record | Error log with `call_id`; the record is lost |
 | Provider unreachable, or agent leaves before the provider answers | 502 to the agent; response record `unanswered` |
@@ -884,10 +924,13 @@ from `*json.SyntaxError.Offset`.
     `content_block_stop`;
   - `Disconnected` before a block closes makes it `not_delivered`;
   - a truncated stream leaves `stop_reason` nil;
-  - gzip-encoded input gives the same result, with `relayed_at` inside
-    the write that carried the compressed event.
+  - input in each of `gzip`, `br`, `zstd` and `deflate`, flushed per
+    event, gives the same result, with `relayed_at` inside the write that
+    carried the compressed event.
 - **Tap, JSON mode.** A non-streamed response with a tool call gives the
-  same argument fingerprint as the streamed version of the same call.
+  same argument fingerprint as the streamed version of the same call,
+  and the same result in each supported encoding; `Content-Encoding` is
+  matched case-insensitively.
   Error bodies give no tool calls and nil identifiers.
 - **Read limit** (criteria 30, 31):
   - arguments over `max_read_bytes` give `recorded: false` with
@@ -902,7 +945,7 @@ from `*json.SyntaxError.Offset`.
   - a handler forced to panic on one tool call's `content_block_stop`
     gives that tool call `recorded: false`, a later tool call recorded in
     full, `stop_reason` from `message_delta`, and `Failed`;
-  - a panic in the gzip goroutine does not crash the test process, does
+  - a panic in the decoder goroutine does not crash the test process, does
     not block `Write`, and `Result` returns with `Failed`;
   - a panic in line splitting, caught by the recorder, leaves open tool
     calls `recorded: false`.

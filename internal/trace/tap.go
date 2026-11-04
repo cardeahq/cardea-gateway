@@ -2,13 +2,13 @@ package trace
 
 import (
 	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,13 +27,12 @@ const sseLineSlack = 64
 
 // ResponseTap reads one call's response as it is relayed. Not safe for
 // concurrent use; the pipeline calls it from the relaying goroutine only.
-// In gzip SSE mode a parser goroutine shares its state, guarded by mu.
+// In compressed SSE mode a parser goroutine shares its state, guarded by mu.
 type ResponseTap struct {
 	key          []byte
 	maxReadBytes int64
-	// readUsage says whether to read token usage; false for a call whose
-	// format the Anthropic usage reader would misread (specs/0009).
-	readUsage bool
+	format       ResponseFormat // nil: the response is relayed unread
+	reader       StreamReader   // set in SSE mode when format is
 
 	mu           sync.Mutex
 	mode         tapMode
@@ -42,10 +41,11 @@ type ResponseTap struct {
 	lastWrite    time.Time
 	errs         []error
 
-	// Gzip SSE: bytes are piped to a parser goroutine.
-	gzip bool
-	pw   *io.PipeWriter
-	done chan struct{}
+	// encoding is the response's content encoding, "" for identity. In
+	// compressed SSE mode bytes are piped to a parser goroutine.
+	encoding string
+	pw       *io.PipeWriter
+	done     chan struct{}
 
 	// SSE parsing.
 	line      []byte
@@ -91,32 +91,41 @@ type ResponseInfo struct {
 
 func (t *ResponseTap) Start(status int, h http.Header) {
 	t.status = status
-	switch enc := h.Get("Content-Encoding"); enc {
-	case "", "identity":
-	case "gzip":
-		t.gzip = true
+	switch enc := strings.ToLower(strings.TrimSpace(h.Get("Content-Encoding"))); {
+	case enc == "" || enc == "identity":
+	case decoders[enc] != nil:
+		t.encoding = enc
 	default:
 		t.fail(fmt.Errorf("response content encoding %q cannot be read", enc))
 		return
 	}
 
+	t.open = map[int]*toolCallState{}
 	mediaType, _, _ := mime.ParseMediaType(h.Get("Content-Type"))
 	switch mediaType {
 	case "text/event-stream":
 		t.mode = modeSSE
-		t.open = map[int]*toolCallState{}
-		if t.gzip {
-			t.startGzipParser()
+		if t.format == nil {
+			return
+		}
+		t.reader = t.format.NewStreamReader()
+		if t.encoding != "" {
+			t.startDecoder()
 		}
 	case "application/json":
-		t.mode = modeJSON
+		if t.format != nil {
+			t.mode = modeJSON
+		}
 	}
 }
 
 func (t *ResponseTap) Write(p []byte, relayedAt time.Time) {
 	switch t.mode {
 	case modeSSE:
-		if t.gzip {
+		if t.reader == nil {
+			return
+		}
+		if t.encoding != "" {
 			_, _ = t.pw.Write(p)
 			return
 		}
@@ -155,15 +164,15 @@ func (t *ResponseTap) Result() ResponseInfo {
 	switch t.mode {
 	case modeSSE:
 		info.Streamed = true
-		info.ResponseID, info.ResponseModel, info.StopReason, info.Tokens = t.responseID, t.responseModel, t.stopReason, t.tokens
-		for _, tc := range t.calls {
-			if !tc.closed {
-				notDelivered(tc)
-			}
-			info.ToolCalls = append(info.ToolCalls, tc.call)
-		}
 	case modeJSON:
-		t.parseJSON(&info)
+		info.Unread = t.readBody()
+	}
+	info.ResponseID, info.ResponseModel, info.StopReason, info.Tokens = t.responseID, t.responseModel, t.stopReason, t.tokens
+	for _, tc := range t.calls {
+		if !tc.closed {
+			notDelivered(tc)
+		}
+		info.ToolCalls = append(info.ToolCalls, tc.call)
 	}
 	info.Failed = len(t.errs) > 0
 	info.Err = errors.Join(t.errs...)
@@ -176,7 +185,7 @@ func (t *ResponseTap) fail(err error) {
 
 // --- SSE ------------------------------------------------------------------
 
-func (t *ResponseTap) startGzipParser() {
+func (t *ResponseTap) startDecoder() {
 	pr, pw := io.Pipe()
 	t.pw = pw
 	t.done = make(chan struct{})
@@ -184,16 +193,17 @@ func (t *ResponseTap) startGzipParser() {
 		defer close(t.done)
 		defer func() {
 			if p := recover(); p != nil {
-				t.failLocked(fmt.Errorf("gzip response parser panicked: %v", p))
+				t.failLocked(fmt.Errorf("%s response parser panicked: %v", t.encoding, p))
 				_, _ = io.Copy(io.Discard, pr)
 			}
 		}()
-		zr, err := gzip.NewReader(pr)
+		zr, err := decoders[t.encoding](pr)
 		if err != nil {
-			t.failLocked(fmt.Errorf("gzip response cannot be read: %w", err))
+			t.failLocked(fmt.Errorf("%s response cannot be read: %w", t.encoding, err))
 			_, _ = io.Copy(io.Discard, pr)
 			return
 		}
+		defer func() { _ = zr.Close() }()
 		buf := make([]byte, 32<<10)
 		for {
 			n, err := zr.Read(buf)
@@ -204,7 +214,7 @@ func (t *ResponseTap) startGzipParser() {
 				return
 			}
 			if err != nil {
-				t.failLocked(fmt.Errorf("gzip response cannot be read: %w", err))
+				t.failLocked(fmt.Errorf("%s response cannot be read: %w", t.encoding, err))
 				_, _ = io.Copy(io.Discard, pr)
 				return
 			}
@@ -290,85 +300,24 @@ func (t *ResponseTap) endEvent(at time.Time) {
 		return
 	}
 	if len(data) > 0 {
-		t.handleEvent(data, at)
+		t.readEvent(data, at)
 	}
 }
 
-func (t *ResponseTap) handleEvent(data []byte, at time.Time) {
-	var ev streamEvent
+// readEvent hands one event to the format's reader. A panic in it fails
+// tracing for the call; like an oversized event, it cannot say which tool
+// call it was reading, so every open one is failed.
+func (t *ResponseTap) readEvent(data []byte, at time.Time) {
 	defer func() {
 		if p := recover(); p != nil {
-			t.fail(fmt.Errorf("reading %s event panicked: %v", ev.Type, p))
-			if ev.Index != nil {
-				if tc := t.open[*ev.Index]; tc != nil {
-					tc.failed = true
-					tc.args = nil
-				}
+			t.fail(fmt.Errorf("reading a stream event panicked: %v", p))
+			for _, tc := range t.open {
+				tc.failed = true
+				tc.args = nil
 			}
 		}
 	}()
-	if json.Unmarshal(data, &ev) != nil {
-		return
-	}
-
-	switch ev.Type {
-	case "message_start":
-		t.responseID, t.responseModel = ev.Message.ID, ev.Message.Model
-		if t.readUsage {
-			if u := ev.Message.Usage; u != nil {
-				t.tokens = &Tokens{Sent: u.sent(), Received: u.OutputTokens}
-			}
-		}
-	case "content_block_start":
-		if ev.Index == nil || !isToolUse(ev.ContentBlock.Type) {
-			return
-		}
-		tc := &toolCallState{
-			call: ToolCall{
-				ToolCallID: ev.ContentBlock.ID,
-				ToolName:   ev.ContentBlock.Name,
-				ServerSide: ev.ContentBlock.Type == "server_tool_use",
-			},
-			startInput:      ev.ContentBlock.Input,
-			afterDisconnect: t.disconnected,
-		}
-		t.open[*ev.Index] = tc
-		t.calls = append(t.calls, tc)
-	case "content_block_delta":
-		if ev.Index == nil || ev.Delta.Type != "input_json_delta" {
-			return
-		}
-		tc := t.open[*ev.Index]
-		if tc == nil || tc.overLimit || tc.failed {
-			return
-		}
-		if int64(len(tc.args)+len(ev.Delta.PartialJSON)) > t.maxReadBytes {
-			tc.overLimit = true
-			tc.args = nil
-			return
-		}
-		tc.args = append(tc.args, ev.Delta.PartialJSON...)
-	case "content_block_stop":
-		if ev.Index == nil {
-			return
-		}
-		tc := t.open[*ev.Index]
-		if tc == nil {
-			return
-		}
-		delete(t.open, *ev.Index)
-		t.closeToolCall(tc, *ev.Index, at)
-	case "message_delta":
-		if ev.Delta.StopReason != nil {
-			t.stopReason = ev.Delta.StopReason
-		}
-		if t.readUsage && ev.Usage != nil {
-			if t.tokens == nil {
-				t.tokens = &Tokens{}
-			}
-			t.tokens.Received = ev.Usage.OutputTokens
-		}
-	}
+	t.reader.Event(data, &ResponseSink{tap: t, at: at})
 }
 
 func (t *ResponseTap) closeToolCall(tc *toolCallState, index int, at time.Time) {
@@ -415,59 +364,36 @@ func (t *ResponseTap) recordArguments(tc *ToolCall, args []byte) error {
 
 // --- JSON -----------------------------------------------------------------
 
-func (t *ResponseTap) parseJSON(info *ResponseInfo) {
+// readBody hands the buffered body to the format and reports whether it
+// was past the read limit, and so not read.
+func (t *ResponseTap) readBody() (unread bool) {
 	defer func() {
 		if p := recover(); p != nil {
 			t.fail(fmt.Errorf("reading the response body panicked: %v", p))
-			*info = ResponseInfo{ToolCalls: []ToolCall{}}
+			t.responseID, t.responseModel, t.stopReason, t.tokens, t.calls = nil, nil, nil, nil, nil
 		}
 	}()
 
 	if t.bodyOver {
-		info.Unread = true
-		return
+		return true
 	}
 	body := t.body.Bytes()
-	if t.gzip {
-		zr, err := gzip.NewReader(bytes.NewReader(body))
+	if t.encoding != "" {
+		zr, err := decoders[t.encoding](bytes.NewReader(body))
 		if err != nil {
-			t.fail(fmt.Errorf("gzip response cannot be read: %w", err))
-			return
+			t.fail(fmt.Errorf("%s response cannot be read: %w", t.encoding, err))
+			return false
 		}
 		body, err = io.ReadAll(io.LimitReader(zr, t.maxReadBytes+1))
+		_ = zr.Close()
 		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-			t.fail(fmt.Errorf("gzip response cannot be read: %w", err))
-			return
+			t.fail(fmt.Errorf("%s response cannot be read: %w", t.encoding, err))
+			return false
 		}
 		if int64(len(body)) > t.maxReadBytes {
-			info.Unread = true
-			return
+			return true
 		}
 	}
-
-	var resp messagesResponse
-	if json.Unmarshal(body, &resp) != nil {
-		return
-	}
-	info.ResponseID, info.ResponseModel, info.StopReason = resp.ID, resp.Model, resp.StopReason
-	if t.readUsage && resp.Usage != nil {
-		info.Tokens = &Tokens{Sent: resp.Usage.sent(), Received: resp.Usage.OutputTokens}
-	}
-	for i, block := range resp.Content {
-		if !isToolUse(block.Type) {
-			continue
-		}
-		tc := ToolCall{ToolCallID: block.ID, ToolName: block.Name, ServerSide: block.Type == "server_tool_use"}
-		if t.disconnected {
-			tc.Outcome = "not_delivered"
-		} else {
-			ts := Timestamp(t.lastWrite)
-			tc.RelayedAt = &ts
-			tc.Outcome = "delivered"
-			if err := t.recordArguments(&tc, block.Input); err != nil {
-				t.fail(fmt.Errorf("content block %d: tool call arguments are %w", i, err))
-			}
-		}
-		info.ToolCalls = append(info.ToolCalls, tc)
-	}
+	t.format.ReadBody(body, &ResponseSink{tap: t, at: t.lastWrite})
+	return false
 }

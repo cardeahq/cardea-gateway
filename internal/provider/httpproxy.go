@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+
+	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 // httpProxyProvider covers any upstream reachable by forwarding the
@@ -36,3 +38,5 @@ func NewHTTPProxy(name, baseURL string) (Provider, error) {
 func (p *httpProxyProvider) Name() string { return p.name }
 
 func (p *httpProxyProvider) Handler() http.Handler { return p.proxy }
+
+func (p *httpProxyProvider) ResponseFormat() trace.ResponseFormat { return nil }
