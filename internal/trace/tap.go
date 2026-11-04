@@ -31,6 +31,9 @@ const sseLineSlack = 64
 type ResponseTap struct {
 	key          []byte
 	maxReadBytes int64
+	// readUsage says whether to read token usage; false for a call whose
+	// format the Anthropic usage reader would misread (specs/0009).
+	readUsage bool
 
 	mu           sync.Mutex
 	mode         tapMode
@@ -311,8 +314,10 @@ func (t *ResponseTap) handleEvent(data []byte, at time.Time) {
 	switch ev.Type {
 	case "message_start":
 		t.responseID, t.responseModel = ev.Message.ID, ev.Message.Model
-		if u := ev.Message.Usage; u != nil {
-			t.tokens = &Tokens{Sent: u.sent(), Received: u.OutputTokens}
+		if t.readUsage {
+			if u := ev.Message.Usage; u != nil {
+				t.tokens = &Tokens{Sent: u.sent(), Received: u.OutputTokens}
+			}
 		}
 	case "content_block_start":
 		if ev.Index == nil || !isToolUse(ev.ContentBlock.Type) {
@@ -357,7 +362,7 @@ func (t *ResponseTap) handleEvent(data []byte, at time.Time) {
 		if ev.Delta.StopReason != nil {
 			t.stopReason = ev.Delta.StopReason
 		}
-		if ev.Usage != nil {
+		if t.readUsage && ev.Usage != nil {
 			if t.tokens == nil {
 				t.tokens = &Tokens{}
 			}
@@ -445,7 +450,7 @@ func (t *ResponseTap) parseJSON(info *ResponseInfo) {
 		return
 	}
 	info.ResponseID, info.ResponseModel, info.StopReason = resp.ID, resp.Model, resp.StopReason
-	if resp.Usage != nil {
+	if t.readUsage && resp.Usage != nil {
 		info.Tokens = &Tokens{Sent: resp.Usage.sent(), Received: resp.Usage.OutputTokens}
 	}
 	for i, block := range resp.Content {

@@ -13,12 +13,14 @@ privacy, and observability without any change to the client:
   platform.
 - **Agent & caller identification** — recognizes known agent types (Claude
   Code, opencode, ...) and gates access with a shared-secret API key.
-- **Provider abstraction** — callers never see or choose the upstream
-  provider; it's fixed in config, so switching providers needs no client
-  changes.
+- **Multi-provider routing** — one Gateway can serve several providers,
+  choosing one per call from the model it names and the API it calls,
+  among only the providers the operator listed; a single-provider setup
+  keeps working unchanged. Callers never supply a host, URL, or provider
+  name.
 
-Anthropic and Mistral are the upstream providers implemented today; see
-[`internal/provider`](internal/provider).
+Anthropic, Mistral and Gemini are the upstream providers implemented
+today; see [`internal/provider`](internal/provider).
 
 ## Requirements
 

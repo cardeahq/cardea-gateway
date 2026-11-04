@@ -15,6 +15,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/cardeahq/cardea-gateway/internal/routing"
 	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
@@ -52,6 +53,15 @@ type Call struct {
 	// Trace is set by the pipeline from the tracing stage's Decision
 	// (AllowTraced). Nil when tracing is disabled or did not run.
 	Trace *trace.RequestInfo
+
+	// Route, Format and Model are set by the pipeline from the routing
+	// stage's Decision (AllowRouted or DenyWithModel). Route is nil
+	// before routing runs or on denial; Model is nil when routing found
+	// none. Once set, no later stage's Decision can overwrite them — see
+	// Handler.
+	Route  *routing.Route
+	Format routing.Format
+	Model  *string
 }
 
 // Denial is attached to Call when a stage — or the pipeline itself —
@@ -76,6 +86,9 @@ type Decision struct {
 	trace   *trace.RequestInfo
 	tap     *trace.ResponseTap
 	detail  *trace.StageDetail
+	route   *routing.Route
+	format  routing.Format
+	model   *string
 }
 
 func Allow() Decision {
@@ -106,6 +119,16 @@ func AllowTraced(info trace.RequestInfo, tap *trace.ResponseTap) Decision {
 	return Decision{allow: true, trace: &info, tap: tap}
 }
 
+// AllowRouted allows the call and attaches its route, format and model.
+func AllowRouted(r routing.Route, f routing.Format, model *string) Decision {
+	return Decision{allow: true, route: &r, format: f, model: model}
+}
+
+// DenyWithModel denies like Deny and records the model routing found.
+func DenyWithModel(status int, message, reason string, model *string) Decision {
+	return Decision{status: status, message: message, reason: reason, model: model}
+}
+
 type Stage interface {
 	Name() string
 	Request(ctx context.Context, c *Call) (Decision, error)
@@ -120,18 +143,16 @@ type ResponseObserver interface {
 }
 
 type Pipeline struct {
-	logger   *zap.Logger
-	maxBody  int64
-	provider string
-	sink     trace.Sink
-	stages   []Stage
+	logger  *zap.Logger
+	maxBody int64
+	sink    trace.Sink
+	stages  []Stage
 }
 
-// New's provider is the name of the upstream every call is forwarded to,
-// written to both records of a call. Its sink is nil when tracing is
-// disabled; the pipeline then builds no records.
-func New(logger *zap.Logger, maxBodyBytes int64, provider string, sink trace.Sink, stages ...Stage) *Pipeline {
-	return &Pipeline{logger: logger, maxBody: maxBodyBytes, provider: provider, sink: sink, stages: stages}
+// New's sink is nil when tracing is disabled; the pipeline then builds
+// no records.
+func New(logger *zap.Logger, maxBodyBytes int64, sink trace.Sink, stages ...Stage) *Pipeline {
+	return &Pipeline{logger: logger, maxBody: maxBodyBytes, sink: sink, stages: stages}
 }
 
 // stageResult is one stage's decision on the request, kept for the
@@ -213,6 +234,13 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 					p.logger.Error("stage failed", zap.String("stage", s.Name()), zap.String("request_id", c.ID), zap.Error(err))
 					break
 				}
+				if decision.model != nil && c.Model == nil {
+					c.Model = decision.model
+				}
+				if decision.route != nil && c.Route == nil {
+					c.Route = decision.route
+					c.Format = decision.format
+				}
 				if !decision.allow {
 					res.decision = "denied"
 					res.detail = decision.detail
@@ -253,7 +281,7 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 		}
 
 		if p.sink != nil {
-			rec := buildRequestRecord(c, p.provider, results, denial, stageErr != nil, bodyRead, requestSize)
+			rec := buildRequestRecord(c, results, denial, stageErr != nil, bodyRead, requestSize)
 			if err := p.sink.Write(rec); err != nil {
 				p.logger.Error("trace sink did not accept the request record; the record is lost",
 					zap.String("call_id", c.ID), zap.String("stage", "tracing"), zap.String("record", "request"), zap.Error(err))
@@ -267,6 +295,9 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 		var abort any
 		if denial == nil {
 			forwardedAt = time.Now()
+			if c.Route != nil {
+				r = r.WithContext(withRoute(r.Context(), *c.Route))
+			}
 			rec = newBodyRecorder(w, p.maxBody, tap)
 			abort = serveNext(next, rec, r)
 			ended = time.Now()
@@ -308,7 +339,7 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 			if tapObs != nil {
 				observations = append([]observation{*tapObs}, observations...)
 			}
-			resp := buildResponseRecord(c, p.provider, rec, info, observations, forwardedAt, ended)
+			resp := buildResponseRecord(c, rec, info, observations, forwardedAt, ended)
 			if err := p.sink.Write(resp); err != nil {
 				p.logger.Error("trace sink did not accept the response record; the record is lost",
 					zap.String("call_id", c.ID), zap.String("stage", "tracing"), zap.String("record", "response"), zap.Error(err))
@@ -363,4 +394,16 @@ func newRequestID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return "ak_" + hex.EncodeToString(b)
+}
+
+type routeCtxKey struct{}
+
+func withRoute(ctx context.Context, r routing.Route) context.Context {
+	return context.WithValue(ctx, routeCtxKey{}, r)
+}
+
+// RouteFrom returns the route the pipeline attached to an upstream request.
+func RouteFrom(ctx context.Context) (routing.Route, bool) {
+	r, ok := ctx.Value(routeCtxKey{}).(routing.Route)
+	return r, ok
 }

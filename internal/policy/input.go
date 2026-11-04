@@ -11,6 +11,7 @@ var credentialHeaders = map[string]bool{
 	"authorization":        true,
 	"proxy-authorization":  true,
 	"x-api-key":            true,
+	"x-goog-api-key":       true,
 	"api-key":              true,
 	"cookie":               true,
 	"set-cookie":           true,
@@ -19,7 +20,7 @@ var credentialHeaders = map[string]bool{
 
 // buildInput returns the document rules are written against. A key that
 // does not apply or is unknown is omitted, never null.
-func buildInput(provider string, r Request) (map[string]any, error) {
+func buildInput(r Request) (map[string]any, error) {
 	op := operationName(r.Path)
 	input := map[string]any{
 		"call": map[string]any{
@@ -27,7 +28,7 @@ func buildInput(provider string, r Request) (map[string]any, error) {
 			"size_bytes": len(r.Body),
 			"headers":    inputHeaders(r.Headers),
 		},
-		"provider":  provider,
+		"provider":  r.Provider,
 		"operation": map[string]any{"name": op, "method": r.Method, "path": r.Path},
 	}
 	if r.AgentID != "" {
@@ -36,7 +37,7 @@ func buildInput(provider string, r Request) (map[string]any, error) {
 	if r.SessionID != "" {
 		input["session"] = map[string]any{"id": r.SessionID}
 	}
-	if provider == "anthropic" && op != "other" {
+	if r.Format == "anthropic" && op != "other" {
 		if err := addAnthropicConversation(input, r.Body); err != nil {
 			return nil, err
 		}

@@ -81,9 +81,12 @@ is a second copy that will drift from the first.
 These hold across every feature; a spec pair that breaks one is wrong
 regardless of internal consistency:
 
-- The caller cannot choose or see the upstream provider. No design may
-  add a caller-facing provider selector, or let a caller-influenced value
-  reach the upstream URL.
+- The caller cannot supply a host, URL, or provider name, and cannot
+  reach a provider the operator did not configure. Specs/0009 lets a
+  caller influence *which configured* provider serves a call, through
+  the model it names and the API it calls — no design may let a
+  caller-influenced value reach the upstream host or URL, or let a call
+  reach a provider the operator did not list.
 - Behavior is rule-driven for the operator, not caller-driven.
 - Nothing specified to be logged or returned may carry prompt content,
   API keys, or `Authorization` header values — including via a struct

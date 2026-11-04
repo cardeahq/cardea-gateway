@@ -26,7 +26,7 @@ func startWatch(t *testing.T, policyPath string, data ...string) (*Engine, *obse
 	cfg := cfgFor(policyPath, data...)
 	cfg.Watch = true
 	cfg.WatchSettle = watchSettle
-	e, err := New(cfg, "anthropic", logger)
+	e, err := New(cfg, logger)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -75,7 +75,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 
 func TestWatch_ReturnsImmediatelyWhenWatchIsOff(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "policy.rego", rule("a"))
-	e, err := New(cfgFor(path), "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfgFor(path), zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestWatch_UnwatchablePathIsAnErrorNotAPanic(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "policy.rego", rule("v1"))
 	cfg := config.PoliciesConfig{Path: path, Watch: true, WatchSettle: watchSettle, EvalTimeout: time.Second}
-	e, err := New(cfg, "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -24,6 +24,7 @@ import (
 	"github.com/cardeahq/cardea-gateway/internal/config"
 	"github.com/cardeahq/cardea-gateway/internal/pipeline"
 	"github.com/cardeahq/cardea-gateway/internal/policy"
+	"github.com/cardeahq/cardea-gateway/internal/routing"
 	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
@@ -163,15 +164,18 @@ func TestBuildStages_PoliciesComesThirdAndFollowsItsConfigBoolean(t *testing.T) 
 		policies       bool
 		want           []string
 	}{
-		{"all three on", true, true, true, []string{"identification", "tracing", "policies"}},
-		{"policies off", true, true, false, []string{"identification", "tracing"}},
-		{"policies on, tracing off", true, false, true, []string{"identification", "policies"}},
-		{"policies only", false, false, true, []string{"policies"}},
+		// routingStage is inserted unconditionally right after
+		// identification (specs/0009), whether or not identification itself
+		// is enabled.
+		{"all three on", true, true, true, []string{"identification", "routing", "tracing", "policies"}},
+		{"policies off", true, true, false, []string{"identification", "routing", "tracing"}},
+		{"policies on, tracing off", true, false, true, []string{"identification", "routing", "policies"}},
+		{"policies only", false, false, true, []string{"routing", "policies"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := buildCfg(t, tt.identification, tt.tracing, tt.policies, "")
-			stages, sink, eng, _, err := buildStages(cfg, zaptest.NewLogger(t))
+			stages, sink, eng, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -209,7 +213,7 @@ func TestBuildStages_PolicyErrorsFailConstruction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := buildCfg(t, false, true, true, tt.path)
-			stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+			stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 			if sink != nil {
 				_ = sink.Close()
 			}
@@ -223,7 +227,8 @@ func TestBuildStages_PolicyErrorsFailConstruction(t *testing.T) {
 				t.Fatalf("error %q does not name %s", err, tt.file)
 			}
 
-			_, gerr := New(cfg, zaptest.NewLogger(t), stubProvider{handler: http.NotFoundHandler()})
+			set, table := singleSetAndTable("stub", "", stubProvider{handler: http.NotFoundHandler()})
+			_, gerr := New(cfg, zaptest.NewLogger(t), set, table)
 			if gerr == nil {
 				t.Fatal("gateway.New = nil error: serve must exit before listening on a bad policy")
 			}
@@ -247,7 +252,7 @@ func TestBuildStages_PolicyConfiguredWithoutIdentificationWarns(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			logger, logs := observed()
 			cfg := buildCfg(t, tt.identification, true, true, tt.path)
-			_, sink, _, _, err := buildStages(cfg, logger)
+			_, sink, _, _, err := buildStages(cfg, logger, testSingleTable())
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -869,13 +874,26 @@ func (s fixedTraceStage) Request(context.Context, *pipeline.Call) (pipeline.Deci
 	return pipeline.AllowTraced(trace.RequestInfo{Session: s.session}, nil), nil
 }
 
+// fixedRouteStage stands in for the routing stage in isolated stage tests:
+// it attaches a single-mode Anthropic route the way routingStage would,
+// so a policiesStage or filteringStage under test still sees
+// c.Format == routing.FormatAnthropic and reads conversation content, as
+// it would behind the real, always-on routing stage.
+type fixedRouteStage struct{}
+
+func (fixedRouteStage) Name() string { return "routing" }
+func (fixedRouteStage) Request(context.Context, *pipeline.Call) (pipeline.Decision, error) {
+	route := routing.Route{Provider: "anthropic", Kind: "anthropic", Formats: []routing.Format{routing.FormatAnthropic}, Single: true}
+	return pipeline.AllowRouted(route, routing.FormatAnthropic, nil), nil
+}
+
 func realEngine(t *testing.T, rules string) *policy.Engine {
 	t.Helper()
 	e, err := policy.New(config.PoliciesConfig{
 		Path:        writePolicyFile(t, t.TempDir(), rules),
 		WatchSettle: time.Second,
 		EvalTimeout: 5 * time.Second,
-	}, "anthropic", zaptest.NewLogger(t))
+	}, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("policy.New: %v", err)
 	}
@@ -896,22 +914,22 @@ func TestPoliciesStage_AgainstARealEngine(t *testing.T) {
 		wantStatus int
 	}{
 		{"claimed session reaches the rules", func(e *policy.Engine) []pipeline.Stage {
-			return []pipeline.Stage{fixedTraceStage{claimed}, &policiesStage{engine: e}}
+			return []pipeline.Stage{fixedRouteStage{}, fixedTraceStage{claimed}, &policiesStage{engine: e}}
 		}, http.StatusForbidden},
 		{"an invalid session is not passed", func(e *policy.Engine) []pipeline.Stage {
-			return []pipeline.Stage{fixedTraceStage{invalid}, &policiesStage{engine: e}}
+			return []pipeline.Stage{fixedRouteStage{}, fixedTraceStage{invalid}, &policiesStage{engine: e}}
 		}, http.StatusOK},
 		{"an absent session gives no session key", func(e *policy.Engine) []pipeline.Stage {
-			return []pipeline.Stage{fixedTraceStage{absent}, &policiesStage{engine: e}}
+			return []pipeline.Stage{fixedRouteStage{}, fixedTraceStage{absent}, &policiesStage{engine: e}}
 		}, http.StatusOK},
 		{"tracing off (c.Trace is nil) gives no session key", func(e *policy.Engine) []pipeline.Stage {
-			return []pipeline.Stage{&policiesStage{engine: e}}
+			return []pipeline.Stage{fixedRouteStage{}, &policiesStage{engine: e}}
 		}, http.StatusOK},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			eng := realEngine(t, sessionRule)
-			p := pipeline.New(zaptest.NewLogger(t), 1<<20, "anthropic", nil, tt.stages(eng)...)
+			p := pipeline.New(zaptest.NewLogger(t), 1<<20, nil, tt.stages(eng)...)
 			var forwarded bool
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwarded = true })
 			rec := httptest.NewRecorder()
@@ -931,7 +949,7 @@ func TestPoliciesStage_DenyReasonCarriesOnlyIdsAndRevision(t *testing.T) {
 deny contains "a-rule" if { input.model == "m" }`)
 	logger, logs := observed()
 	sink := &captureSink{}
-	p := pipeline.New(logger, 1<<20, "anthropic", sink, &policiesStage{engine: eng})
+	p := pipeline.New(logger, 1<<20, sink, fixedRouteStage{}, &policiesStage{engine: eng})
 	rec := httptest.NewRecorder()
 	p.Handler(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(policyBody("m"))))
 
@@ -956,7 +974,7 @@ deny contains "a-rule" if { input.model == "m" }`)
 func TestPoliciesStage_EngineErrorBecomesTheUnavailableDenialThroughThePipeline(t *testing.T) {
 	eng := realEngine(t, `deny contains "r" if { input.model == "never" }`)
 	sink := &captureSink{}
-	p := pipeline.New(zaptest.NewLogger(t), 1<<20, "anthropic", sink, &policiesStage{engine: eng})
+	p := pipeline.New(zaptest.NewLogger(t), 1<<20, sink, fixedRouteStage{}, &policiesStage{engine: eng})
 	rec := httptest.NewRecorder()
 	p.Handler(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":`)))
 

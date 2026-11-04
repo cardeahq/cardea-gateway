@@ -79,9 +79,12 @@ Two constraints hold across the Gateway features; don't re-litigate them
 in the interview, but do check the proposed behavior against them and
 flag a conflict:
 
-- The caller cannot choose or see the upstream provider — the Gateway
-  decides from config alone. A feature must not add a caller-facing
-  provider selector.
+- The caller cannot supply a host, URL, or provider name, and cannot
+  reach a provider the operator did not configure. Specs/0009 lets a
+  caller influence *which configured* provider serves a call, through
+  the model it names and the API it calls — a feature may extend that,
+  but must not add a selector that names a provider, host, or URL, or
+  that reaches an unlisted provider.
 - Behavior is meant to be rule-driven for the operator, not
   caller-driven.
 

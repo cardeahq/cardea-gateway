@@ -110,7 +110,17 @@ func jsonHeader() http.Header {
 }
 
 func startTap(tr *Tracer, status int, h http.Header) *ResponseTap {
-	tap := tr.NewResponseTap()
+	tap := tr.NewResponseTap(true)
+	tap.Start(status, h)
+	return tap
+}
+
+// startTapNoUsage is startTap with readUsage false, for specs/0009's
+// "Tokens stays nil" cases (a list-mode call of a format other than
+// anthropic, where the Anthropic usage reader would misread an
+// OpenAI-style usage object as zero tokens).
+func startTapNoUsage(tr *Tracer, status int, h http.Header) *ResponseTap {
+	tap := tr.NewResponseTap(false)
 	tap.Start(status, h)
 	return tap
 }
@@ -546,6 +556,48 @@ func TestTap_JSON_MatchesTheStreamedForm(t *testing.T) {
 		if *info.ToolCalls[i].Fingerprint != *s.ToolCalls[i].Fingerprint {
 			t.Fatalf("tool call %d fingerprint: JSON %s, SSE %s; want equal", i, *info.ToolCalls[i].Fingerprint, *s.ToolCalls[i].Fingerprint)
 		}
+	}
+}
+
+// --- readUsage (specs/0009) ---------------------------------------------------
+
+func TestTap_ReadUsageFalseLeavesTokensNilButReadsEverythingElse(t *testing.T) {
+	tr := newTestTracer(t, nil)
+	tap := startTapNoUsage(tr, http.StatusOK, jsonHeader())
+	tap.Write([]byte(standardJSONBody), t0)
+	info := tap.Result()
+
+	if info.Tokens != nil {
+		t.Fatalf("Tokens = %+v, want nil with readUsage false", info.Tokens)
+	}
+	if !equalPtr(info.ResponseID, ptr(responseID)) {
+		t.Fatalf("ResponseID = %v, want %s: readUsage must only affect Tokens", deref(info.ResponseID), responseID)
+	}
+	if !equalPtr(info.ResponseModel, ptr(responseModel)) {
+		t.Fatalf("ResponseModel = %v, want %s", deref(info.ResponseModel), responseModel)
+	}
+	if !equalPtr(info.StopReason, ptr("tool_use")) {
+		t.Fatalf("StopReason = %v, want tool_use", deref(info.StopReason))
+	}
+	if len(info.ToolCalls) != 2 {
+		t.Fatalf("len(ToolCalls) = %d, want 2", len(info.ToolCalls))
+	}
+}
+
+// TestTap_ReadUsageFalseOnAnOpenAIStyleUsageObjectStillGivesNilTokens pins
+// down the reason readUsage exists at all: the Anthropic usage reader
+// would otherwise misread an OpenAI-style {"usage":{"prompt_tokens":...}}
+// object as zero tokens rather than leaving Tokens absent.
+func TestTap_ReadUsageFalseOnAnOpenAIStyleUsageObjectStillGivesNilTokens(t *testing.T) {
+	tr := newTestTracer(t, nil)
+	body := `{"id":"chatcmpl-1","model":"mistral-large-latest","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],` +
+		`"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`
+	tap := startTapNoUsage(tr, http.StatusOK, jsonHeader())
+	tap.Write([]byte(body), t0)
+	info := tap.Result()
+
+	if info.Tokens != nil {
+		t.Fatalf("Tokens = %+v, want nil: an OpenAI-style usage object must never be misread as zero tokens", info.Tokens)
 	}
 }
 

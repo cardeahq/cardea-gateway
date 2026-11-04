@@ -54,7 +54,7 @@ func TestEngine_Redact_DetectionAndReplacement(t *testing.T) {
 			eng := testEngine()
 			body := []byte(sysBody("see " + tt.val + " please"))
 
-			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
 			if err != nil {
 				t.Fatalf("Redact: %v", err)
 			}
@@ -76,7 +76,7 @@ func TestEngine_Redact_NegativeAPIKeyCaseIsNotDetected(t *testing.T) {
 	eng := testEngine()
 	body := []byte(sysBody("token " + exNoPrefixHex + " end"))
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestEngine_Redact_DisabledCategoryLetsItsPatternThroughOthersStillRedacted(
 	eng := testEngineWithCategories(CategorySSN, CategoryAPIKey) // email disabled
 	body := []byte(sysBody(exEmail + " and " + exSSNUS))
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestEngine_Redact_RepeatedValueGetsDistinctUUIDs(t *testing.T) {
 	eng := testEngine()
 	body := []byte(sysBody(exEmail + " then " + exEmail + " then " + exEmail))
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestEngine_Redact_OverlappingMatchesKeepTheEarlierLongerOne(t *testing.T) {
 	overlapping := "xoxb-" + exSSNUS + "-abcdefghij"
 	body := []byte(sysBody("secret " + overlapping + " end"))
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestEngine_Redact_NothingMatchedReturnsTheOriginalBytes(t *testing.T) {
 	eng := testEngine()
 	body := []byte(`{"system":"nothing to see here","model":"m","messages":[{"role":"user","content":"hi"}]}`)
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestEngine_Redact_NonTargetBodiesAreUnchangedWithNoError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			eng := testEngine()
 			body := []byte(tt.body)
-			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: tt.path, Body: body})
+			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: tt.path, Body: body, Format: "anthropic"})
 			if err != nil {
 				t.Fatalf("Redact: %v, want nil error for a non-target body", err)
 			}
@@ -197,22 +197,21 @@ func TestEngine_Redact_NonTargetBodiesAreUnchangedWithNoError(t *testing.T) {
 	}
 }
 
-func TestEngine_Redact_WrongProviderNameOnTheEngineIsNotATarget(t *testing.T) {
+func TestEngine_Redact_NonAnthropicFormatIsNotATarget(t *testing.T) {
 	eng := testEngineWithCategories(CategoryEmail)
-	eng.providerName = "openai" // this Engine was built for a different provider
 	body := []byte(sysBody(exEmail))
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "openai"})
 	if err != nil || string(res.Body) != string(body) {
 		t.Fatalf("Redact = %+v, %v, want the body unchanged with no error", res, err)
 	}
 }
 
 func TestEngine_Redact_EveryCategoryDisabledNeverInspectsTheBody(t *testing.T) {
-	eng := &Engine{patterns: map[Category][]*regexp.Regexp{}, providerName: "anthropic"}
+	eng := &Engine{patterns: map[Category][]*regexp.Regexp{}}
 	malformed := []byte(`{"model":`) // not even valid JSON, on a target path
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: malformed})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: malformed, Format: "anthropic"})
 	if err != nil {
 		t.Fatalf("Redact: %v, want nil: every category disabled must not even parse the body", err)
 	}
@@ -236,7 +235,7 @@ func TestEngine_Redact_TargetBodyParseFailuresGiveInputError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			eng := testEngine()
-			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: []byte(tt.body)})
+			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: []byte(tt.body), Format: "anthropic"})
 
 			var fe *FilterError
 			if !errors.As(err, &fe) || fe.Kind != "input" {
@@ -257,10 +256,10 @@ func TestEngine_Redact_PanicDuringRedactionIsRecoveredWithoutLeakingItsValue(t *
 	// soon as redactText tries to match against it, standing in for "an
 	// internal failure while scanning" (specs/0007-technical, Design).
 	const secretText = "do-not-leak-this-value"
-	eng := &Engine{patterns: map[Category][]*regexp.Regexp{CategoryEmail: {nil}}, providerName: "anthropic"}
+	eng := &Engine{patterns: map[Category][]*regexp.Regexp{CategoryEmail: {nil}}}
 	body := []byte(sysBody(secretText))
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
 
 	var fe *FilterError
 	if !errors.As(err, &fe) || fe.Kind != "internal" {
@@ -287,7 +286,7 @@ func TestEngine_Redact_NoMarkerAnywhereInTheOutput(t *testing.T) {
 		`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"bash","input":{"a":{"b":{"c":"` + markerEmail + `"}}}}]},` +
 		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"result ` + markerEmail + `"}]}]}`)
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -303,7 +302,7 @@ func TestEngine_Redact_NoMarkerAnywhereInTheOutput(t *testing.T) {
 
 func TestNew_LogsNothingAboutAFilteringCacheOrItsVolatility(t *testing.T) {
 	logger, logs := observedLogger()
-	if _, err := New(defaultFilteringConfig(), "anthropic", logger); err != nil {
+	if _, err := New(defaultFilteringConfig(), logger); err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
@@ -318,13 +317,13 @@ func TestNew_LogsNothingAboutAFilteringCacheOrItsVolatility(t *testing.T) {
 func TestNew_CategoriesFromConfigRestrictWhichPatternsRun(t *testing.T) {
 	cfg := defaultFilteringConfig()
 	cfg.Categories = config.CategoriesConfig{Email: false, SSN: true, APIKey: false}
-	eng, err := New(cfg, "anthropic", zap.NewNop())
+	eng, err := New(cfg, zap.NewNop())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
 	body := []byte(sysBody(exEmail + " " + exSSNUS + " " + exAPIKeyOpenAI))
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -339,17 +338,38 @@ func TestNew_CategoriesFromConfigRestrictWhichPatternsRun(t *testing.T) {
 func TestNew_EveryCategoryDisabledStillSucceedsButRedactIsANoOp(t *testing.T) {
 	cfg := defaultFilteringConfig()
 	cfg.Categories = config.CategoriesConfig{Email: false, SSN: false, APIKey: false}
-	eng, err := New(cfg, "anthropic", zap.NewNop())
+	eng, err := New(cfg, zap.NewNop())
 	if err != nil {
 		t.Fatalf("New: %v, want success: there is nothing left that can fail with every category off", err)
 	}
 
 	malformed := []byte(`{"model":`)
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: malformed})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: malformed, Format: "anthropic"})
 	if err != nil {
 		t.Fatalf("Redact: %v, want nil: nothing to scan, so a malformed body is not even inspected", err)
 	}
 	if string(res.Body) != string(malformed) {
 		t.Fatalf("Body = %s, want the original bytes", res.Body)
+	}
+}
+
+// --- ReadsFormat (specs/0009) --------------------------------------------------
+
+func TestReadsFormat(t *testing.T) {
+	tests := []struct {
+		format string
+		want   bool
+	}{
+		{"anthropic", true},
+		{"openai", false},
+		{"gemini", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			if got := ReadsFormat(tt.format); got != tt.want {
+				t.Fatalf("ReadsFormat(%q) = %v, want %v", tt.format, got, tt.want)
+			}
+		})
 	}
 }

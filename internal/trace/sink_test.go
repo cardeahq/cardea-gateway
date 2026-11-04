@@ -110,6 +110,11 @@ func TestLogSink_OneLinePerRecordInOrder(t *testing.T) {
 	}
 }
 
+// TestLogSink_EveryFieldPresentWithNullAndEmptyList pins down the schema's
+// "every field present" rule. "provider" is deliberately absent from the
+// expected key lists below: specs/0009 makes it the one field omitted
+// (never null) when a call carries no route, which minimalRequestRecord
+// and minimalResponseRecord build with no Provider set.
 func TestLogSink_EveryFieldPresentWithNullAndEmptyList(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "records.jsonl")
 	s := newFileSink(t, path)
@@ -129,7 +134,7 @@ func TestLogSink_EveryFieldPresentWithNullAndEmptyList(t *testing.T) {
 	_ = json.Unmarshal([]byte(lines[1]), &resp)
 
 	assertKeys(t, "request", req, "schema", "record", "call_id", "remote_addr", "agent_id", "session", "received_at", "duration_us",
-		"provider", "model", "stream", "size_bytes", "outcome", "stages", "tool_results", "findings")
+		"model", "stream", "size_bytes", "outcome", "stages", "tool_results", "findings")
 	assertKeys(t, "request.session", asObject(t, "session", req["session"]), "id", "status", "source", "source_name")
 	assertKeys(t, "request.outcome", asObject(t, "outcome", req["outcome"]), "result", "status", "stage", "reason")
 	stage := asObject(t, "request.stages[0]", asArray(t, "request.stages", req["stages"])[0])
@@ -153,7 +158,7 @@ func TestLogSink_EveryFieldPresentWithNullAndEmptyList(t *testing.T) {
 	}
 
 	assertKeys(t, "response", resp, "schema", "record", "call_id", "remote_addr", "agent_id", "session", "started_at", "first_byte_us",
-		"duration_us", "outcome", "stages", "streamed", "response_id", "provider", "response_model", "stop_reason", "tokens",
+		"duration_us", "outcome", "stages", "streamed", "response_id", "response_model", "stop_reason", "tokens",
 		"tool_calls", "findings")
 	assertKeys(t, "response.outcome", asObject(t, "outcome", resp["outcome"]), "result", "upstream_status", "status")
 	rstage := asObject(t, "response.stages[0]", asArray(t, "response.stages", resp["stages"])[0])

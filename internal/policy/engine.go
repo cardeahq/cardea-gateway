@@ -34,6 +34,8 @@ type Request struct {
 	Body      []byte
 	AgentID   string // "" when not identified
 	SessionID string // "" when tracing found none (status "claimed" only)
+	Provider  string // the route's provider name
+	Format    string // routing format; conversation is read only for "anthropic"
 }
 
 // Result is one evaluation's decision. Rules is sorted and unique; empty
@@ -46,7 +48,6 @@ type Result struct {
 // Engine evaluates requests and owns the policy lifecycle.
 type Engine struct {
 	cfg       config.PoliciesConfig
-	provider  string
 	logger    *zap.Logger
 	current   atomic.Pointer[snapshot] // nil: no policy configured
 	reloadMu  sync.Mutex
@@ -58,8 +59,8 @@ var errEvalPanic = errors.New("policy evaluation panicked")
 
 // New loads and checks the configured policy file and data files. With no
 // policy path configured it returns an Engine that allows everything.
-func New(cfg config.PoliciesConfig, providerName string, logger *zap.Logger) (*Engine, error) {
-	e := &Engine{cfg: cfg, provider: providerName, logger: logger, eval: defaultEval}
+func New(cfg config.PoliciesConfig, logger *zap.Logger) (*Engine, error) {
+	e := &Engine{cfg: cfg, logger: logger, eval: defaultEval}
 	if cfg.Path == "" {
 		return e, nil
 	}
@@ -87,7 +88,7 @@ func (e *Engine) Evaluate(ctx context.Context, r Request) (Result, error) {
 	if snap == nil {
 		return Result{}, nil
 	}
-	input, err := buildInput(e.provider, r)
+	input, err := buildInput(r)
 	if err != nil {
 		return Result{}, &EvalError{Kind: "input"}
 	}

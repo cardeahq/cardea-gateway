@@ -28,6 +28,10 @@ func (s *policiesStage) Request(ctx context.Context, c *pipeline.Call) (pipeline
 		Headers: c.Request.Header,
 		Body:    c.Body,
 		AgentID: c.AgentID,
+		Format:  string(c.Format),
+	}
+	if c.Route != nil {
+		req.Provider = c.Route.Provider
 	}
 	if c.Trace != nil && c.Trace.Session.Status == "claimed" && c.Trace.Session.ID != nil {
 		req.SessionID = *c.Trace.Session.ID

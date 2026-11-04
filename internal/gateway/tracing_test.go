@@ -208,7 +208,8 @@ func newTracingGateway(t *testing.T, cfg config.Config, logger *zap.Logger) *Gat
 	if err != nil {
 		t.Fatalf("NewAnthropicProvider: %v", err)
 	}
-	g, err := New(cfg, logger, prov)
+	set, table := singleSetAndTable(cfg.Provider.Name, "anthropic", prov)
+	g, err := New(cfg, logger, set, table)
 	if err != nil {
 		t.Fatalf("gateway.New: %v", err)
 	}
@@ -369,7 +370,7 @@ func loopResponder(w http.ResponseWriter, body []byte) {
 
 func TestBuildStages_TracingFollowsIdentification(t *testing.T) {
 	cfg := withAgents(t, tracingGatewayConfig(t, "http://127.0.0.1:1"))
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -382,7 +383,9 @@ func TestBuildStages_TracingFollowsIdentification(t *testing.T) {
 	for _, s := range stages {
 		names = append(names, s.Name())
 	}
-	if want := []string{"identification", "tracing"}; !slices.Equal(names, want) {
+	// routingStage is inserted unconditionally right after identification
+	// (specs/0009).
+	if want := []string{"identification", "routing", "tracing"}; !slices.Equal(names, want) {
 		t.Fatalf("stage order = %v, want %v", names, want)
 	}
 }
@@ -392,7 +395,7 @@ func TestBuildStages_TracingOffGivesNoSinkAndNoRecords(t *testing.T) {
 	cfg := tracingGatewayConfig(t, url)
 	cfg.Pipeline.Stages.Tracing = false
 
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -461,7 +464,8 @@ func TestGatewayNew_TracingStartupChecks(t *testing.T) {
 				t.Fatalf("NewAnthropicProvider: %v", err)
 			}
 
-			g, err := New(cfg, zaptest.NewLogger(t), prov)
+			set, table := singleSetAndTable("anthropic", "anthropic", prov)
+			g, err := New(cfg, zaptest.NewLogger(t), set, table)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("gateway.New = nil error, want startup to fail")
@@ -551,7 +555,7 @@ func TestTracing_StageOrderAndDenialInRequestRecord(t *testing.T) {
 		for _, s := range list(t, req, "stages") {
 			got = append(got, fmt.Sprintf("%s:%s", s["name"], s["decision"]))
 		}
-		if want := []string{"authorization:allowed", "identification:allowed", "tracing:allowed"}; !slices.Equal(got, want) {
+		if want := []string{"authorization:allowed", "identification:allowed", "routing:allowed", "tracing:allowed"}; !slices.Equal(got, want) {
 			t.Fatalf("request stages = %v, want %v", got, want)
 		}
 		if req["agent_id"] != "agent-x" || resp["agent_id"] != "agent-x" {
@@ -583,7 +587,7 @@ func TestTracing_StageOrderAndDenialInRequestRecord(t *testing.T) {
 		for _, s := range list(t, req, "stages") {
 			got = append(got, fmt.Sprintf("%s:%s", s["name"], s["decision"]))
 		}
-		if want := []string{"authorization:denied", "identification:not_run", "tracing:not_run"}; !slices.Equal(got, want) {
+		if want := []string{"authorization:denied", "identification:not_run", "routing:not_run", "tracing:not_run"}; !slices.Equal(got, want) {
 			t.Fatalf("request stages = %v, want %v", got, want)
 		}
 		if field(req, "outcome", "result") != "denied" || field(req, "outcome", "status") != float64(401) || field(req, "outcome", "stage") != "authorization" {

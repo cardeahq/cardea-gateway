@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -28,6 +29,34 @@ type Config struct {
 	Tracing        TracingConfig        `mapstructure:"tracing"`
 	Policies       PoliciesConfig       `mapstructure:"policies"`
 	Filtering      FilteringConfig      `mapstructure:"filtering"`
+	Routing        RoutingConfig        `mapstructure:"routing"`
+}
+
+// RoutingConfig configures multi-provider routing (specs/0009). Empty
+// Providers means single mode: the Provider block above applies instead.
+type RoutingConfig struct {
+	Providers []ProviderEntry `mapstructure:"providers"`
+	// Defaults maps a format ("anthropic", "openai", "gemini") to a
+	// provider name.
+	Defaults map[string]string `mapstructure:"defaults"`
+}
+
+// ProviderEntry is one listed provider.
+type ProviderEntry struct {
+	Name string `mapstructure:"name"`
+	// Kind is one of: anthropic, mistral, gemini.
+	Kind      string   `mapstructure:"kind"`
+	BaseURL   string   `mapstructure:"base_url"`
+	APIKeyEnv string   `mapstructure:"api_key_env"`
+	Models    []string `mapstructure:"models"`
+	// AcceptUnscanned lets a provider whose requests the Gateway cannot
+	// read be listed while filtering or policies are on.
+	AcceptUnscanned bool `mapstructure:"accept_unscanned"`
+}
+
+// ListMode reports whether a provider list is configured.
+func (r RoutingConfig) ListMode() bool {
+	return len(r.Providers) > 0
 }
 
 type ServerConfig struct {
@@ -239,6 +268,7 @@ func defaults() Config {
 		Filtering: FilteringConfig{
 			Categories: CategoriesConfig{Email: true, SSN: true, APIKey: true},
 		},
+		Routing: RoutingConfig{Providers: nil, Defaults: nil},
 	}
 }
 
@@ -285,6 +315,8 @@ func Load(cfgFile string) (Config, error) {
 	v.SetDefault("tracing.sink.cardea.batch_max_delay", c.BatchMaxDelay)
 	v.SetDefault("tracing.sink.cardea.request_timeout", c.RequestTimeout)
 	v.SetDefault("tracing.sink.cardea.shutdown_timeout", c.ShutdownTimeout)
+	v.SetDefault("routing.providers", d.Routing.Providers)
+	v.SetDefault("routing.defaults", d.Routing.Defaults)
 
 	v.SetEnvPrefix(EnvPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -363,6 +395,14 @@ func Load(cfgFile string) (Config, error) {
 		return Config{}, fmt.Errorf("unmarshalling filtering: %w", err)
 	}
 
+	var discardRouting RoutingConfig
+	err = v.UnmarshalKey("routing", &discardRouting, func(dc *mapstructure.DecoderConfig) {
+		dc.ErrorUnused = true
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("unmarshalling routing: %w", err)
+	}
+
 	if cfg.Pipeline.MaxBodyBytes <= 0 {
 		return Config{}, fmt.Errorf("pipeline.max_body_bytes must be positive, got %d", cfg.Pipeline.MaxBodyBytes)
 	}
@@ -378,7 +418,107 @@ func Load(cfgFile string) (Config, error) {
 		return Config{}, err
 	}
 
+	if err := validateRouting(v, cfg); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+// validateRouting checks the single-provider/list conflict and, in list
+// mode, every provider entry and the defaults map.
+func validateRouting(v *viper.Viper, cfg Config) error {
+	singleSet := v.InConfig("provider")
+	for _, key := range []string{"PROVIDER_NAME", "PROVIDER_BASE_URL", "PROVIDER_API_KEY_ENV"} {
+		if _, ok := os.LookupEnv(EnvPrefix + "_" + key); ok {
+			singleSet = true
+		}
+	}
+	if singleSet && cfg.Routing.ListMode() {
+		return fmt.Errorf("provider and routing.providers must not both be set")
+	}
+
+	if err := validateRoutingDefaults(cfg.Routing); err != nil {
+		return err
+	}
+	if !cfg.Routing.ListMode() {
+		return nil
+	}
+
+	seen := map[string]bool{}
+	for i, e := range cfg.Routing.Providers {
+		if err := validateProviderEntry(i, e); err != nil {
+			return err
+		}
+		if seen[e.Name] {
+			return fmt.Errorf("routing.providers has duplicate name %q", e.Name)
+		}
+		seen[e.Name] = true
+	}
+	return nil
+}
+
+func validateRoutingDefaults(cfg RoutingConfig) error {
+	if len(cfg.Defaults) > 0 && !cfg.ListMode() {
+		return fmt.Errorf("routing.defaults requires routing.providers to be set")
+	}
+	for k := range cfg.Defaults {
+		switch k {
+		case "anthropic", "openai", "gemini":
+		default:
+			return fmt.Errorf("routing.defaults key %q must be one of anthropic, openai, gemini", k)
+		}
+	}
+	return nil
+}
+
+func validateProviderEntry(i int, e ProviderEntry) error {
+	if e.Name == "" {
+		return fmt.Errorf("routing.providers[%d].name must not be empty", i)
+	}
+	switch e.Kind {
+	case "anthropic", "mistral", "gemini":
+	default:
+		return fmt.Errorf("routing.providers[%d].kind %q must be one of anthropic, mistral, gemini", i, e.Kind)
+	}
+	if err := validateProviderBaseURL(e.BaseURL); err != nil {
+		return fmt.Errorf("routing.providers[%d].base_url %w", i, err)
+	}
+	if e.APIKeyEnv == "" {
+		return fmt.Errorf("routing.providers[%d].api_key_env must not be empty", i)
+	}
+	if len(e.Models) == 0 {
+		return fmt.Errorf("routing.providers[%d].models must not be empty", i)
+	}
+	for j, m := range e.Models {
+		if m == "" {
+			return fmt.Errorf("routing.providers[%d].models[%d] must not be empty", i, j)
+		}
+		if strings.Contains(m[:len(m)-1], "*") {
+			return fmt.Errorf("routing.providers[%d].models[%d] may only use * as its last character", i, j)
+		}
+	}
+	return nil
+}
+
+// validateProviderBaseURL never puts the URL in its errors, matching
+// validateEndpoint, even though a provider base_url carries no secret:
+// kept consistent with how every other URL setting here is validated.
+func validateProviderBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return fmt.Errorf("is not a valid URL")
+	case u.Hostname() == "":
+		return fmt.Errorf("must be absolute with a host")
+	case u.User != nil:
+		return fmt.Errorf("must not contain userinfo")
+	case u.Scheme == "https":
+		return nil
+	case u.Scheme == "http" && isLoopback(u.Hostname()):
+		return nil
+	}
+	return fmt.Errorf("must use https (http is allowed only for localhost)")
 }
 
 func validateTracing(t TracingConfig) error {

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cardeahq/cardea-gateway/internal/routing"
 	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
@@ -19,7 +20,7 @@ func remoteAddr(r *http.Request) string {
 	return host
 }
 
-func buildRequestRecord(c *Call, provider string, results []stageResult, denial *Denial, failed, bodyRead bool, requestSize int64) trace.RequestRecord {
+func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, bodyRead bool, requestSize int64) trace.RequestRecord {
 	rec := trace.RequestRecord{
 		Schema:      trace.Schema,
 		Record:      "request",
@@ -29,7 +30,7 @@ func buildRequestRecord(c *Call, provider string, results []stageResult, denial 
 		Session:     trace.Session{Status: "absent"},
 		ReceivedAt:  trace.Timestamp(c.Received),
 		DurationUS:  time.Since(c.Received).Microseconds(),
-		Provider:    provider,
+		Provider:    routeProvider(c.Route),
 		Outcome:     trace.RequestOutcome{Result: "forwarded"},
 		Stages:      make([]trace.RequestStage, 0, len(results)),
 		ToolResults: []trace.ToolResult{},
@@ -41,11 +42,17 @@ func buildRequestRecord(c *Call, provider string, results []stageResult, denial 
 	}
 	if c.Trace != nil {
 		rec.Session = c.Trace.Session
-		rec.Model = c.Trace.Model
 		rec.Stream = c.Trace.Stream
 		if c.Trace.ToolResults != nil {
 			rec.ToolResults = c.Trace.ToolResults
 		}
+	}
+	if c.Route != nil && c.Route.Single {
+		if c.Trace != nil {
+			rec.Model = truncatedModel(c.Trace.Model)
+		}
+	} else {
+		rec.Model = truncatedModel(c.Model)
 	}
 	if denial != nil {
 		rec.Outcome = trace.RequestOutcome{
@@ -70,7 +77,7 @@ func buildRequestRecord(c *Call, provider string, results []stageResult, denial 
 	return rec
 }
 
-func buildResponseRecord(c *Call, provider string, rec *bodyRecorder, info trace.ResponseInfo, observations []observation, forwardedAt, ended time.Time) trace.ResponseRecord {
+func buildResponseRecord(c *Call, rec *bodyRecorder, info trace.ResponseInfo, observations []observation, forwardedAt, ended time.Time) trace.ResponseRecord {
 	resp := trace.ResponseRecord{
 		Schema:        trace.Schema,
 		Record:        "response",
@@ -83,7 +90,7 @@ func buildResponseRecord(c *Call, provider string, rec *bodyRecorder, info trace
 		Stages:        make([]trace.ResponseStage, 0, len(observations)),
 		Streamed:      info.Streamed,
 		ResponseID:    info.ResponseID,
-		Provider:      provider,
+		Provider:      routeProvider(c.Route),
 		ResponseModel: info.ResponseModel,
 		StopReason:    info.StopReason,
 		Tokens:        info.Tokens,
@@ -135,4 +142,23 @@ func optional(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// routeProvider returns route's provider name, or nil when the call
+// carries no route (refused before or by routing).
+func routeProvider(route *routing.Route) *string {
+	if route == nil {
+		return nil
+	}
+	p := route.Provider
+	return &p
+}
+
+// truncatedModel applies routing.Truncate to *s, or nil when s is nil.
+func truncatedModel(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	t := routing.Truncate(*s)
+	return &t
 }

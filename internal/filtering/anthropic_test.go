@@ -21,18 +21,19 @@ func TestBuildTarget_MatchesBothAnthropicConversationRoutes(t *testing.T) {
 
 func TestBuildTarget_NonTargetBodiesReturnUnchangedWithNoError(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider string
-		path     string
-		body     string
+		name   string
+		format string
+		path   string
+		body   string
 	}{
-		{"wrong provider", "openai", "/v1/messages", `{"model":"m","messages":[]}`},
+		{"wrong format", "openai", "/v1/messages", `{"model":"m","messages":[]}`},
+		{"unknown format", "", "/v1/messages", `{"model":"m","messages":[]}`},
 		{"wrong path", "anthropic", "/v1/chat/completions", `{"model":"m","messages":[]}`},
 		{"non-JSON body on an unrelated path", "anthropic", "/v1/chat/completions", "not json at all"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			top, isTarget, err := buildTarget(tt.provider, tt.path, []byte(tt.body))
+			top, isTarget, err := buildTarget(tt.format, tt.path, []byte(tt.body))
 			if isTarget || err != nil || top != nil {
 				t.Fatalf("top=%v isTarget=%v err=%v, want nil/false/nil", top, isTarget, err)
 			}
@@ -251,7 +252,7 @@ func TestEngine_Redact_TopLevelFieldsOutsideSystemAndMessagesAreByteIdentical(t 
 		`"parameters":{"note":"` + exEmail + `"},"metadata":{"note":"` + exEmail + `"},` +
 		`"messages":[{"role":"user","content":"hi"}]}`)
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -275,7 +276,7 @@ func TestEngine_Redact_PIIOnlyInToolCallAndToolResultIsStillRedacted(t *testing.
 		`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"lookup","input":{"query":"` + exEmail + `"}}]},` +
 		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"found ` + exSSNUS + `"}]}]}`)
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
