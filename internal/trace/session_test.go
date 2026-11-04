@@ -344,7 +344,7 @@ func TestRequest_Session(t *testing.T) {
 				r.Header.Set(k, v)
 			}
 
-			info, err := tr.Request(r, []byte(body), tt.agentID)
+			info, err := tr.Request(r, []byte(body), tt.agentID, RequestOptions{ToolResults: true})
 			if err != nil {
 				t.Fatalf("Request: %v, want nil: a session never causes an error", err)
 			}
@@ -366,7 +366,7 @@ func TestRequest_InvalidSessionValueLeavesNoTrace(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tr := newListsTracer(t, defaultList(config.SessionSource{BodyField: "metadata.user_id"}))
 			body := bodyWithUserID(tt.value)
-			info, err := tr.Request(newRequest(t, body), []byte(body), "")
+			info, err := tr.Request(newRequest(t, body), []byte(body), "", RequestOptions{ToolResults: true})
 			if err != nil {
 				t.Fatalf("Request: %v", err)
 			}
@@ -385,7 +385,7 @@ func TestRequest_InvalidSessionValueLeavesNoTrace(t *testing.T) {
 func TestRequest_PatternRecordsOnlyTheCapturedPart(t *testing.T) {
 	tr := newListsTracer(t, defaultList(config.SessionSource{BodyField: "metadata.user_id", Pattern: `_session_([0-9a-f-]{36})$`}))
 	body := bodyWithUserID("user_abc123xyz_account_def456uvw_session_" + sessionUUID)
-	info, err := tr.Request(newRequest(t, body), []byte(body), "")
+	info, err := tr.Request(newRequest(t, body), []byte(body), "", RequestOptions{ToolResults: true})
 	if err != nil {
 		t.Fatalf("Request: %v", err)
 	}

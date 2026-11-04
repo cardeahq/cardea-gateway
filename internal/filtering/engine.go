@@ -24,6 +24,7 @@ type Request struct {
 	CallID string
 	Path   string
 	Body   []byte
+	Format string
 }
 
 // Result is one Redact call's outcome. Counts is nil when nothing was
@@ -37,13 +38,12 @@ type Result struct {
 // Engine detects and redacts PII in a request body. Safe for concurrent
 // use: it holds no per-call state (see scan).
 type Engine struct {
-	patterns     map[Category][]*regexp.Regexp
-	providerName string
+	patterns map[Category][]*regexp.Regexp
 }
 
 // New builds an Engine from configuration. With every category
 // disabled, the returned Engine's Redact is a no-op.
-func New(cfg config.FilteringConfig, providerName string, logger *zap.Logger) (*Engine, error) {
+func New(cfg config.FilteringConfig, logger *zap.Logger) (*Engine, error) {
 	patterns := map[Category][]*regexp.Regexp{}
 	for cat, enabled := range map[Category]bool{
 		CategoryEmail:  cfg.Categories.Email,
@@ -55,7 +55,12 @@ func New(cfg config.FilteringConfig, providerName string, logger *zap.Logger) (*
 		}
 	}
 
-	return &Engine{patterns: patterns, providerName: providerName}, nil
+	return &Engine{patterns: patterns}, nil
+}
+
+// ReadsFormat reports whether filtering can scan requests of format f.
+func ReadsFormat(f string) bool {
+	return f == "anthropic"
 }
 
 // Redact scans r.Body for every enabled category and returns the
@@ -75,7 +80,7 @@ func (e *Engine) Redact(ctx context.Context, r Request) (res Result, err error) 
 		return Result{Body: r.Body}, nil
 	}
 
-	top, isTarget, berr := buildTarget(e.providerName, r.Path, r.Body)
+	top, isTarget, berr := buildTarget(r.Format, r.Path, r.Body)
 	if berr != nil {
 		return Result{}, berr
 	}

@@ -61,7 +61,7 @@ func schemaRecords() map[string]Record {
 	return map[string]Record{
 		"request forwarded, every stage and a tool result": RequestRecord{
 			Schema: Schema, Record: "request", CallID: "ak_7f3c2b1d9e8a4f60", RemoteAddr: "203.0.113.42", AgentID: ptr("acme-bot"),
-			Session: claimed, ReceivedAt: schemaTS(402113), DurationUS: 1794, Provider: "anthropic", Model: ptr("claude-sonnet-5"), Stream: true,
+			Session: claimed, ReceivedAt: schemaTS(402113), DurationUS: 1794, Provider: ptr("anthropic"), Model: ptr("claude-sonnet-5"), Stream: true,
 			SizeBytes: ptr(int64(48213)),
 			Outcome:   RequestOutcome{Result: "forwarded"},
 			Stages: []RequestStage{
@@ -74,7 +74,7 @@ func schemaRecords() map[string]Record {
 		},
 		"request denied by policy, later stages not run": RequestRecord{
 			Schema: Schema, Record: "request", CallID: "ak_0000000000000001", RemoteAddr: "203.0.113.42", AgentID: ptr("acme-bot"),
-			Session: absent, ReceivedAt: schemaTS(1), DurationUS: 12, Provider: "anthropic", Model: nil, SizeBytes: ptr(int64(10)),
+			Session: absent, ReceivedAt: schemaTS(1), DurationUS: 12, Provider: ptr("anthropic"), Model: nil, SizeBytes: ptr(int64(10)),
 			Outcome: RequestOutcome{Result: "denied", Status: ptr(403), Stage: ptr("policies"), Reason: ptr("policy_denied")},
 			Stages: []RequestStage{
 				{Name: "policies", StartedAt: ptr(schemaTS(2)), DurationUS: ptr(int64(5)), Decision: "denied",
@@ -94,7 +94,7 @@ func schemaRecords() map[string]Record {
 			StartedAt: schemaTS(403907), FirstByteUS: ptr(int64(620114)), DurationUS: 4180337,
 			Outcome:  ResponseOutcome{Result: "delivered", UpstreamStatus: ptr(200), Status: 200},
 			Stages:   []ResponseStage{{Name: "tracing", StartedAt: schemaTS(24021), DurationUS: 1840, Observation: "completed"}},
-			Streamed: true, ResponseID: ptr("msg_01XFDUDYJgAACzvnptvVoYEL"), Provider: "anthropic", ResponseModel: ptr("claude-sonnet-5-20260801"),
+			Streamed: true, ResponseID: ptr("msg_01XFDUDYJgAACzvnptvVoYEL"), Provider: ptr("anthropic"), ResponseModel: ptr("claude-sonnet-5-20260801"),
 			StopReason: ptr("tool_use"), Tokens: &Tokens{Sent: 1834, Received: 212},
 			ToolCalls: []ToolCall{
 				{ToolCallID: "toolu_01B2", ToolName: "bash", ArgumentNames: []string{"command"}, SizeBytes: ptr(int64(38)),
@@ -105,7 +105,7 @@ func schemaRecords() map[string]Record {
 		},
 		"response unanswered": ResponseRecord{
 			Schema: Schema, Record: "response", CallID: "ak_0000000000000003", RemoteAddr: "203.0.113.42", Session: absent, StartedAt: schemaTS(4), DurationUS: 10004213,
-			Provider: "anthropic", Outcome: ResponseOutcome{Result: "unanswered", Status: 502},
+			Provider: ptr("anthropic"), Outcome: ResponseOutcome{Result: "unanswered", Status: 502},
 			Stages: []ResponseStage{}, ToolCalls: []ToolCall{}, Findings: []Finding{},
 		},
 	}
@@ -238,6 +238,25 @@ func walk(t *testing.T, doc any, path ...string) map[string]any {
 		t.Fatalf("schema path %v is not an object", path)
 	}
 	return m
+}
+
+// TestRecord_ProviderOmittedWhenNoRouteWasAttached pins down specs/0009:
+// a call denied before or by routing has no route, and its JSON has no
+// "provider" key at all (not null, not "") — not a synthetic schema
+// mutation, but the Go encoding of a nil Provider.
+func TestRecord_ProviderOmittedWhenNoRouteWasAttached(t *testing.T) {
+	rec := schemaRecords()["request refused before its body was read"]
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := m["provider"]; present {
+		t.Fatalf("record has a %q key = %v, want the key entirely absent for a call with no route", "provider", m["provider"])
+	}
 }
 
 func TestSchemas_NameExactlyTheFieldsTheStructsEncode(t *testing.T) {

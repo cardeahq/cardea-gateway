@@ -55,7 +55,7 @@ func cfgFor(path string, data ...string) config.PoliciesConfig {
 func newEngine(t *testing.T, rules string) (*Engine, string) {
 	t.Helper()
 	path := writeFile(t, t.TempDir(), "policy.rego", regoHeader+rules)
-	e, err := New(cfgFor(path), "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfgFor(path), zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -82,11 +82,13 @@ func allLogText(logs *observer.ObservedLogs) string {
 
 func msgReq(body string) Request {
 	return Request{
-		CallID:  "ak_0123456789abcdef",
-		Method:  http.MethodPost,
-		Path:    "/v1/messages",
-		Headers: http.Header{},
-		Body:    []byte(body),
+		CallID:   "ak_0123456789abcdef",
+		Method:   http.MethodPost,
+		Path:     "/v1/messages",
+		Headers:  http.Header{},
+		Body:     []byte(body),
+		Provider: "anthropic",
+		Format:   "anthropic",
 	}
 }
 
@@ -363,7 +365,7 @@ func TestEvaluate_DataDrivenRule(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "policy.rego", regoHeader+`deny contains "blocked-model" if { input.model in data.blocked_models }`)
 	data := writeFile(t, dir, "data.json", `{"blocked_models":["m-bad"]}`)
-	e, err := New(cfgFor(path, data), "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfgFor(path, data), zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -382,7 +384,7 @@ func TestEvaluate_YAMLDataIsMergedAtTheRootOfData(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "policy.rego", regoHeader+`deny contains "limit" if { data.limits.max_tokens < input.parameters.max_tokens }`)
 	data := writeFile(t, dir, "limits.yaml", "limits:\n  max_tokens: 100\n")
-	e, err := New(cfgFor(path, data), "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfgFor(path, data), zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -395,7 +397,7 @@ func TestEvaluate_YAMLDataIsMergedAtTheRootOfData(t *testing.T) {
 // --- no policy ---------------------------------------------------------------------
 
 func TestNew_NoPolicyAllowsEverythingWithoutBuildingInput(t *testing.T) {
-	e, err := New(config.PoliciesConfig{EvalTimeout: time.Second, WatchSettle: time.Second}, "anthropic", zaptest.NewLogger(t))
+	e, err := New(config.PoliciesConfig{EvalTimeout: time.Second, WatchSettle: time.Second}, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New with no path: %v", err)
 	}
@@ -416,7 +418,7 @@ func TestNew_NoPolicyAllowsEverythingWithoutBuildingInput(t *testing.T) {
 }
 
 func TestEngine_NoPolicyReloadIsHarmless(t *testing.T) {
-	e, err := New(config.PoliciesConfig{EvalTimeout: time.Second, WatchSettle: time.Second}, "anthropic", zaptest.NewLogger(t))
+	e, err := New(config.PoliciesConfig{EvalTimeout: time.Second, WatchSettle: time.Second}, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -511,7 +513,7 @@ func timeoutEngine(t *testing.T, rules string, limit time.Duration) *Engine {
 	path := writeFile(t, t.TempDir(), "policy.rego", regoHeader+rules)
 	cfg := cfgFor(path)
 	cfg.EvalTimeout = limit
-	e, err := New(cfg, "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -712,7 +714,7 @@ func TestEvaluate_DecidesFromMemoryUntilReload(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "policy.rego", regoHeader+`deny contains "blocked" if { input.model in data.blocked }`)
 	data := writeFile(t, dir, "data.json", `{"blocked":["m-bad"]}`)
-	e, err := New(cfgFor(path, data), "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfgFor(path, data), zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -747,7 +749,7 @@ func TestEvaluate_DecidesFromMemoryUntilReload(t *testing.T) {
 func TestReload_ValidEditSwapsAndChangesRevision(t *testing.T) {
 	logger, logs := observedLogger()
 	path := writeFile(t, t.TempDir(), "policy.rego", regoHeader+`deny contains "old" if { input.model == "m" }`)
-	e, err := New(cfgFor(path), "anthropic", logger)
+	e, err := New(cfgFor(path), logger)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -781,7 +783,7 @@ func TestReload_ValidEditSwapsAndChangesRevision(t *testing.T) {
 func TestReload_InvalidEditKeepsOldPolicyAndReturnsError(t *testing.T) {
 	logger, logs := observedLogger()
 	path := writeFile(t, t.TempDir(), "policy.rego", regoHeader+`deny contains "old" if { input.model == "m" }`)
-	e, err := New(cfgFor(path), "anthropic", logger)
+	e, err := New(cfgFor(path), logger)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -827,7 +829,7 @@ func TestReload_InvalidEditKeepsOldPolicyAndReturnsError(t *testing.T) {
 func TestReload_UnchangedFilesAreANoOp(t *testing.T) {
 	logger, logs := observedLogger()
 	path := writeFile(t, t.TempDir(), "policy.rego", regoHeader+`deny contains "r" if { input.model == "m" }`)
-	e, err := New(cfgFor(path), "anthropic", logger)
+	e, err := New(cfgFor(path), logger)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -852,7 +854,7 @@ func TestReload_UnchangedFilesAreANoOp(t *testing.T) {
 
 func TestReload_DeletedPolicyFailsAndDoesNotEmptyThePolicy(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "policy.rego", regoHeader+`deny contains "r" if { input.model == "m" }`)
-	e, err := New(cfgFor(path), "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfgFor(path), zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -873,7 +875,7 @@ func TestReload_DataEditChangesDecision(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "policy.rego", regoHeader+`deny contains "blocked" if { input.model in data.blocked }`)
 	data := writeFile(t, dir, "data.json", `{"blocked":[]}`)
-	e, err := New(cfgFor(path, data), "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfgFor(path, data), zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -895,7 +897,7 @@ func TestReload_EvaluationInFlightFinishesUnderTheOldSnapshot(t *testing.T) {
 	path := writeFile(t, dir, "policy.rego", regoHeader+`deny contains "old" if { true }`)
 	cfg := cfgFor(path)
 	cfg.EvalTimeout = 60 * time.Second
-	e, err := New(cfg, "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfg, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -942,7 +944,7 @@ func TestReload_EvaluationInFlightFinishesUnderTheOldSnapshot(t *testing.T) {
 func TestReload_ConcurrentWithEvaluate(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "policy.rego", regoHeader+`deny contains "v0" if { input.model == "m" }`)
-	e, err := New(cfgFor(path), "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfgFor(path), zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -989,7 +991,7 @@ const panicMarker = "SECRET-PANIC-MARKER-7f3a"
 func TestEvaluate_PanicInEvaluationIsRecoveredAsInternal(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "policy.rego", regoHeader+`deny contains "r" if { input.model == "m" }`)
 	logger, logs := observedLogger()
-	e, err := New(cfgFor(path), "anthropic", logger)
+	e, err := New(cfgFor(path), logger)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -23,8 +23,35 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/cardeahq/cardea-gateway/internal/config"
+	"github.com/cardeahq/cardea-gateway/internal/pipeline"
+	"github.com/cardeahq/cardea-gateway/internal/provider"
+	"github.com/cardeahq/cardea-gateway/internal/routing"
 	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
+
+// singleSetAndTable builds the *provider.Set and *routing.Table single
+// mode needs for gateway.New, wrapping prov under name with a route of
+// kind (""  for a generic passthrough provider).
+func singleSetAndTable(name, kind string, prov provider.Provider) (*provider.Set, *routing.Table) {
+	set := provider.NewSingleSet(name, prov)
+	route := routing.Route{Provider: name, Kind: kind, Formats: []routing.Format{routing.FormatOf(kind)}, Single: true}
+	return set, routing.NewSingleTable(route)
+}
+
+// testSingleTable is a single-mode table for tests that exercise
+// buildStages and do not care about routing's own behavior: it resolves
+// every call.
+func testSingleTable() *routing.Table {
+	return routing.NewSingleTable(routing.Route{Provider: "stub", Single: true})
+}
+
+func stageNames(stages []pipeline.Stage) []string {
+	names := make([]string, len(stages))
+	for i, s := range stages {
+		names[i] = s.Name()
+	}
+	return names
+}
 
 // stubProvider is a minimal provider.Provider for tests that need to
 // observe whether the provider was reached.
@@ -67,7 +94,8 @@ func TestGateway_HealthzBypassesPipelineRegardlessOfStageConfig(t *testing.T) {
 				},
 				Tracing: fileSinkTracing(t),
 			}
-			g, err := New(cfg, zaptest.NewLogger(t), prov)
+			set, table := singleSetAndTable("stub", "", prov)
+			g, err := New(cfg, zaptest.NewLogger(t), set, table)
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
@@ -98,7 +126,8 @@ func TestGateway_ForwardsAllowedCallsThroughPipelineToProvider(t *testing.T) {
 		},
 		Tracing: fileSinkTracing(t),
 	}
-	g, err := New(cfg, zaptest.NewLogger(t), prov)
+	set, table := singleSetAndTable("stub", "", prov)
+	g, err := New(cfg, zaptest.NewLogger(t), set, table)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -121,8 +150,10 @@ func TestBuildStages_RespectsConfigBooleans(t *testing.T) {
 		tracing bool
 		wantLen int
 	}{
-		{"tracing enabled", true, 1},
-		{"tracing disabled", false, 0},
+		// routingStage is inserted unconditionally (specs/0009), so the
+		// count is never zero.
+		{"tracing enabled", true, 2},
+		{"tracing disabled", false, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -133,7 +164,7 @@ func TestBuildStages_RespectsConfigBooleans(t *testing.T) {
 				},
 				Tracing: fileSinkTracing(t),
 			}
-			stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+			stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -155,16 +186,21 @@ func TestBuildStages_TracingStageIsNamedAfterItsConfigKey(t *testing.T) {
 		},
 		Tracing: fileSinkTracing(t),
 	}
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
 	t.Cleanup(func() { _ = sink.Close() })
-	if len(stages) != 1 {
-		t.Fatalf("len(buildStages(...)) = %d, want 1", len(stages))
+	// routingStage is inserted unconditionally ahead of tracing, since
+	// identification is off here (specs/0009).
+	if len(stages) != 2 {
+		t.Fatalf("len(buildStages(...)) = %d, want 2", len(stages))
 	}
-	if got := stages[0].Name(); got != "tracing" {
-		t.Fatalf("stages[0].Name() = %q, want %q (matching its pipeline.stages config key)", got, "tracing")
+	if got := stages[0].Name(); got != "routing" {
+		t.Fatalf("stages[0].Name() = %q, want %q", got, "routing")
+	}
+	if got := stages[1].Name(); got != "tracing" {
+		t.Fatalf("stages[1].Name() = %q, want %q (matching its pipeline.stages config key)", got, "tracing")
 	}
 }
 
@@ -371,7 +407,7 @@ func TestBuildStages_SinkTypeSelectsTheImplementation(t *testing.T) {
 			}
 			cfg.Tracing.Sink.Type = tt.sinkType
 			cfg.Tracing.Sink.Cardea = gwCardeaSettings(p.srv.URL + "/in")
-			_, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+			_, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -410,7 +446,8 @@ func TestGatewayNew_CardeaWithoutTheKeyVariableFailsNamingItAndLeavesNoOpenFile(
 				t.Setenv(gwAnthropicKeyEnv, "sk-test-upstream")
 				prov := stubProvider{handler: http.NotFoundHandler()}
 
-				g, err := New(cfg, zaptest.NewLogger(t), prov)
+				set, table := singleSetAndTable("stub", "", prov)
+				g, err := New(cfg, zaptest.NewLogger(t), set, table)
 				if err == nil {
 					t.Fatal("gateway.New = nil error, want it to fail")
 				}
@@ -642,7 +679,7 @@ func TestBuildStages_PolicyEngineFailureClosesTheSinkAlreadyBuilt(t *testing.T) 
 	cfg.Tracing.Sink.Path = path
 	cfg.Tracing.Sink.Cardea = gwCardeaSettings(p.srv.URL + "/in")
 
-	if _, _, _, _, err := buildStages(cfg, logger); err == nil {
+	if _, _, _, _, err := buildStages(cfg, logger, testSingleTable()); err == nil {
 		t.Fatal("buildStages = nil error, want the policy failure")
 	}
 	if hasWriter() {

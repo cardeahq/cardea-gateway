@@ -28,8 +28,10 @@ var (
 
 // --- Engine construction for white-box tests --------------------------------
 //
-// Engine's own doc comment names its unexported fields (patterns,
-// providerName), so tests build one directly rather than going through New.
+// Engine's own doc comment names its unexported field (patterns), so
+// tests build one directly rather than going through New. Which requests
+// are targets is decided by Request.Format (specs/0009), not anything
+// stored on the Engine.
 
 func testEngine() *Engine {
 	return testEngineWithCategories(CategoryEmail, CategorySSN, CategoryAPIKey)
@@ -40,7 +42,13 @@ func testEngineWithCategories(cats ...Category) *Engine {
 	for _, c := range cats {
 		patterns[c] = categoryPatterns[c]
 	}
-	return &Engine{patterns: patterns, providerName: "anthropic"}
+	return &Engine{patterns: patterns}
+}
+
+// anthropicRequest builds a Request targeting the Anthropic messages
+// route, the shape almost every filtering test needs.
+func anthropicRequest(callID, path string, body []byte) Request {
+	return Request{CallID: callID, Path: path, Body: body, Format: "anthropic"}
 }
 
 // --- Placeholder parsing -----------------------------------------------------

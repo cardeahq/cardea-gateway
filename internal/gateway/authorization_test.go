@@ -189,15 +189,17 @@ func authzCfg(t *testing.T, authzEnabled bool, secretEnv string) config.Config {
 
 func TestBuildStages_PrependsAuthorizationAheadOfIdentificationWhenBothEnabled(t *testing.T) {
 	cfg := authzCfg(t, true, "AK_GW_TEST_BUILD_AUTHZ_SECRET")
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
 	if sink != nil {
 		t.Cleanup(func() { _ = sink.Close() })
 	}
-	if len(stages) != 2 {
-		t.Fatalf("len(stages) = %d, want 2", len(stages))
+	// routingStage is inserted unconditionally after identification
+	// (specs/0009), whether or not a provider list is configured.
+	if len(stages) != 3 {
+		t.Fatalf("len(stages) = %d, want 3", len(stages))
 	}
 	if stages[0].Name() != "authorization" {
 		t.Fatalf("stages[0].Name() = %q, want %q", stages[0].Name(), "authorization")
@@ -205,11 +207,14 @@ func TestBuildStages_PrependsAuthorizationAheadOfIdentificationWhenBothEnabled(t
 	if stages[1].Name() != "identification" {
 		t.Fatalf("stages[1].Name() = %q, want %q", stages[1].Name(), "identification")
 	}
+	if stages[2].Name() != "routing" {
+		t.Fatalf("stages[2].Name() = %q, want %q", stages[2].Name(), "routing")
+	}
 }
 
 func TestBuildStages_OmitsAuthorizationWhenDisabled(t *testing.T) {
 	cfg := authzCfg(t, false, "")
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -223,6 +228,22 @@ func TestBuildStages_OmitsAuthorizationWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestBuildStages_RoutingStagePresentEvenWithEveryOtherStageDisabled(t *testing.T) {
+	cfg := config.Config{
+		Pipeline: config.PipelineConfig{MaxBodyBytes: 1 << 20},
+	}
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
+	if err != nil {
+		t.Fatalf("buildStages: %v", err)
+	}
+	if sink != nil {
+		t.Cleanup(func() { _ = sink.Close() })
+	}
+	if len(stages) != 1 || stages[0].Name() != "routing" {
+		t.Fatalf("stages = %v, want exactly [routing]: routing is not a pipeline.stages toggle", stageNames(stages))
+	}
+}
+
 func TestBuildStages_ReturnsErrorNotPartialStagesOnGateFailure(t *testing.T) {
 	cfg := config.Config{
 		Pipeline: config.PipelineConfig{
@@ -231,7 +252,7 @@ func TestBuildStages_ReturnsErrorNotPartialStagesOnGateFailure(t *testing.T) {
 		},
 		Authorization: config.AuthorizationConfig{APIKeyEnvs: []string{"AK_GW_TEST_UNSET_AUTHZ_ENV_VAR_ABC123"}},
 	}
-	stages, _, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, _, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 	if err == nil {
 		t.Fatal("buildStages with a gate construction failure = nil error, want error")
 	}
@@ -252,7 +273,8 @@ func TestGatewayNew_ReturnsErrorNotPartialGatewayOnGateFailure(t *testing.T) {
 		},
 		Authorization: config.AuthorizationConfig{APIKeyEnvs: []string{"AK_GW_TEST_UNSET_AUTHZ_ENV_VAR_XYZ789"}},
 	}
-	g, err := New(cfg, zaptest.NewLogger(t), prov)
+	set, table := singleSetAndTable("stub", "", prov)
+	g, err := New(cfg, zaptest.NewLogger(t), set, table)
 	if err == nil {
 		t.Fatal("New with a gate construction failure = nil error, want error")
 	}
@@ -270,7 +292,7 @@ func TestAuthorizationStage_FullPipeline_DeniedBeforeIdentificationRuns(t *testi
 	authzStage := &authorizationStage{gate: newTwoSecretGate(t)}
 	identStage := &identificationStage{registry: newOneTypeRegistry(t)}
 	capture := &capturingStage{}
-	p := pipeline.New(zaptest.NewLogger(t), 1<<20, "anthropic", nil, authzStage, identStage, capture)
+	p := pipeline.New(zaptest.NewLogger(t), 1<<20, nil, authzStage, identStage, capture)
 
 	var providerCalled bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -298,7 +320,7 @@ func TestAuthorizationStage_FullPipeline_PassingAuthorizationLetsIdentificationR
 	authzStage := &authorizationStage{gate: newTwoSecretGate(t)}
 	identStage := &identificationStage{registry: newOneTypeRegistry(t)}
 	capture := &capturingStage{}
-	p := pipeline.New(zaptest.NewLogger(t), 1<<20, "anthropic", nil, authzStage, identStage, capture)
+	p := pipeline.New(zaptest.NewLogger(t), 1<<20, nil, authzStage, identStage, capture)
 
 	var providerCalled bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

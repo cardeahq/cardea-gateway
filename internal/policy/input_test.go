@@ -34,7 +34,7 @@ func mustJSON(t *testing.T, s string) any {
 
 func buildJSON(t *testing.T, r Request) (map[string]any, string) {
 	t.Helper()
-	in, err := buildInput("anthropic", r)
+	in, err := buildInput(r)
 	if err != nil {
 		t.Fatalf("buildInput: %v", err)
 	}
@@ -47,11 +47,13 @@ func buildJSON(t *testing.T, r Request) (map[string]any, string) {
 
 func inputReq(body string) Request {
 	return Request{
-		CallID:  "ak_7f3c2b1d9e8a4f60",
-		Method:  http.MethodPost,
-		Path:    "/v1/messages",
-		Headers: http.Header{"X-Team": {"blue"}},
-		Body:    []byte(body),
+		CallID:   "ak_7f3c2b1d9e8a4f60",
+		Method:   http.MethodPost,
+		Path:     "/v1/messages",
+		Headers:  http.Header{"X-Team": {"blue"}},
+		Body:     []byte(body),
+		Provider: "anthropic",
+		Format:   "anthropic",
 	}
 }
 
@@ -280,7 +282,7 @@ func TestBuildInput_OtherOperationOmitsConversationGroupsAndDoesNotParseTheBody(
 		r := inputReq(body)
 		r.Method = http.MethodGet
 		r.Path = "/v1/models"
-		in, err := buildInput("anthropic", r)
+		in, err := buildInput(r)
 		if err != nil {
 			t.Fatalf("buildInput on an other path with body %q: %v, want no error", body, err)
 		}
@@ -302,12 +304,15 @@ func TestBuildInput_OtherOperationOmitsConversationGroupsAndDoesNotParseTheBody(
 }
 
 func TestBuildInput_OtherProviderHasOnlyGenericGroups(t *testing.T) {
-	in, err := buildInput("openai", inputReq(`not json`))
+	r := inputReq(`not json`)
+	r.Provider = "mistral"
+	r.Format = "openai" // not "anthropic": conversation reading is gated on format, not provider name
+	in, err := buildInput(r)
 	if err != nil {
 		t.Fatalf("buildInput for another provider: %v", err)
 	}
-	if in["provider"] != "openai" {
-		t.Fatalf("provider = %v, want openai", in["provider"])
+	if in["provider"] != "mistral" {
+		t.Fatalf("provider = %v, want mistral", in["provider"])
 	}
 	for _, k := range []string{"model", "messages", "tools", "tool_calls", "tool_results", "parameters", "system", "stream"} {
 		if _, ok := in[k]; ok {
@@ -331,7 +336,7 @@ func TestBuildInput_InvalidConversationBodiesAreErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := inputReq(tt.body)
 			r.Path = tt.path
-			if _, err := buildInput("anthropic", r); err == nil {
+			if _, err := buildInput(r); err == nil {
 				t.Fatal("buildInput = nil error, want an error (fail closed)")
 			}
 		})
@@ -430,6 +435,40 @@ func TestRejectDuplicateKeys(t *testing.T) {
 	}
 }
 
+// --- specs/0009: conversation reading is gated on Format, not Provider ------
+
+func TestBuildInput_ConversationReadingIsGatedOnFormatNotProviderName(t *testing.T) {
+	tests := []struct {
+		name       string
+		provider   string
+		format     string
+		wantReader bool
+	}{
+		{"anthropic provider, anthropic format: conversation read", "anthropic", "anthropic", true},
+		{"anthropic provider, non-anthropic format (e.g. a list-mode route lost its format): no conversation", "anthropic", "openai", false},
+		{"non-anthropic provider, anthropic format: conversation still read", "mistral", "anthropic", true},
+		{"unknown format: no conversation", "anthropic", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := inputReq(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+			r.Provider = tt.provider
+			r.Format = tt.format
+			in, err := buildInput(r)
+			if err != nil {
+				t.Fatalf("buildInput: %v", err)
+			}
+			if in["provider"] != tt.provider {
+				t.Fatalf("provider = %v, want %q", in["provider"], tt.provider)
+			}
+			_, hasMessages := in["messages"]
+			if hasMessages != tt.wantReader {
+				t.Fatalf("messages present = %v, want %v", hasMessages, tt.wantReader)
+			}
+		})
+	}
+}
+
 func TestBuildInput_DuplicateKeysAreErrorsAndNeverLeakContent(t *testing.T) {
 	const marker = "LEAKMARKER-8841"
 	bodies := map[string]string{
@@ -440,7 +479,7 @@ func TestBuildInput_DuplicateKeysAreErrorsAndNeverLeakContent(t *testing.T) {
 	}
 	for name, body := range bodies {
 		t.Run(name, func(t *testing.T) {
-			_, err := buildInput("anthropic", inputReq(body))
+			_, err := buildInput(inputReq(body))
 			if err == nil {
 				t.Fatal("buildInput = nil error, want an error for a repeated key")
 			}

@@ -16,48 +16,126 @@ import (
 	"github.com/cardeahq/cardea-gateway/internal/pipeline"
 	"github.com/cardeahq/cardea-gateway/internal/policy"
 	"github.com/cardeahq/cardea-gateway/internal/provider"
+	"github.com/cardeahq/cardea-gateway/internal/routing"
 	"github.com/cardeahq/cardea-gateway/internal/trace"
 )
 
 type Gateway struct {
 	cfg          config.Config
 	logger       *zap.Logger
-	provider     provider.Provider
+	set          *provider.Set
 	sink         trace.CloseableSink
 	engine       *policy.Engine
 	filterEngine *filtering.Engine
 	server       *http.Server
 }
 
-func New(cfg config.Config, logger *zap.Logger, prov provider.Provider) (*Gateway, error) {
+func New(cfg config.Config, logger *zap.Logger, set *provider.Set, table *routing.Table) (*Gateway, error) {
 	mux := http.NewServeMux()
 	g := &Gateway{
-		cfg:      cfg,
-		logger:   logger,
-		provider: prov,
+		cfg:    cfg,
+		logger: logger,
+		set:    set,
 	}
 
-	stages, sink, engine, filterEngine, err := buildStages(cfg, logger)
+	stages, sink, engine, filterEngine, err := buildStages(cfg, logger, table)
 	if err != nil {
 		return nil, err
 	}
 	g.sink = sink
 	g.engine = engine
 	g.filterEngine = filterEngine
+
+	if err := checkUnscannedProviders(cfg, table, logger); err != nil {
+		if sink != nil {
+			_ = sink.Close()
+		}
+		return nil, err
+	}
+	logStartupRoutes(logger, table)
+
 	var pipelineSink trace.Sink
 	if sink != nil {
 		pipelineSink = sink
 	}
-	pl := pipeline.New(logger, cfg.Pipeline.MaxBodyBytes, prov.Name(), pipelineSink, stages...)
+	pl := pipeline.New(logger, cfg.Pipeline.MaxBodyBytes, pipelineSink, stages...)
 
 	mux.HandleFunc("/healthz", g.handleHealthz)
-	mux.Handle("/", pl.Handler(prov.Handler()))
+	mux.Handle("/", pl.Handler(&dispatcher{set: set, logger: logger}))
 
 	g.server = &http.Server{
 		Addr:    cfg.Server.ListenAddr,
 		Handler: mux,
 	}
 	return g, nil
+}
+
+// contentChecksOn reports whether filtering or a policy file is
+// configured, matching specs/0009-technical, Design -> Unscanned
+// providers.
+func contentChecksOn(cfg config.Config) bool {
+	return cfg.Pipeline.Stages.Filtering || (cfg.Pipeline.Stages.Policies && cfg.Policies.Path != "")
+}
+
+// checkUnscannedProviders errors in list mode when a route whose format
+// filtering cannot read lacks accept_unscanned, and warns once per
+// accepted or single-mode unscanned provider.
+func checkUnscannedProviders(cfg config.Config, table *routing.Table, logger *zap.Logger) error {
+	if !contentChecksOn(cfg) {
+		return nil
+	}
+
+	if table.Single() {
+		routes := table.Routes()
+		if len(routes) == 1 && routes[0].Kind != "anthropic" {
+			logger.Warn(unscannedWarning(routes[0].Provider))
+		}
+		return nil
+	}
+
+	accept := make(map[string]bool, len(cfg.Routing.Providers))
+	for _, e := range cfg.Routing.Providers {
+		accept[e.Name] = e.AcceptUnscanned
+	}
+	for _, r := range table.Routes() {
+		if formatsReadable(r.Formats) {
+			continue
+		}
+		if !accept[r.Provider] {
+			return fmt.Errorf("provider %q is not accepted without content scanning (filtering or a policy file is configured); set routing.providers[].accept_unscanned: true to list it anyway", r.Provider)
+		}
+		logger.Warn(unscannedWarning(r.Provider))
+	}
+	return nil
+}
+
+func formatsReadable(formats []routing.Format) bool {
+	for _, f := range formats {
+		if !filtering.ReadsFormat(string(f)) {
+			return false
+		}
+	}
+	return true
+}
+
+func unscannedWarning(name string) string {
+	return fmt.Sprintf("provider %q is forwarded without content scanning: redaction and conversation-based policy rules do not apply to its calls", name)
+}
+
+// logStartupRoutes logs one line per listed provider, in list mode only.
+// Never logs a key.
+func logStartupRoutes(logger *zap.Logger, table *routing.Table) {
+	if table.Single() {
+		return
+	}
+	for _, r := range table.Routes() {
+		logger.Info("provider configured",
+			zap.String("provider", r.Provider),
+			zap.String("kind", r.Kind),
+			zap.Strings("models", r.Patterns),
+			zap.Any("default_for", table.DefaultFormats(r.Provider)),
+		)
+	}
 }
 
 // ReloadPolicy reloads the policy from disk (the SIGHUP path). With no
@@ -115,7 +193,7 @@ func (g *Gateway) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // spec adds its constructor at its position here. The returned sink is
 // nil exactly when tracing is disabled, and the engine exactly when the
 // policies stage is.
-func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace.CloseableSink, *policy.Engine, *filtering.Engine, error) {
+func buildStages(cfg config.Config, logger *zap.Logger, table *routing.Table) ([]pipeline.Stage, trace.CloseableSink, *policy.Engine, *filtering.Engine, error) {
 	var stages []pipeline.Stage
 	var sink trace.CloseableSink
 
@@ -137,6 +215,8 @@ func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace
 		stages = append(stages, &identificationStage{registry: identRegistry})
 	}
 
+	stages = append(stages, &routingStage{table: table})
+
 	if cfg.Pipeline.Stages.Tracing {
 		var agentSources map[string][]config.SessionSource
 		if identRegistry != nil {
@@ -155,7 +235,7 @@ func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace
 	var engine *policy.Engine
 	if cfg.Pipeline.Stages.Policies {
 		var err error
-		engine, err = policy.New(cfg.Policies, cfg.Provider.Name, logger)
+		engine, err = policy.New(cfg.Policies, logger)
 		if err != nil {
 			if sink != nil {
 				_ = sink.Close()
@@ -170,7 +250,7 @@ func buildStages(cfg config.Config, logger *zap.Logger) ([]pipeline.Stage, trace
 	var filterEngine *filtering.Engine
 	if cfg.Pipeline.Stages.Filtering {
 		var err error
-		filterEngine, err = filtering.New(cfg.Filtering, cfg.Provider.Name, logger)
+		filterEngine, err = filtering.New(cfg.Filtering, logger)
 		if err != nil {
 			if sink != nil {
 				_ = sink.Close()

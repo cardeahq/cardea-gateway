@@ -9,6 +9,23 @@ type Provider interface {
 	Handler() http.Handler
 }
 
+// stripCallerCredentials deletes every caller-supplied credential from
+// the outbound request: the Authorization, Proxy-Authorization,
+// x-api-key and x-goog-api-key headers and the key query parameter.
+// Every provider that injects its own credential calls this first, in
+// Rewrite, so callers can never forward their own key or borrow another
+// caller's.
+func stripCallerCredentials(out *http.Request) {
+	out.Header.Del("Authorization")
+	out.Header.Del("Proxy-Authorization")
+	out.Header.Del("x-api-key")
+	out.Header.Del("x-goog-api-key")
+
+	q := out.URL.Query()
+	q.Del("key")
+	out.URL.RawQuery = q.Encode()
+}
+
 // errorHandler replaces ReverseProxy's default: it still writes a bare
 // 502, but first tells a writer that cares that the provider never
 // answered, which a 502 the provider sent itself cannot say.

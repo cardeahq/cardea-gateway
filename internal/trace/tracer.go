@@ -69,20 +69,34 @@ type RequestInfo struct {
 	ToolResults []ToolResult
 }
 
+// RequestOptions tells Request what it may read for this call.
+type RequestOptions struct {
+	// ToolResults says whether to read tool_result blocks.
+	ToolResults bool
+	// GeminiStream says the call is a Gemini streaming action: Gemini
+	// request bodies carry no top-level "stream" field.
+	GeminiStream bool
+}
+
 // Request never returns an error for a missing or invalid session, only
 // for tool_result blocks it cannot read.
-func (t *Tracer) Request(r *http.Request, body []byte, agentID string) (RequestInfo, error) {
+func (t *Tracer) Request(r *http.Request, body []byte, agentID string, opts RequestOptions) (RequestInfo, error) {
 	info := RequestInfo{
 		Session:     t.session(r, body, agentID),
 		ToolResults: []ToolResult{},
 	}
 
 	req, ok := parseMessagesRequest(body)
-	if !ok {
+	if ok {
+		info.Model = req.Model
+		info.Stream = req.Stream
+	}
+	if opts.GeminiStream {
+		info.Stream = true
+	}
+	if !ok || !opts.ToolResults {
 		return info, nil
 	}
-	info.Model = req.Model
-	info.Stream = req.Stream
 
 	results, err := newToolResults(req.Messages)
 	if err != nil {
@@ -104,8 +118,8 @@ func (t *Tracer) Request(r *http.Request, body []byte, agentID string) (RequestI
 	return info, nil
 }
 
-func (t *Tracer) NewResponseTap() *ResponseTap {
-	return &ResponseTap{key: t.key, maxReadBytes: t.maxReadBytes}
+func (t *Tracer) NewResponseTap(readUsage bool) *ResponseTap {
+	return &ResponseTap{key: t.key, maxReadBytes: t.maxReadBytes, readUsage: readUsage}
 }
 
 func (t *Tracer) sourcesFor(agentID string) []source {

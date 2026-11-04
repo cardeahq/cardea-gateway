@@ -46,9 +46,11 @@ Every spec starts with a `**Date:**` line and a link to its counterpart.
 The functional spec comes first; the technical spec designs against it.
 
 Two invariants hold across features and shouldn't be re-opened in a spec:
-the caller cannot choose or see the upstream provider (the Gateway decides
-from config alone), and behavior is rule-driven for the operator, not
-caller-driven.
+the caller cannot choose a host, URL, or provider name, and cannot reach a
+provider the operator did not configure (specs/0009 lets a caller
+influence *which configured* provider serves a call, through its model
+and API, but never which providers exist); and behavior is rule-driven for
+the operator, not caller-driven.
 
 ## Writing one
 

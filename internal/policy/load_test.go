@@ -18,7 +18,7 @@ func loadErr(t *testing.T, cfg config.PoliciesConfig) error {
 	t.Helper()
 	cfg.EvalTimeout = 5e9
 	cfg.WatchSettle = 5e7
-	e, err := New(cfg, "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfg, zaptest.NewLogger(t))
 	if err == nil && e != nil {
 		t.Logf("New succeeded with revision %q", e.Revision())
 	}
@@ -196,7 +196,7 @@ func TestNew_DataDirectoryKeepsOnlyJSONAndYAML(t *testing.T) {
 	writeFile(t, dataDir, "README.md", "# not data {")
 	writeFile(t, dataDir, "broken.toml", "= = =")
 
-	e, err := New(cfgFor(path, dataDir), "anthropic", zaptest.NewLogger(t))
+	e, err := New(cfgFor(path, dataDir), zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("New: unrelated files in a data directory must be ignored: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestRevision(t *testing.T) {
 
 	rev := func(t *testing.T, cfg config.PoliciesConfig) string {
 		t.Helper()
-		e, err := New(cfg, "anthropic", zaptest.NewLogger(t))
+		e, err := New(cfg, zaptest.NewLogger(t))
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}

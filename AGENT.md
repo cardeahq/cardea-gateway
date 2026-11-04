@@ -51,26 +51,36 @@ Run the gateway directly: `go run ./cmd/gateway serve [--config path.yaml]`.
   (`level`: debug/info/warn/error; `format`: console/json). This is the only
   place zap config translation happens.
 - `internal/gateway` — the gateway server. Routes: `/healthz`, and `/`
-  (everything else) forwarded as-is to the single configured provider's
-  `Handler()`. There is no provider selector in the URL or request — the
-  caller cannot choose or see which upstream is in use; the Gateway
-  decides that from config alone (see `internal/provider`). Request/
-  response interception and rule evaluation will be added here. `Run(ctx)`
-  blocks and shuts down gracefully on context cancellation (wired to
-  SIGINT/SIGTERM in `internal/cli/serve.go` via `signal.NotifyContext`).
+  (everything else) run through the pipeline and handed to the
+  **dispatcher**, which forwards it to the provider the **routing stage**
+  chose for that call (specs/0009). There is no provider selector in the
+  URL or request: a caller influences which provider serves a call only
+  through the model it names and the API it calls, never by a host, URL,
+  or provider name, and never to a provider the operator did not list
+  (see `internal/routing`, `internal/provider`). `Run(ctx)` blocks and
+  shuts down gracefully on context cancellation (wired to SIGINT/SIGTERM
+  in `internal/cli/serve.go` via `signal.NotifyContext`).
+- `internal/routing` — chooses the provider for one call: detects the
+  request's API format, extracts the model it names, and resolves both
+  against the operator's routing table (specs/0009). Imports nothing from
+  `internal/`, so a future multi-format provider (specs/0011) reuses it
+  unchanged.
 - `internal/provider` — the `Provider` interface (`Name() string`,
   `Handler() http.Handler`). `NewHTTPProxy` covers any upstream reachable
   by forwarding the request as-is; providers needing custom auth
   injection or request rewriting implement `Provider` directly (see the
-  `add-provider` skill). Exactly one `Provider` is active per gateway
-  instance, built from `config.Config.Provider` — Anthropic is the only
-  one implemented so far. Future provider *switching* (as opposed to
-  fixed per-deployment config) is expected to be rule-driven, not
-  caller-driven.
+  `add-provider` skill) — Anthropic, Mistral and Gemini do, each
+  stripping every caller-supplied credential before setting its own key.
+  `provider.Set` holds every built provider by configured name, one per
+  entry in `routing.providers` (list mode) or the sole provider under
+  `provider.name` (single mode, `config.Config.Provider`). Switching
+  *which* listed provider serves a call is routing's job, driven by the
+  call itself within what the operator configured, never by a rule
+  choosing among hosts the caller doesn't control.
 
 - `internal/pipeline` — runs each proxied call through the fixed stage order
-  (identification, tracing, policies); each stage is enabled by
-  `pipeline.stages.<name>`. `internal/policy` owns embedded OPA, the Rego
+  (identification, routing, tracing, policies); every stage but routing is
+  enabled by `pipeline.stages.<name>` — routing always runs. `internal/policy` owns embedded OPA, the Rego
   policy and data files and the input document; `internal/gateway/policies.go`
   adapts it to a stage. `SIGHUP` (or `policies.watch`) reloads the policy.
 
@@ -96,9 +106,9 @@ Run the gateway directly: `go run ./cmd/gateway serve [--config path.yaml]`.
   there is no tenant in the Gateway, the platform derives it from the key.
 
 Data flow for `gateway serve`: `cli.serve` loads `config.Config` →
-builds a `zap.Logger` from it → builds the configured `provider.Provider`
-→ constructs a `gateway.Gateway` from all three → `Run`s it until
-interrupted.
+builds a `zap.Logger` from it → builds the configured `provider.Set` and
+`routing.Table` (list or single mode) → constructs a `gateway.Gateway`
+from all four → `Run`s it until interrupted.
 
 ## Conventions
 

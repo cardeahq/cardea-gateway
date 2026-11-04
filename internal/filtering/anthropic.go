@@ -15,13 +15,13 @@ var (
 )
 
 // buildTarget reports whether body is an Anthropic messages or
-// count_tokens request (provider == "anthropic" and path is one of the
-// two conversation routes). Non-target bodies return isTarget == false,
+// count_tokens request (format == "anthropic" and path is one of the two
+// conversation routes). Non-target bodies return isTarget == false,
 // err == nil — not a failure, nothing to scan. A target body that is not
 // valid JSON, repeats a key at any depth, or whose top level is not an
 // object, or whose messages is not an array, is a *FilterError{"input"}.
-func buildTarget(providerName, path string, body []byte) (top map[string]json.RawMessage, isTarget bool, err error) {
-	if providerName != "anthropic" {
+func buildTarget(format, path string, body []byte) (top map[string]json.RawMessage, isTarget bool, err error) {
+	if format != "anthropic" {
 		return nil, false, nil
 	}
 	op := operationName(path)

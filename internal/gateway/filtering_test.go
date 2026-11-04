@@ -60,10 +60,13 @@ func TestBuildStages_FilteringComesAfterPoliciesAndFollowsItsConfigBoolean(t *te
 		identification, tracing, policies, filterEnabled bool
 		want                                             []string
 	}{
-		{"all four on", true, true, true, true, []string{"identification", "tracing", "policies", "filtering"}},
-		{"filtering off", true, true, true, false, []string{"identification", "tracing", "policies"}},
-		{"filtering on, policies off", true, true, false, true, []string{"identification", "tracing", "filtering"}},
-		{"filtering only", false, false, false, true, []string{"filtering"}},
+		// routingStage is inserted unconditionally right after
+		// identification (specs/0009), whether or not identification itself
+		// is enabled.
+		{"all four on", true, true, true, true, []string{"identification", "routing", "tracing", "policies", "filtering"}},
+		{"filtering off", true, true, true, false, []string{"identification", "routing", "tracing", "policies"}},
+		{"filtering on, policies off", true, true, false, true, []string{"identification", "routing", "tracing", "filtering"}},
+		{"filtering only", false, false, false, true, []string{"routing", "filtering"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,7 +74,7 @@ func TestBuildStages_FilteringComesAfterPoliciesAndFollowsItsConfigBoolean(t *te
 			cfg.Pipeline.Stages.Filtering = tt.filterEnabled
 			cfg.Filtering = filteringCfg()
 
-			stages, sink, _, fEng, err := buildStages(cfg, zaptest.NewLogger(t))
+			stages, sink, _, fEng, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 			if err != nil {
 				t.Fatalf("buildStages: %v", err)
 			}
@@ -98,14 +101,14 @@ func TestBuildStages_FilteringComesAfterPoliciesAndFollowsItsConfigBoolean(t *te
 // --- the stage itself, against a real engine ----------------------------------
 
 func TestFilteringStage_RedactionAttachesDetailAndLogsCategoriesInFixedOrder(t *testing.T) {
-	eng, err := filtering.New(filteringCfg(), "anthropic", zap.NewNop())
+	eng, err := filtering.New(filteringCfg(), zap.NewNop())
 	if err != nil {
 		t.Fatalf("filtering.New: %v", err)
 	}
 
 	logger, logs := observed()
 	sink := &captureSink{}
-	p := pipeline.New(logger, 1<<20, "anthropic", sink, &filteringStage{engine: eng, logger: logger})
+	p := pipeline.New(logger, 1<<20, sink, fixedRouteStage{}, &filteringStage{engine: eng, logger: logger})
 
 	var upstreamCalled bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -158,14 +161,14 @@ func TestFilteringStage_RedactionAttachesDetailAndLogsCategoriesInFixedOrder(t *
 }
 
 func TestFilteringStage_ZeroRedactionsAttachesNoDetailAndLogsNothing(t *testing.T) {
-	eng, err := filtering.New(filteringCfg(), "anthropic", zap.NewNop())
+	eng, err := filtering.New(filteringCfg(), zap.NewNop())
 	if err != nil {
 		t.Fatalf("filtering.New: %v", err)
 	}
 
 	logger, logs := observed()
 	sink := &captureSink{}
-	p := pipeline.New(logger, 1<<20, "anthropic", sink, &filteringStage{engine: eng, logger: logger})
+	p := pipeline.New(logger, 1<<20, sink, fixedRouteStage{}, &filteringStage{engine: eng, logger: logger})
 
 	rec := httptest.NewRecorder()
 	p.Handler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })).
@@ -189,14 +192,14 @@ func TestFilteringStage_ZeroRedactionsAttachesNoDetailAndLogsNothing(t *testing.
 }
 
 func TestFilteringStage_EngineErrorBecomesThe503AndTheUpstreamIsNeverCalled(t *testing.T) {
-	eng, err := filtering.New(filteringCfg(), "anthropic", zap.NewNop())
+	eng, err := filtering.New(filteringCfg(), zap.NewNop())
 	if err != nil {
 		t.Fatalf("filtering.New: %v", err)
 	}
 
 	logger, logs := observed()
 	sink := &captureSink{}
-	p := pipeline.New(logger, 1<<20, "anthropic", sink, &filteringStage{engine: eng, logger: logger})
+	p := pipeline.New(logger, 1<<20, sink, fixedRouteStage{}, &filteringStage{engine: eng, logger: logger})
 
 	var upstreamCalled bool
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { upstreamCalled = true })

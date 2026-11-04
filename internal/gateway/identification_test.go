@@ -150,7 +150,7 @@ func identCfg(t *testing.T, enabled bool, agentTypesDir string) config.Config {
 
 func TestBuildStages_OmitsIdentificationWhenDisabled(t *testing.T) {
 	cfg := identCfg(t, false, "")
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
@@ -166,21 +166,23 @@ func TestBuildStages_OmitsIdentificationWhenDisabled(t *testing.T) {
 
 func TestBuildStages_IdentificationEnabledWithEmptyDirStillBuilds(t *testing.T) {
 	cfg := identCfg(t, true, "")
-	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, sink, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 	if err != nil {
 		t.Fatalf("buildStages: %v", err)
 	}
 	if sink != nil {
 		t.Cleanup(func() { _ = sink.Close() })
 	}
-	if len(stages) != 1 || stages[0].Name() != "identification" {
-		t.Fatalf("stages = %v, want exactly one identification stage", stages)
+	// routingStage is inserted unconditionally right after identification
+	// (specs/0009).
+	if len(stages) != 2 || stages[0].Name() != "identification" || stages[1].Name() != "routing" {
+		t.Fatalf("stages = %v, want [identification routing]", stageNames(stages))
 	}
 }
 
 func TestBuildStages_IdentificationNonexistentDirFailsConstruction(t *testing.T) {
 	cfg := identCfg(t, true, filepath.Join(t.TempDir(), "does-not-exist"))
-	stages, _, _, _, err := buildStages(cfg, zaptest.NewLogger(t))
+	stages, _, _, _, err := buildStages(cfg, zaptest.NewLogger(t), testSingleTable())
 	if err == nil {
 		t.Fatal("buildStages with a nonexistent agent_types_dir = nil error, want error")
 	}
@@ -194,7 +196,7 @@ func TestBuildStages_IdentificationNonexistentDirFailsConstruction(t *testing.T)
 func TestIdentificationStage_FullPipeline_DisabledMeansAgentIDStaysEmpty(t *testing.T) {
 	capture := &capturingStage{}
 	// No identificationStage at all: identification disabled.
-	p := pipeline.New(zaptest.NewLogger(t), 1<<20, "anthropic", nil, capture)
+	p := pipeline.New(zaptest.NewLogger(t), 1<<20, nil, capture)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	req.Header.Set(testAgentTypeHeader, testAgentTypeValue)

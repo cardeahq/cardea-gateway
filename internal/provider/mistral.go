@@ -38,7 +38,7 @@ func NewMistralProvider(baseURL, apiKeyEnv string) (Provider, error) {
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
-			pr.Out.Header.Del("x-api-key")
+			stripCallerCredentials(pr.Out)
 			pr.Out.Header.Set("Authorization", "Bearer "+apiKey)
 		},
 		ErrorHandler: errorHandler,
