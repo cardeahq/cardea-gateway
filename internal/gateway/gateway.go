@@ -46,12 +46,6 @@ func New(cfg config.Config, logger *zap.Logger, set *provider.Set, table *routin
 	g.engine = engine
 	g.filterEngine = filterEngine
 
-	if err := checkUnscannedProviders(cfg, table, logger); err != nil {
-		if sink != nil {
-			_ = sink.Close()
-		}
-		return nil, err
-	}
 	logStartupRoutes(logger, table)
 
 	var pipelineSink trace.Sink
@@ -68,58 +62,6 @@ func New(cfg config.Config, logger *zap.Logger, set *provider.Set, table *routin
 		Handler: mux,
 	}
 	return g, nil
-}
-
-// contentChecksOn reports whether filtering or a policy file is
-// configured, matching specs/0009-technical, Design -> Unscanned
-// providers.
-func contentChecksOn(cfg config.Config) bool {
-	return cfg.Pipeline.Stages.Filtering || (cfg.Pipeline.Stages.Policies && cfg.Policies.Path != "")
-}
-
-// checkUnscannedProviders errors in list mode when a route whose format
-// filtering cannot read lacks accept_unscanned, and warns once per
-// accepted or single-mode unscanned provider.
-func checkUnscannedProviders(cfg config.Config, table *routing.Table, logger *zap.Logger) error {
-	if !contentChecksOn(cfg) {
-		return nil
-	}
-
-	if table.Single() {
-		routes := table.Routes()
-		if len(routes) == 1 && routes[0].Kind != "anthropic" {
-			logger.Warn(unscannedWarning(routes[0].Provider))
-		}
-		return nil
-	}
-
-	accept := make(map[string]bool, len(cfg.Routing.Providers))
-	for _, e := range cfg.Routing.Providers {
-		accept[e.Name] = e.AcceptUnscanned
-	}
-	for _, r := range table.Routes() {
-		if formatsReadable(r.Formats) {
-			continue
-		}
-		if !accept[r.Provider] {
-			return fmt.Errorf("provider %q is not accepted without content scanning (filtering or a policy file is configured); set routing.providers[].accept_unscanned: true to list it anyway", r.Provider)
-		}
-		logger.Warn(unscannedWarning(r.Provider))
-	}
-	return nil
-}
-
-func formatsReadable(formats []routing.Format) bool {
-	for _, f := range formats {
-		if !filtering.ReadsFormat(string(f)) {
-			return false
-		}
-	}
-	return true
-}
-
-func unscannedWarning(name string) string {
-	return fmt.Sprintf("provider %q is forwarded without content scanning: redaction and conversation-based policy rules do not apply to its calls", name)
 }
 
 // logStartupRoutes logs one line per listed provider, in list mode only.

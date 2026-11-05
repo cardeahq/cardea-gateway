@@ -222,6 +222,16 @@ exactly as before, and nothing they send or receive is altered.
     message: some agents (Claude Code among them) append one after the
     message carrying the tool results. Only the new results are recorded;
     earlier ones were recorded with the call that first carried them.
+
+    This holds for every provider and format (specs/0009). In the
+    OpenAI-style format each tool result is its own `tool`-role message,
+    so the new results are the `tool` messages after the last assistant
+    message. In the Gemini format they are the function responses in the
+    last content entry. Tool calls in responses, `response_id`,
+    `response_model`, `stop_reason` and `tokens` are likewise read from
+    each format's own response, streamed or not. A detail a format does
+    not carry is `null`: a Gemini function call or response without an
+    identifier has a `null` `tool_call_id`.
 11. Every new tool result is recorded in the request record: the
     identifier of the tool call it answers, whether the agent marked it
     as an error, and its size and fingerprint. The Gateway does not check
@@ -461,6 +471,8 @@ request, before it is forwarded or refused (rule 5).
     { "name": "identification", "started_at": "2026-09-27T14:03:11.402200Z", "duration_us": 41, "decision": "allowed", "detail": null },
     { "name": "tracing", "started_at": "2026-09-27T14:03:11.402245Z", "duration_us": 388, "decision": "allowed", "detail": null }
   ],
+  "redacted": false,
+  "redacted_categories": [],
   "tool_results": [
     {
       "tool_call_id": "toolu_01A9",
@@ -508,6 +520,10 @@ Field meanings, where the example does not make them obvious:
   (rule 12). `not_run` stages have `null` timings. `stages[].detail` is
   `null` except for policies (specs/0004), which puts the policy revision
   and the identifiers of the rules that fired there.
+- `redacted` — whether the filtering stage (specs/0006) replaced any
+  content with a `[REDACTED:category]` placeholder before forwarding.
+  `redacted_categories` — the categories found and removed, sorted
+  (for example `["api_key", "email"]`); `[]` when nothing was redacted.
 - `tool_results[]` — the new tool results of this request (rule 10).
   `tool_call_id` is the identifier of the tool call each one answers, as
   the agent sent it; the record says nothing about whether that tool
@@ -595,7 +611,8 @@ Field meanings, where the example does not make them obvious:
   dated version.
 - `stop_reason` — why the model stopped, as the provider reports it,
   unchanged (for Anthropic: `end_turn`, `tool_use`, `max_tokens`,
-  `stop_sequence`, …). The Gateway does not translate it between
+  `stop_sequence`, …; for Mistral: `stop`, `tool_calls`, `length`, …;
+  for Gemini: `STOP`, `MAX_TOKENS`, `SAFETY`, …). The Gateway does not translate it between
   providers; its meaning is the provider's.
 
   `response_id`, `response_model` and `stop_reason` are each `null` when
@@ -798,6 +815,21 @@ together (rule 18). A session holds one or more traces. A record whose
     the call completes, **then** the caller receives the whole response
     unchanged, and the response record has `tool_calls` `[]`, the finding
     `tool_calls_unread`, and tracing's `observation` `completed`.
+32. **Given** a Mistral provider, **when** a streamed chat call returns a
+    tool call and token usage, **then** the response record carries the
+    tool call's identifier, name, argument names, size and fingerprint,
+    the sent and received token counts, `response_id`, `response_model`
+    and `stop_reason` `tool_calls`; and the same holds non-streamed.
+33. **Given** a Mistral provider, **when** a chat request ends with two
+    `tool`-role messages after the last assistant message, **then** the
+    request record lists both as tool results, and no earlier tool result.
+34. **Given** a Gemini provider, **when** a streamed generate call returns
+    a function call and usage metadata, **then** the response record
+    carries the function call's name, argument names, size and
+    fingerprint, and the sent and received token counts.
+35. **Given** a Gemini provider, **when** a generate request's last
+    content entry holds a function response, **then** the request record
+    lists it as a tool result with its size and fingerprint.
 
 ## Relationship to 0005
 

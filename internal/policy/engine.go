@@ -34,8 +34,9 @@ type Request struct {
 	Body      []byte
 	AgentID   string // "" when not identified
 	SessionID string // "" when tracing found none (status "claimed" only)
-	Provider  string // the route's provider name
-	Format    string // routing format; conversation is read only for "anthropic"
+	Provider  string // the provider the call was routed to
+	Format    string // routing format: "anthropic", "openai" or "gemini"
+	Operation string // routing operation: "messages", "count_tokens", "completion", "embeddings" or "models"
 }
 
 // Result is one evaluation's decision. Rules is sorted and unique; empty
@@ -89,6 +90,9 @@ func (e *Engine) Evaluate(ctx context.Context, r Request) (Result, error) {
 		return Result{}, nil
 	}
 	input, err := buildInput(r)
+	if errors.Is(err, errNoReader) {
+		return Result{}, &EvalError{Kind: "internal"}
+	}
 	if err != nil {
 		return Result{}, &EvalError{Kind: "input"}
 	}

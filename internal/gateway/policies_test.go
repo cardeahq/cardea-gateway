@@ -227,7 +227,7 @@ func TestBuildStages_PolicyErrorsFailConstruction(t *testing.T) {
 				t.Fatalf("error %q does not name %s", err, tt.file)
 			}
 
-			set, table := singleSetAndTable("stub", "", stubProvider{handler: http.NotFoundHandler()})
+			set, table := singleSetAndTable("stub", "anthropic", stubProvider{handler: http.NotFoundHandler()})
 			_, gerr := New(cfg, zaptest.NewLogger(t), set, table)
 			if gerr == nil {
 				t.Fatal("gateway.New = nil error: serve must exit before listening on a bad policy")
@@ -876,15 +876,14 @@ func (s fixedTraceStage) Request(context.Context, *pipeline.Call) (pipeline.Deci
 
 // fixedRouteStage stands in for the routing stage in isolated stage tests:
 // it attaches a single-mode Anthropic route the way routingStage would,
-// so a policiesStage or filteringStage under test still sees
-// c.Format == routing.FormatAnthropic and reads conversation content, as
-// it would behind the real, always-on routing stage.
+// so a policiesStage or filteringStage under test sees the format and
+// operation it would behind the real, always-on routing stage.
 type fixedRouteStage struct{}
 
 func (fixedRouteStage) Name() string { return "routing" }
-func (fixedRouteStage) Request(context.Context, *pipeline.Call) (pipeline.Decision, error) {
+func (fixedRouteStage) Request(_ context.Context, c *pipeline.Call) (pipeline.Decision, error) {
 	route := routing.Route{Provider: "anthropic", Kind: "anthropic", Formats: []routing.Format{routing.FormatAnthropic}, Single: true}
-	return pipeline.AllowRouted(route, routing.FormatAnthropic, nil), nil
+	return pipeline.AllowRouted(route, routing.FormatAnthropic, routing.DetectOperation(routing.FormatAnthropic, c.Request), nil), nil
 }
 
 func realEngine(t *testing.T, rules string) *policy.Engine {

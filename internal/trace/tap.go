@@ -31,9 +31,8 @@ const sseLineSlack = 64
 type ResponseTap struct {
 	key          []byte
 	maxReadBytes int64
-	// readUsage says whether to read token usage; false for a call whose
-	// format the Anthropic usage reader would misread (specs/0009).
-	readUsage bool
+	format       string
+	operation    string
 
 	mu           sync.Mutex
 	mode         tapMode
@@ -53,7 +52,7 @@ type ResponseTap struct {
 	data      []byte
 	eventOver bool
 	calls     []*toolCallState
-	open      map[int]*toolCallState
+	open      map[toolKey]*toolCallState
 
 	responseID    *string
 	responseModel *string
@@ -65,7 +64,14 @@ type ResponseTap struct {
 	bodyOver bool
 }
 
+// toolKey identifies an open tool call: Anthropic uses only index, the
+// OpenAI style keys by choice and tool call index.
+type toolKey struct {
+	choice, index int
+}
+
 type toolCallState struct {
+	key             toolKey
 	call            ToolCall
 	args            []byte
 	startInput      json.RawMessage
@@ -91,6 +97,10 @@ type ResponseInfo struct {
 
 func (t *ResponseTap) Start(status int, h http.Header) {
 	t.status = status
+	if err := noReader(t.format, t.operation); err != nil {
+		t.fail(err)
+		return
+	}
 	switch enc := h.Get("Content-Encoding"); enc {
 	case "", "identity":
 	case "gzip":
@@ -104,7 +114,7 @@ func (t *ResponseTap) Start(status int, h http.Header) {
 	switch mediaType {
 	case "text/event-stream":
 		t.mode = modeSSE
-		t.open = map[int]*toolCallState{}
+		t.open = map[toolKey]*toolCallState{}
 		if t.gzip {
 			t.startGzipParser()
 		}
@@ -294,13 +304,39 @@ func (t *ResponseTap) endEvent(at time.Time) {
 	}
 }
 
+// readsDetails reports whether this operation's responses carry anything
+// tracing records; the others give null details.
+func (t *ResponseTap) readsDetails() bool {
+	switch {
+	case t.operation == "models":
+		return false
+	case t.format == "gemini":
+		return t.operation == "messages"
+	}
+	return true
+}
+
 func (t *ResponseTap) handleEvent(data []byte, at time.Time) {
+	if !t.readsDetails() {
+		return
+	}
+	switch t.format {
+	case "anthropic":
+		t.handleAnthropicEvent(data, at)
+	case "openai":
+		t.handleOpenAIChunk(data, at)
+	case "gemini":
+		t.handleGeminiResponse(data, at)
+	}
+}
+
+func (t *ResponseTap) handleAnthropicEvent(data []byte, at time.Time) {
 	var ev streamEvent
 	defer func() {
 		if p := recover(); p != nil {
 			t.fail(fmt.Errorf("reading %s event panicked: %v", ev.Type, p))
 			if ev.Index != nil {
-				if tc := t.open[*ev.Index]; tc != nil {
+				if tc := t.open[toolKey{index: *ev.Index}]; tc != nil {
 					tc.failed = true
 					tc.args = nil
 				}
@@ -314,31 +350,31 @@ func (t *ResponseTap) handleEvent(data []byte, at time.Time) {
 	switch ev.Type {
 	case "message_start":
 		t.responseID, t.responseModel = ev.Message.ID, ev.Message.Model
-		if t.readUsage {
-			if u := ev.Message.Usage; u != nil {
-				t.tokens = &Tokens{Sent: u.sent(), Received: u.OutputTokens}
-			}
+		if u := ev.Message.Usage; u != nil {
+			t.tokens = &Tokens{Sent: u.sent(), Received: u.OutputTokens}
 		}
 	case "content_block_start":
 		if ev.Index == nil || !isToolUse(ev.ContentBlock.Type) {
 			return
 		}
+		id := ev.ContentBlock.ID
 		tc := &toolCallState{
+			key: toolKey{index: *ev.Index},
 			call: ToolCall{
-				ToolCallID: ev.ContentBlock.ID,
+				ToolCallID: &id,
 				ToolName:   ev.ContentBlock.Name,
 				ServerSide: ev.ContentBlock.Type == "server_tool_use",
 			},
 			startInput:      ev.ContentBlock.Input,
 			afterDisconnect: t.disconnected,
 		}
-		t.open[*ev.Index] = tc
+		t.open[tc.key] = tc
 		t.calls = append(t.calls, tc)
 	case "content_block_delta":
 		if ev.Index == nil || ev.Delta.Type != "input_json_delta" {
 			return
 		}
-		tc := t.open[*ev.Index]
+		tc := t.open[toolKey{index: *ev.Index}]
 		if tc == nil || tc.overLimit || tc.failed {
 			return
 		}
@@ -352,17 +388,17 @@ func (t *ResponseTap) handleEvent(data []byte, at time.Time) {
 		if ev.Index == nil {
 			return
 		}
-		tc := t.open[*ev.Index]
+		tc := t.open[toolKey{index: *ev.Index}]
 		if tc == nil {
 			return
 		}
-		delete(t.open, *ev.Index)
+		delete(t.open, tc.key)
 		t.closeToolCall(tc, *ev.Index, at)
 	case "message_delta":
 		if ev.Delta.StopReason != nil {
 			t.stopReason = ev.Delta.StopReason
 		}
-		if t.readUsage && ev.Usage != nil {
+		if ev.Usage != nil {
 			if t.tokens == nil {
 				t.tokens = &Tokens{}
 			}
@@ -373,7 +409,7 @@ func (t *ResponseTap) handleEvent(data []byte, at time.Time) {
 
 func (t *ResponseTap) closeToolCall(tc *toolCallState, index int, at time.Time) {
 	tc.closed = true
-	if tc.afterDisconnect {
+	if tc.afterDisconnect || t.disconnected {
 		notDelivered(tc)
 		return
 	}
@@ -445,19 +481,34 @@ func (t *ResponseTap) parseJSON(info *ResponseInfo) {
 		}
 	}
 
+	if !t.readsDetails() {
+		return
+	}
+	switch t.format {
+	case "anthropic":
+		t.parseAnthropicJSON(body, info)
+	case "openai":
+		t.parseOpenAIJSON(body, info)
+	case "gemini":
+		t.parseGeminiJSON(body, info)
+	}
+}
+
+func (t *ResponseTap) parseAnthropicJSON(body []byte, info *ResponseInfo) {
 	var resp messagesResponse
 	if json.Unmarshal(body, &resp) != nil {
 		return
 	}
 	info.ResponseID, info.ResponseModel, info.StopReason = resp.ID, resp.Model, resp.StopReason
-	if t.readUsage && resp.Usage != nil {
+	if resp.Usage != nil {
 		info.Tokens = &Tokens{Sent: resp.Usage.sent(), Received: resp.Usage.OutputTokens}
 	}
 	for i, block := range resp.Content {
 		if !isToolUse(block.Type) {
 			continue
 		}
-		tc := ToolCall{ToolCallID: block.ID, ToolName: block.Name, ServerSide: block.Type == "server_tool_use"}
+		id := block.ID
+		tc := ToolCall{ToolCallID: &id, ToolName: block.Name, ServerSide: block.Type == "server_tool_use"}
 		if t.disconnected {
 			tc.Outcome = "not_delivered"
 		} else {

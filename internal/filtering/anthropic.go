@@ -14,34 +14,45 @@ var (
 	errMessagesNotList = errors.New("filtering: messages is not an array")
 )
 
-// buildTarget reports whether body is an Anthropic messages or
-// count_tokens request (format == "anthropic" and path is one of the two
-// conversation routes). Non-target bodies return isTarget == false,
-// err == nil — not a failure, nothing to scan. A target body that is not
-// valid JSON, repeats a key at any depth, or whose top level is not an
-// object, or whose messages is not an array, is a *FilterError{"input"}.
-func buildTarget(format, path string, body []byte) (top map[string]json.RawMessage, isTarget bool, err error) {
-	if format != "anthropic" {
-		return nil, false, nil
-	}
-	op := operationName(path)
-	if op != "messages" && op != "count_tokens" {
-		return nil, false, nil
-	}
-
+// decodeTop rejects duplicate keys at any depth and decodes body's top
+// level. A body that is not valid JSON, repeats a key, or whose top
+// level is not an object is a *FilterError{"input"}. Shared by every
+// format's rewriter.
+func decodeTop(body []byte) (map[string]json.RawMessage, error) {
 	if err := rejectDuplicateKeys(body); err != nil {
-		return nil, false, &FilterError{Kind: "input"}
+		return nil, &FilterError{Kind: "input"}
 	}
+	var top map[string]json.RawMessage
 	if err := json.Unmarshal(body, &top); err != nil || top == nil {
-		return nil, false, &FilterError{Kind: "input"}
+		return nil, &FilterError{Kind: "input"}
 	}
+	return top, nil
+}
+
+// redactAnthropic rewrites an Anthropic messages or count_tokens body;
+// messages that is not an array is a *FilterError{"input"}.
+func (s *scan) redactAnthropic(top map[string]json.RawMessage) error {
 	if raw, ok := top["messages"]; ok && !isJSONNull(raw) {
 		var messages []json.RawMessage
 		if err := json.Unmarshal(raw, &messages); err != nil {
-			return nil, false, &FilterError{Kind: "input"}
+			return &FilterError{Kind: "input"}
 		}
 	}
-	return top, true, nil
+	if raw, ok := top["system"]; ok {
+		newSystem, err := s.redactSystem(raw)
+		if err != nil {
+			return err
+		}
+		top["system"] = newSystem
+	}
+	if raw, ok := top["messages"]; ok {
+		newMessages, err := s.redactMessages(raw)
+		if err != nil {
+			return err
+		}
+		top["messages"] = newMessages
+	}
+	return nil
 }
 
 // scan carries the state of one Redact call. Engine itself holds no
@@ -274,7 +285,7 @@ func decodeString(raw json.RawMessage) (string, bool) {
 
 // rejectDuplicateKeys fails on the first repeated key in any object, at
 // any depth. Duplicated from internal/policy's version rather than
-// shared: the two packages read the same wire format for unrelated
+// shared: the two packages read the same wire formats for unrelated
 // reasons and should stay free to diverge (specs/0006, Alternatives
 // considered).
 func rejectDuplicateKeys(body []byte) error {
@@ -326,16 +337,4 @@ func rejectDuplicateKeys(body []byte) error {
 		}
 		valueDone()
 	}
-}
-
-// operationName duplicates internal/policy's own version, for the same
-// reason rejectDuplicateKeys does.
-func operationName(path string) string {
-	switch path {
-	case "/v1/messages":
-		return "messages"
-	case "/v1/messages/count_tokens":
-		return "count_tokens"
-	}
-	return "other"
 }

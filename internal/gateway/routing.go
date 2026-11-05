@@ -18,17 +18,30 @@ type routingStage struct {
 func (s *routingStage) Name() string { return "routing" }
 
 func (s *routingStage) Request(_ context.Context, c *pipeline.Call) (pipeline.Decision, error) {
-	if s.table.Single() {
-		r, _ := s.table.Resolve(routing.FormatUnknown, "", false)
-		return pipeline.AllowRouted(r, routing.FormatOf(r.Kind), nil), nil
+	format := routing.DetectFormat(c.Request)
+	if format == routing.FormatUnknown {
+		return deny(routing.RejectUnknownFormat, format, "", false), nil
+	}
+	op := routing.DetectOperation(format, c.Request)
+	if op == routing.OpUnsupported {
+		reason := string(routing.RejectUnsupportedOp) + " format=" + string(format) +
+			" method=" + c.Request.Method + " path=" + routing.Truncate(c.Request.URL.Path)
+		status, message := rejectionResponse(routing.RejectUnsupportedOp)
+		return pipeline.DenyWithModel(status, message, reason, nil), nil
 	}
 
-	format := routing.DetectFormat(c.Request)
+	if s.table.Single() {
+		route, rej := s.table.Resolve(format, "", false)
+		if rej != routing.RejectNone {
+			return deny(rej, format, "", false), nil
+		}
+		return pipeline.AllowRouted(route, format, op, nil), nil
+	}
+
 	model, found, err := routing.ExtractModel(format, c.Request, c.Body)
 	if err != nil {
 		return pipeline.DenyWithModel(http.StatusBadRequest, "the request names its model more than once", "repeated_model", nil), nil
 	}
-
 	var modelPtr *string
 	if found {
 		modelPtr = &model
@@ -36,22 +49,29 @@ func (s *routingStage) Request(_ context.Context, c *pipeline.Call) (pipeline.De
 
 	route, rej := s.table.Resolve(format, model, found)
 	if rej == routing.RejectNone {
-		return pipeline.AllowRouted(route, format, modelPtr), nil
+		return pipeline.AllowRouted(route, format, op, modelPtr), nil
 	}
+	return deny(rej, format, model, found), nil
+}
 
+// deny builds a routing denial whose reason names the rejection, the
+// format and, when one was found, the truncated model.
+func deny(rej routing.Rejection, format routing.Format, model string, found bool) pipeline.Decision {
 	status, message := rejectionResponse(rej)
 	reason := string(rej) + " format=" + string(format)
+	var modelPtr *string
 	if found {
 		reason += " model=" + routing.Truncate(model)
+		modelPtr = &model
 	}
-	return pipeline.DenyWithModel(status, message, reason, modelPtr), nil
+	return pipeline.DenyWithModel(status, message, reason, modelPtr)
 }
 
 func rejectionResponse(rej routing.Rejection) (status int, message string) {
 	switch rej {
 	case routing.RejectFormatMismatch:
 		return http.StatusBadRequest, "the model is not available for this API"
-	default: // RejectNoProvider, RejectUnknownFormat
+	default: // no_provider, unknown_format, unsupported_operation, format_not_served
 		return http.StatusNotFound, "no provider serves this request"
 	}
 }

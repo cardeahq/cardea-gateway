@@ -17,22 +17,27 @@ func (t Timestamp) MarshalJSON() ([]byte, error) {
 }
 
 type RequestRecord struct {
-	Schema      string         `json:"schema"`
-	Record      string         `json:"record"` // "request"
-	CallID      string         `json:"call_id"`
-	RemoteAddr  string         `json:"remote_addr"`
-	AgentID     *string        `json:"agent_id"`
-	Session     Session        `json:"session"`
-	ReceivedAt  Timestamp      `json:"received_at"`
-	DurationUS  int64          `json:"duration_us"`
-	Provider    *string        `json:"provider,omitempty"`
-	Model       *string        `json:"model"`
-	Stream      bool           `json:"stream"`
-	SizeBytes   *int64         `json:"size_bytes"` // nil when the body was not read in full (400, 413)
-	Outcome     RequestOutcome `json:"outcome"`
-	Stages      []RequestStage `json:"stages"`
-	ToolResults []ToolResult   `json:"tool_results"`
-	Findings    []Finding      `json:"findings"`
+	Schema     string         `json:"schema"`
+	Record     string         `json:"record"` // "request"
+	CallID     string         `json:"call_id"`
+	RemoteAddr string         `json:"remote_addr"`
+	AgentID    *string        `json:"agent_id"`
+	Session    Session        `json:"session"`
+	ReceivedAt Timestamp      `json:"received_at"`
+	DurationUS int64          `json:"duration_us"`
+	Provider   *string        `json:"provider,omitempty"`
+	Model      *string        `json:"model"`
+	Stream     bool           `json:"stream"`
+	SizeBytes  *int64         `json:"size_bytes"` // nil when the body was not read in full (400, 413)
+	Outcome    RequestOutcome `json:"outcome"`
+	Stages     []RequestStage `json:"stages"`
+	// Redacted reports whether the filtering stage replaced any content
+	// before forwarding; RedactedCategories names the categories it found
+	// and removed, sorted, and is [] when nothing was redacted.
+	Redacted           bool         `json:"redacted"`
+	RedactedCategories []string     `json:"redacted_categories"`
+	ToolResults        []ToolResult `json:"tool_results"`
+	Findings           []Finding    `json:"findings"`
 }
 
 func (RequestRecord) recordType() string { return "request" }
@@ -115,7 +120,7 @@ type ResponseStage struct {
 }
 
 type ToolResult struct {
-	ToolCallID  string  `json:"tool_call_id"`
+	ToolCallID  *string `json:"tool_call_id"` // nil only for a Gemini function response without an id
 	IsError     bool    `json:"is_error"`
 	SizeBytes   int64   `json:"size_bytes"`
 	Fingerprint *string `json:"fingerprint"`
@@ -123,7 +128,7 @@ type ToolResult struct {
 
 // Outcome is one of "delivered", "not_delivered".
 type ToolCall struct {
-	ToolCallID    string     `json:"tool_call_id"`
+	ToolCallID    *string    `json:"tool_call_id"` // nil only for a Gemini function call without an id
 	ToolName      string     `json:"tool_name"`
 	ServerSide    bool       `json:"server_side"`
 	ArgumentNames []string   `json:"argument_names"` // nil encodes null: not recorded

@@ -55,7 +55,6 @@ const validRoutingYAML = `routing:
       base_url: "https://api.mistral.ai"
       api_key_env: MISTRAL_TEST_KEY
       models: ["mistral-*", "codestral-*"]
-      accept_unscanned: true
   defaults:
     openai: mistral
 `
@@ -74,9 +73,6 @@ func TestLoad_ValidRoutingListAccepted(t *testing.T) {
 	}
 	if cfg.Routing.Defaults["openai"] != "mistral" {
 		t.Fatalf("Defaults[openai] = %q, want mistral", cfg.Routing.Defaults["openai"])
-	}
-	if !cfg.Routing.Providers[1].AcceptUnscanned {
-		t.Fatal("mistral's accept_unscanned = false, want true")
 	}
 }
 
@@ -102,6 +98,72 @@ func TestLoad_RejectsUnknownProviderEntryKey(t *testing.T) {
 	path := writeConfigFile(t, yaml)
 	if _, err := Load(path); err == nil {
 		t.Fatal("Load with an unknown providers[] key = nil error, want error")
+	}
+}
+
+func TestLoad_RejectsLeftoverAcceptUnscanned(t *testing.T) {
+	// specs/0009: the accept_unscanned flag is gone. A leftover key is an
+	// unknown setting under ErrorUnused, and the error names it.
+	for _, val := range []string{"true", "false"} {
+		t.Run(val, func(t *testing.T) {
+			yaml := strings.Replace(validRoutingYAML,
+				`models: ["mistral-*", "codestral-*"]`,
+				"models: [\"mistral-*\", \"codestral-*\"]\n      accept_unscanned: "+val, 1)
+			path := writeConfigFile(t, yaml)
+			_, err := Load(path)
+			if err == nil {
+				t.Fatal("Load with accept_unscanned = nil error, want error")
+			}
+			if !strings.Contains(err.Error(), "accept_unscanned") {
+				t.Fatalf("error = %q, want it to name accept_unscanned", err)
+			}
+		})
+	}
+}
+
+// --- Single provider kind (AC 30) ---------------------------------------------
+
+func TestLoad_SingleProviderNameMustBeASupportedKind(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr bool
+	}{
+		{"anthropic", false},
+		{"mistral", false},
+		{"gemini", false},
+		{"openai-compatible", true},
+		{"custom", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yaml := "provider:\n  name: " + tt.name + "\n  base_url: \"https://upstream.example.com\"\n  api_key_env: SINGLE_TEST_KEY\n"
+			path := writeConfigFile(t, yaml)
+			_, err := Load(path)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load with provider.name %q = nil error, want error", tt.name)
+				}
+				if !strings.Contains(err.Error(), tt.name) {
+					t.Fatalf("error = %q, want it to name %q", err, tt.name)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load with provider.name %q: %v, want success", tt.name, err)
+			}
+		})
+	}
+}
+
+func TestLoad_SingleProviderNameFromEnvMustBeASupportedKind(t *testing.T) {
+	t.Setenv("CARDEA_GATEWAY_PROVIDER_NAME", "custom-upstream")
+	path := writeConfigFile(t, "")
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load with CARDEA_GATEWAY_PROVIDER_NAME=custom-upstream = nil error, want error")
+	}
+	if !strings.Contains(err.Error(), "custom-upstream") {
+		t.Fatalf("error = %q, want it to name custom-upstream", err)
 	}
 }
 

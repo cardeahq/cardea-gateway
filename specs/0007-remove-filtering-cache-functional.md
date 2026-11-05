@@ -32,7 +32,7 @@ detecting PII and substituting a placeholder.
   placeholder and is then discarded; nothing in the Gateway retains it,
   in memory or otherwise.
 - Keep every other part of specs/0006 unchanged: which categories are
-  detected, the placeholder format and its one-fresh-UUID-per-occurrence
+  detected, the placeholder format (since revised by specs/0006 to `[REDACTED:category]`, with no per-occurrence identifier)
   guarantee, what is in and out of scan scope, per-category on/off,
   default-on with zero configuration, and that responses are never
   touched.
@@ -66,7 +66,7 @@ detecting PII and substituting a placeholder.
 **The operator running a support-ticket agent**, continued from 0006's
 scenario. They upgrade again and change no config. Filtering still
 redacts the same categories the same way: the provider still never sees
-the real email address or key, only `[email:f47ac10b-...]`-style
+the real email address or key, only `[REDACTED:email]`-style
 placeholders, and the agent and its caller still see no difference in
 status codes or latency. What's different: the Gateway's startup log no
 longer warns about a cache being volatile, because there is no longer a
@@ -79,9 +79,9 @@ which categories are on.
 
 1. Every behavior specs/0006 states that does not mention the cache is
    unchanged by this spec: detection of the three built-in categories,
-   their independent on/off switches, the `[category:UUID]` placeholder
-   with a fresh UUID for every occurrence (never reused, even for a
-   repeated value), the scanned scope, the stage's position in the
+   their independent on/off switches, the `[REDACTED:category]`
+   placeholder (identical for every occurrence of a category), the
+   scanned scope, the stage's position in the
    pipeline, the default-on posture, and that responses are never
    inspected or rewritten.
 2. 0006 rule 5 — "the real value of every occurrence is written to the
@@ -150,12 +150,12 @@ detected PII value or the text that matched a pattern, unchanged from
 1. **Given** the default configuration, **when** a request's
    conversation contains an email address, **then** the request
    forwarded to the provider has that occurrence replaced by a
-   `[email:UUID]` placeholder exactly as specs/0006 describes, and the
+   `[REDACTED:email]` placeholder exactly as specs/0006 describes, and the
    call succeeds.
 2. **Given** the same request, **when** the same email address appears
-   twice in it, **then** each occurrence is still replaced by a
-   different UUID — the anti-correlation guarantee is unaffected by
-   removing the cache.
+   twice in it, **then** both occurrences are replaced by the identical
+   `[REDACTED:email]` placeholder — the redacted text still reveals
+   nothing about whether the two values were the same.
 3. **Given** a configuration file that still sets any of the removed
    cache controls (a cache backend, capacity, or lifetime) under
    filtering's settings, **when** the Gateway starts, **then** it fails

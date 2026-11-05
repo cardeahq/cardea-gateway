@@ -37,8 +37,9 @@ change that implements this spec.
   named a default for that API.
 - A request is never sent to a provider that cannot understand it.
 - An existing single-provider configuration keeps working unchanged.
-- No content check is silently skipped for a provider whose requests the
-  Gateway cannot read.
+- Every call to every provider goes through every enabled stage, which
+  reads it in its own format. No provider, format or operation is ever
+  forwarded unread, and no setting exempts one.
 
 ## Non-goals
 
@@ -52,13 +53,13 @@ change that implements this spec.
   the caller sent.
 - **Fallback, retry, or load balancing** across providers.
 - **Choosing a provider by name, by header, or by agent type.**
-- **Content scanning for the OpenAI-style and Gemini formats.** Filtering
-  and content-based policy rules keep reading Anthropic-format requests
-  only. Other formats are handled by the explicit acknowledgement in rule
-  14, and readers for them are follow-on work.
-- **Generic passthrough providers in a provider list.** Each listed
-  provider is one of the supported kinds. Any other upstream remains
-  available only through the existing single-provider setting.
+- **Generic passthrough providers**, in a list or as the single provider.
+  Every provider is one of the supported kinds, because the Gateway must
+  be able to read every call it forwards.
+- **Operations beyond those under *Supported operations*.** Batches,
+  files, cached contents, fine-tuning, agents, OCR, moderation and the
+  like are rejected. Supporting one later means adding it to every stage
+  at once.
 
 ## Users and scenarios
 
@@ -75,8 +76,14 @@ Gateway sends it to the operator's default for the OpenAI-style API,
 Mistral.
 
 **The existing operator.** An operator with a single provider setting
-upgrades and changes nothing. Every call still goes to that one provider,
-whatever its model or URL, exactly as before.
+upgrades and changes nothing. Every supported call in that provider's
+format still goes to it, whatever its model.
+
+**The developer pasting secrets into Mistral.** A developer on
+`mistral-large-latest` pastes a customer's email and an AWS key into the
+chat. Mistral receives placeholders, exactly as Claude would, and a
+policy rule the operator wrote against Claude conversations applies to
+this one unchanged.
 
 ## API formats
 
@@ -99,6 +106,28 @@ keeps the model name:
 - Anthropic and OpenAI-style: the `model` field of the JSON body.
 - Gemini: the URL, in the segment after `models/`.
 
+## Supported operations
+
+Within each format, only these operations are forwarded. Each has a
+format-neutral name that policy rules (specs/0004) and logs use:
+
+| Format | Operation | Neutral name | Carries content |
+| --- | --- | --- | --- |
+| Anthropic | Messages | `messages` | yes |
+| Anthropic | Count tokens | `count_tokens` | yes |
+| Anthropic | List models, get one model | `models` | no |
+| OpenAI-style | Chat completions | `messages` | yes |
+| OpenAI-style | Fill-in-the-middle completions | `completion` | yes |
+| OpenAI-style | Embeddings | `embeddings` | yes |
+| OpenAI-style | List models, get one model | `models` | no |
+| Gemini | Generate content, streamed or not | `messages` | yes |
+| Gemini | Count tokens | `count_tokens` | yes |
+| Gemini | Embed content, one or a batch | `embeddings` | yes |
+| Gemini | List models, get one model | `models` | no |
+
+What each stage reads in each of them is that stage's spec: filtering
+(specs/0006), policies (specs/0004), tracing (specs/0003).
+
 ## Behavior
 
 ### Configuration
@@ -115,19 +144,15 @@ keeps the model name:
 3. For each API format, the operator may name one listed provider as that
    format's default. The default must speak that format. A format with no
    default has no fallback.
-4. A configuration with only the single provider setting behaves as
-   before this spec, except as noted in rule 17: that provider serves every call, whatever its model,
-   URL, or format. None of the rules under *Choosing a provider* apply,
-   including the repeated-model rejection, and the Gateway decides what
-   it can read from the provider's kind, as it does today. Setting both
-   the single provider and a provider list, in the file or through
-   environment variables, is a startup error. Two additions:
-   - If the single provider is an Anthropic, Mistral or Gemini provider,
-     rule 13 applies to it: every caller-supplied credential is removed.
-     Any other single provider still receives the request as sent.
-   - If the single provider is one whose requests the Gateway cannot read
-     (rule 14) and filtering or a policy file is on, the Gateway warns
-     once at startup. It still starts.
+4. A configuration with only the single provider setting names one
+   provider, which must be of a supported kind (Anthropic, Mistral or
+   Gemini); any other is a startup error naming it. That provider serves
+   every call in its format whatever model it names: rules 6 to 9,
+   including the repeated-model rejection, do not apply. Rules 10 and 13
+   do: a request of another format, or an operation that is not
+   supported, is rejected, and every caller-supplied credential is
+   removed. Setting both the single provider and a provider list, in the
+   file or through environment variables, is a startup error.
 
 ### Choosing a provider
 
@@ -149,8 +174,11 @@ keeps the model name:
 8. **URL fallback.** If the request has no model, or its model matches no
    provider, the call goes to the default for its format.
 9. If the format has no default in that case, the call is rejected.
-10. A request of unknown format is rejected, whatever model it names: the
-    Gateway cannot tell whether any provider would understand it.
+10. A request of unknown format, or of a known format but an operation not
+    under *Supported operations*, is rejected, whatever model it names:
+    the Gateway either cannot tell whether any provider would understand
+    it, or cannot read it in every stage. This is checked before the
+    model, so such a request never reaches a provider or a later stage.
 11. Requests are routed the same way whatever their method. A model
     listing, which names no model, goes to its format's default.
 
@@ -164,14 +192,13 @@ keeps the model name:
     `x-api-key` and `x-goog-api-key` headers and a `key` query parameter.
     The provider's own key is then added in the form that provider
     expects.
-14. **Providers the Gateway cannot read.** The Gateway reads conversation
-    content only in Anthropic-format requests. When filtering is on, or a
-    policy file is configured, a listed provider of any other kind must be
-    explicitly marked by the operator as accepted without content
-    scanning. Without that mark the Gateway refuses to start, and the
-    error names the provider. With it, the Gateway starts, warns once per
-    such provider, and forwards that provider's calls without redacting
-    them. Policy rules see no conversation content for those calls.
+14. **Every call goes through every stage.** Every enabled stage reads
+    every forwarded call in its own format, whatever the provider:
+    filtering redacts Mistral and Gemini requests as it does Anthropic
+    ones, policy rules see their conversation in the same shape, and
+    tracing records the same details. There is no setting that exempts a
+    provider, a format or an operation from a stage that is on. Turning a
+    stage off turns it off for every call.
 
 ### What other features see
 
@@ -188,11 +215,8 @@ keeps the model name:
     identification no longer names the provider in its record.
 18. Trace records read conversation and response details (tool results
     sent back, response identifier, model, stop reason, tokens, tool
-    calls) as today, with readers built for the Anthropic format. For
-    calls in list mode that are not in the Anthropic format, tool results
-    and token counts are left empty rather than misread, and any other
-    detail those readers do not recognize is also empty. Gemini responses
-    therefore carry outcome and timing only.
+    calls) in every format, streamed or not, as specs/0003 describes. A
+    detail the provider's response does not carry is null.
 19. Changes to the provider list take effect on restart. A policy reload
     does not change routing.
 
@@ -203,7 +227,6 @@ keeps the model name:
 | Provider list | The providers the Gateway can route to: name, kind, base URL, key variable, model names | Empty: the single provider setting applies | One entry: every call of its format whose model matches goes there. |
 | Model names | Which models a provider serves; `*` at the end matches a prefix | None; at least one is required per provider | `*` alone matches every model, making the provider the first choice for its format. |
 | Default per format | Where a call goes when its model is absent or matches no provider | None for any format | No defaults: every call must name a model a listed provider serves. |
-| Accept without content scanning | Lets a provider whose requests the Gateway cannot read be listed while filtering or policies are on | Off | On: that provider's calls are forwarded unredacted, and the Gateway warns at startup. |
 
 With an operator who configures nothing, nothing changes: the single
 Anthropic provider serves every call. Multi-provider routing is off until
@@ -221,7 +244,8 @@ guess.
 | Model matches a provider, but none of those speaks the request's format | 400: the model is not available for this API |
 | Body names the model more than once | 400: the request names its model more than once |
 | No model, or no provider matches it, and the format has no default | 404: no provider serves this request |
-| Unknown format | 404: no provider serves this request |
+| Unknown format, or an operation not supported | 404: no provider serves this request |
+| Supported content operation whose body a stage cannot read (not JSON, wrong shape, a repeated key) | That stage's failure: "governance unavailable" naming it; the provider receives nothing |
 | Body over the Gateway's size limit | 413, as today: the call is refused before routing |
 | Chosen provider unreachable | 502, as today; no other provider is tried |
 
@@ -230,30 +254,26 @@ naming the routing step, a generic message, and the request identifier,
 with the existing do-not-retry header. The response never names a
 provider or base URL.
 
-Forwarding unredacted calls to a provider accepted without content
-scanning is not a failure. It is the operator's explicit choice (rule 14),
-and the Gateway reports it at startup.
-
 Misconfiguration fails at startup, never on a call: a duplicate or empty
-provider name, an unknown kind, a base URL that is not absolute or not
+provider name, an unknown kind (in a list or as the single provider), a
+base URL that is not absolute or not
 `https` (plain `http` is allowed only for localhost), a missing or unset
 key variable, a provider with no model
 names, a model name that is empty or has `*` anywhere but the end, a
-default that names an unlisted provider or one of the wrong format, both
-the single provider and a list, and a provider the Gateway cannot read
-that is not accepted without content scanning. Errors name the setting at
+default that names an unlisted provider or one of the wrong format, and
+both the single provider and a list. Errors name the setting at
 fault and never print a key.
 
 ## What the operator sees
 
 - At startup, in list mode: one line per listed provider with its name,
   kind, model names and whether it is the default for its format. Never
-  its key. In both modes: one warning per provider whose calls are not
-  scanned, naming the checks that do not apply to it.
+  its key.
 - For each rejected call: the Gateway's existing per-denial warning, which
   names the routing step, the request identifier and status, and a reason
   giving the rejection kind (format mismatch, repeated model, no provider,
-  or unknown format), the format, and the model if one was found. Model
+  unknown format, or unsupported operation), the format, the HTTP method
+  and path for an unsupported operation, and the model if one was found. Model
   names longer than 256 bytes are shortened to 256 bytes in logs and
   trace records, since the caller chooses them. Routing always matches
   the full name.
@@ -269,10 +289,9 @@ fault and never print a key.
 ## Acceptance criteria
 
 Unless stated otherwise, the Gateway lists Anthropic (`claude-*`), Mistral
-(`mistral-*`, `codestral-*`) and Gemini (`gemini-*`). Mistral and Gemini
-are accepted without content scanning, Mistral is the OpenAI-style
-default, no other default is set, and filtering is on with every category
-enabled.
+(`mistral-*`, `codestral-*`) and Gemini (`gemini-*`). Mistral is the
+OpenAI-style default, no other default is set, and filtering is on with
+every category enabled.
 
 1. **Given** that setup, **when** an OpenAI-style chat request asks for
    `mistral-large-latest`, **then** it is forwarded to Mistral with
@@ -297,7 +316,9 @@ enabled.
 7. **Given** that setup, **when** a `GET /v1/models` arrives, **then** it
    is forwarded to Mistral.
 8. **Given** that setup, **when** an OpenAI-style chat request has a body
-   that is not JSON, **then** it is forwarded to Mistral.
+   that is not JSON, **then** it is routed to Mistral (it names no
+   model), the caller receives "governance unavailable" naming filtering,
+   and Mistral receives nothing.
 9. **Given** that setup, **when** a request arrives at a URL matching no
    known format, **then** the caller receives 404 and no provider is
    contacted.
@@ -308,9 +329,11 @@ enabled.
     lists `mistral-large-latest`, **when** a request asks for
     `mistral-large-latest`, **then** the first one serves it: list order
     wins, not how specific the match is.
-12. **Given** only the single provider setting, **when** calls arrive for
-    any model and any URL, **then** every call goes to that provider, as
-    before this spec.
+12. **Given** only the single Anthropic provider setting, **when**
+    Messages calls arrive for any model, **then** every one goes to that
+    provider; **when** an OpenAI-style chat request or an Anthropic
+    message-batches request arrives, **then** the caller receives 404 and
+    the provider receives nothing.
 13. **Given** both the single provider setting and a provider list, **when**
     the Gateway starts, **then** it exits with an error naming the
     conflict.
@@ -319,13 +342,15 @@ enabled.
     is forwarded to each kind of provider, **then** the provider receives
     only the Gateway's key for it, in that provider's form, and none of
     the caller's values.
-15. **Given** filtering on and Mistral not accepted without content
-    scanning, **when** the Gateway starts, **then** it exits with an error
-    naming Mistral.
-16. **Given** that setup, **when** the Gateway starts, **then** it logs one
-    warning naming Mistral and one naming Gemini, each saying redaction
-    and conversation-based policy rules do not apply to it, and a Mistral
-    call containing an email address is forwarded unredacted.
+15. **Given** that setup, **when** an OpenAI-style chat request to Mistral
+    and a Gemini generate request each contain an email address, **then**
+    each provider receives it replaced by an `[REDACTED:email]` placeholder,
+    and the Gateway logged no warning at startup about either provider.
+16. **Given** that setup and a policy denying any conversation that
+    contains "Project Falcon", **when** that text is sent in an Anthropic
+    Messages request, an OpenAI-style chat request and a Gemini generate
+    request, **then** all three are denied with the same error and no
+    provider is contacted.
 17. **Given** that setup, **when** a call is routed to Mistral, **then**
     both of its trace records name `mistral` as the provider, and a policy
     rule that refers to the provider sees `mistral`.
@@ -347,8 +372,8 @@ enabled.
     **when** it arrives, **then** the caller receives 400 and no provider
     is contacted.
 23. **Given** only the single provider setting with Mistral and filtering
-    on, **when** the Gateway starts, **then** it starts and logs one
-    warning that Mistral's calls are not scanned.
+    on, **when** a chat request contains an API key, **then** Mistral
+    receives an `[REDACTED:api_key]` placeholder in its place.
 24. **Given** only the single Anthropic provider and a body that names
     `model` twice, **when** it is sent to `/v1/messages`, **then** it is
     handled as before this spec, with no routing rejection.
@@ -367,13 +392,20 @@ enabled.
     a caller with no valid credential is refused, **then** its request
     trace record has no provider field, which it would have had before
     this spec.
+29. **Given** that setup, **when** an Anthropic message-batches request, a
+    Gemini files or cached-contents request, or a Mistral agents request
+    arrives, **then** the caller receives 404, no provider is contacted,
+    and the routing warning gives the reason "unsupported operation" with
+    the method and path.
+30. **Given** a single provider whose name is not `anthropic`, `mistral`
+    or `gemini`, **when** the Gateway starts, **then** it exits with an
+    error naming it.
+31. **Given** that setup and tracing on, **when** a streamed Mistral chat
+    call returns a tool call and token usage, **then** its response trace
+    record carries the tool call and the sent and received token counts.
 
 ## Open questions
 
 - **Merged model listing.** Should a model listing combine the models of
   every listed provider instead of going to one default? Deferred to a
   later spec. Product decides.
-- **Content readers for other formats.** Should filtering, policies and
-  trace response details learn the OpenAI-style and Gemini formats so the
-  acceptance mark is not needed? Follow-on spec. Product decides.
-

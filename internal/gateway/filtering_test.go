@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -141,6 +142,12 @@ func TestFilteringStage_RedactionAttachesDetailAndLogsCategoriesInFixedOrder(t *
 	if _, present := redactions["api_key"]; present {
 		t.Fatalf("detail.redactions = %v, want no api_key key: nothing of that category was found", redactions)
 	}
+	if req["redacted"] != true {
+		t.Fatalf("redacted = %v, want true", req["redacted"])
+	}
+	if cats := fmt.Sprint(req["redacted_categories"]); cats != "[email ssn]" {
+		t.Fatalf("redacted_categories = %v, want [email ssn]", cats)
+	}
 
 	var found bool
 	for _, e := range logs.FilterLevelExact(zapcore.InfoLevel).All() {
@@ -267,7 +274,7 @@ func TestFiltering_ContentLengthMatchesTheRewrittenBodyNotTheOriginal(t *testing
 
 func TestFiltering_EndToEnd(t *testing.T) {
 	t.Run("default config redacts an email and the response is relayed byte-identical (criteria 1, 11)", func(t *testing.T) {
-		const upstreamBody = `{"id":"msg_1","type":"message","content":[{"type":"text","text":"[email:not-a-real-placeholder]"}]}`
+		const upstreamBody = `{"id":"msg_1","type":"message","content":[{"type":"text","text":"[REDACTED:email]"}]}`
 		f, url := newFakeAnthropic(t, func(w http.ResponseWriter, _ []byte) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(upstreamBody))
@@ -283,7 +290,7 @@ func TestFiltering_EndToEnd(t *testing.T) {
 		if strings.Contains(string(got), filterEmail) {
 			t.Fatalf("provider received the real email: %s", got)
 		}
-		if !strings.Contains(string(got), "[email:") {
+		if !strings.Contains(string(got), "[REDACTED:email]") {
 			t.Fatalf("provider did not receive a placeholder: %s", got)
 		}
 	})

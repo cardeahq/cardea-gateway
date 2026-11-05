@@ -82,13 +82,14 @@ func allLogText(logs *observer.ObservedLogs) string {
 
 func msgReq(body string) Request {
 	return Request{
-		CallID:   "ak_0123456789abcdef",
-		Method:   http.MethodPost,
-		Path:     "/v1/messages",
-		Headers:  http.Header{},
-		Body:     []byte(body),
-		Provider: "anthropic",
-		Format:   "anthropic",
+		CallID:    "ak_0123456789abcdef",
+		Method:    http.MethodPost,
+		Path:      "/v1/messages",
+		Headers:   http.Header{},
+		Body:      []byte(body),
+		Provider:  "anthropic",
+		Format:    "anthropic",
+		Operation: "messages",
 	}
 }
 
@@ -244,6 +245,7 @@ deny contains "cookie-seen" if { input.call.headers.cookie }`,
 			req: func() Request {
 				r := msgReq(`{"model":"m","messages":[]}`)
 				r.Path = "/v1/messages/count_tokens"
+				r.Operation = "count_tokens"
 				return r
 			},
 			want: []string{"no-count"},
@@ -260,6 +262,7 @@ deny contains "cookie-seen" if { input.call.headers.cookie }`,
 				r := msgReq(`not json at all`)
 				r.Method = http.MethodGet
 				r.Path = "/v1/models"
+				r.Operation = "models"
 				return r
 			},
 			want: []string{"no-models"},
@@ -303,6 +306,7 @@ deny contains "cookie-seen" if { input.call.headers.cookie }`,
 			req: func() Request {
 				r := msgReq(`{"model":"m"}`)
 				r.Path = "/v1/models"
+				r.Operation = "models"
 				return r
 			},
 		},
@@ -408,6 +412,7 @@ func TestNew_NoPolicyAllowsEverythingWithoutBuildingInput(t *testing.T) {
 	// no input is built.
 	req := msgReq(`{ not json`)
 	req.Path = "/v1/messages/count_tokens"
+	req.Operation = "count_tokens"
 	res, err := e.Evaluate(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Evaluate with no policy: %v", err)
@@ -434,20 +439,29 @@ func TestEngine_NoPolicyReloadIsHarmless(t *testing.T) {
 
 func TestEvaluate_InputErrorsFailClosedWithKindInput(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		body string
+		name   string
+		format string
+		path   string
+		op     string
+		body   string
 	}{
-		{"messages body that is not JSON", "/v1/messages", `{"model":`},
-		{"count_tokens body that is not JSON", "/v1/messages/count_tokens", `nope`},
-		{"empty messages body", "/v1/messages", ``},
-		{"repeated model at the top level", "/v1/messages", `{"model":"a","model":"b","messages":[]}`},
-		{"messages is not an array", "/v1/messages", `{"model":"m","messages":"hello"}`},
+		{"messages body that is not JSON", "anthropic", "/v1/messages", "messages", `{"model":`},
+		{"count_tokens body that is not JSON", "anthropic", "/v1/messages/count_tokens", "count_tokens", `nope`},
+		{"empty messages body", "anthropic", "/v1/messages", "messages", ``},
+		{"repeated model at the top level", "anthropic", "/v1/messages", "messages", `{"model":"a","model":"b","messages":[]}`},
+		{"messages is not an array", "anthropic", "/v1/messages", "messages", `{"model":"m","messages":"hello"}`},
+		// Criterion 35.
+		{"openai chat body that is not JSON", "openai", "/v1/chat/completions", "messages", `{"model":"mistral-large-latest","messages":[`},
+		{"openai repeated key", "openai", "/v1/chat/completions", "messages", `{"model":"a","model":"b","messages":[]}`},
+		{"gemini both spellings of one field", "gemini", "/v1beta/models/gemini-2.5-pro:generateContent", "messages",
+			`{"contents":[],"systemInstruction":{"parts":[]},"system_instruction":{"parts":[]}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e, _ := newEngine(t, `deny contains "x" if { input.model == "never" }`)
 			req := msgReq(tt.body)
+			req.Format = tt.format
+			req.Operation = tt.op
 			req.Path = tt.path
 			_, err := e.Evaluate(context.Background(), req)
 			if err == nil {

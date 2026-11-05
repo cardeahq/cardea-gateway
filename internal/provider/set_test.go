@@ -89,15 +89,16 @@ func TestNewSet_ErrorNamesTheProviderNeverAKeyValue(t *testing.T) {
 }
 
 func TestNewSingleSet_WrapsTheProviderUnderItsName(t *testing.T) {
-	p, err := NewHTTPProxy("custom", "https://example.com")
+	t.Setenv("TEST_SINGLE_SET_KEY", "sk-single")
+	p, err := NewAnthropicProvider("https://example.com", "TEST_SINGLE_SET_KEY")
 	if err != nil {
-		t.Fatalf("NewHTTPProxy: %v", err)
+		t.Fatalf("NewAnthropicProvider: %v", err)
 	}
-	set := NewSingleSet("custom", p)
+	set := NewSingleSet("anthropic", p)
 
-	got, ok := set.Get("custom")
+	got, ok := set.Get("anthropic")
 	if !ok || got != p {
-		t.Fatalf("Get(%q) = %v, %v, want the wrapped provider, true", "custom", got, ok)
+		t.Fatalf("Get(%q) = %v, %v, want the wrapped provider, true", "anthropic", got, ok)
 	}
 	if _, ok := set.Get("anything-else"); ok {
 		t.Fatal("Get on an unrelated name = true, want false: a single set holds exactly one provider")

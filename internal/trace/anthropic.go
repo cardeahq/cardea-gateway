@@ -23,7 +23,7 @@ func parseMessagesRequest(body []byte) (messagesRequest, bool) {
 }
 
 type toolResultBlock struct {
-	id      string
+	id      *string
 	isError bool
 	content json.RawMessage
 }
@@ -83,7 +83,7 @@ func newToolResults(messages []json.RawMessage) ([]toolResultBlock, error) {
 		if json.Unmarshal(b.ToolUseID, &id) != nil || id == "" {
 			return nil, fmt.Errorf("last message block %d: tool_result has no tool_use_id string", i)
 		}
-		res := toolResultBlock{id: id, content: b.Content}
+		res := toolResultBlock{id: &id, content: b.Content}
 		if b.IsError != nil {
 			res.isError = *b.IsError
 		}

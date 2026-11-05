@@ -81,7 +81,7 @@ func TestFormatOf(t *testing.T) {
 		{"anthropic", FormatAnthropic},
 		{"mistral", FormatOpenAI},
 		{"gemini", FormatGemini},
-		{"", FormatUnknown},
+		{"", FormatUnknown}, // there is no passthrough kind any more
 		{"unknown-kind", FormatUnknown},
 	}
 	for _, tt := range tests {

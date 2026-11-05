@@ -44,6 +44,7 @@ func TestEngine_Redact_DetectionAndReplacement(t *testing.T) {
 		{"ssn uk", CategorySSN, exSSNUK},
 		{"ssn fr", CategorySSN, exSSNFR},
 		{"api key openai", CategoryAPIKey, exAPIKeyOpenAI},
+		{"api key openai project", CategoryAPIKey, exAPIKeyOpenAIProject},
 		{"api key github", CategoryAPIKey, exAPIKeyGitHub},
 		{"api key aws", CategoryAPIKey, exAPIKeyAWS},
 		{"api key slack", CategoryAPIKey, exAPIKeySlack},
@@ -54,7 +55,7 @@ func TestEngine_Redact_DetectionAndReplacement(t *testing.T) {
 			eng := testEngine()
 			body := []byte(sysBody("see " + tt.val + " please"))
 
-			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
+			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic", Operation: "messages"})
 			if err != nil {
 				t.Fatalf("Redact: %v", err)
 			}
@@ -62,7 +63,7 @@ func TestEngine_Redact_DetectionAndReplacement(t *testing.T) {
 				t.Fatalf("Counts = %v, want %s:1", res.Counts, tt.cat)
 			}
 			ph := placeholders(res.Body)
-			if len(ph) != 1 || ph[0][0] != string(tt.cat) {
+			if len(ph) != 1 || ph[0] != string(tt.cat) {
 				t.Fatalf("placeholders = %v, want exactly one of category %s", ph, tt.cat)
 			}
 			if strings.Contains(string(res.Body), tt.val) {
@@ -76,7 +77,7 @@ func TestEngine_Redact_NegativeAPIKeyCaseIsNotDetected(t *testing.T) {
 	eng := testEngine()
 	body := []byte(sysBody("token " + exNoPrefixHex + " end"))
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic", Operation: "messages"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestEngine_Redact_DisabledCategoryLetsItsPatternThroughOthersStillRedacted(
 	eng := testEngineWithCategories(CategorySSN, CategoryAPIKey) // email disabled
 	body := []byte(sysBody(exEmail + " and " + exSSNUS))
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic", Operation: "messages"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -110,27 +111,19 @@ func TestEngine_Redact_DisabledCategoryLetsItsPatternThroughOthersStillRedacted(
 	}
 }
 
-func TestEngine_Redact_RepeatedValueGetsDistinctUUIDs(t *testing.T) {
+func TestEngine_Redact_RepeatedValueGetsOnePlaceholderPerOccurrence(t *testing.T) {
 	eng := testEngine()
 	body := []byte(sysBody(exEmail + " then " + exEmail + " then " + exEmail))
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic", Operation: "messages"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
 	if res.Counts[CategoryEmail] != 3 {
 		t.Fatalf("Counts[email] = %d, want 3", res.Counts[CategoryEmail])
 	}
-	ph := placeholders(res.Body)
-	if len(ph) != 3 {
-		t.Fatalf("placeholders = %v, want 3", ph)
-	}
-	seen := map[string]bool{}
-	for _, p := range ph {
-		if seen[p[1]] {
-			t.Fatalf("UUID %s reused across occurrences of the same value", p[1])
-		}
-		seen[p[1]] = true
+	if got := atString(t, decodeAny(t, res.Body), "system"); got != "[REDACTED:email] then [REDACTED:email] then [REDACTED:email]" {
+		t.Fatalf("system = %q, want one [REDACTED:email] placeholder per occurrence", got)
 	}
 }
 
@@ -142,12 +135,12 @@ func TestEngine_Redact_OverlappingMatchesKeepTheEarlierLongerOne(t *testing.T) {
 	overlapping := "xoxb-" + exSSNUS + "-abcdefghij"
 	body := []byte(sysBody("secret " + overlapping + " end"))
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic", Operation: "messages"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
 	ph := placeholders(res.Body)
-	if len(ph) != 1 || ph[0][0] != string(CategoryAPIKey) {
+	if len(ph) != 1 || ph[0] != string(CategoryAPIKey) {
 		t.Fatalf("placeholders = %v, want exactly one api_key placeholder covering the whole token", ph)
 	}
 	if res.Counts[CategorySSN] != 0 {
@@ -159,7 +152,7 @@ func TestEngine_Redact_NothingMatchedReturnsTheOriginalBytes(t *testing.T) {
 	eng := testEngine()
 	body := []byte(`{"system":"nothing to see here","model":"m","messages":[{"role":"user","content":"hi"}]}`)
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic", Operation: "messages"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -171,39 +164,89 @@ func TestEngine_Redact_NothingMatchedReturnsTheOriginalBytes(t *testing.T) {
 	}
 }
 
-// --- Non-target bodies --------------------------------------------------------
+// --- Dispatch on format and operation (specs/0006-technical) --------------------
 
-func TestEngine_Redact_NonTargetBodiesAreUnchangedWithNoError(t *testing.T) {
+func TestEngine_Redact_ModelsOperationReturnsTheBodyUnchanged(t *testing.T) {
+	// A model listing carries no content; its body (usually empty, here
+	// deliberately odd) is never parsed.
+	for _, format := range []string{"anthropic", "openai", "gemini"} {
+		for name, body := range map[string]string{
+			"empty":    "",
+			"not JSON": "not json at all " + exEmail,
+		} {
+			t.Run(format+"/"+name, func(t *testing.T) {
+				eng := testEngine()
+				res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/models", Body: []byte(body), Format: format, Operation: "models"})
+				if err != nil {
+					t.Fatalf("Redact: %v, want nil for a models operation", err)
+				}
+				if string(res.Body) != body || res.Counts != nil {
+					t.Fatalf("Result = %+v, want the body unchanged and no counts", res)
+				}
+			})
+		}
+	}
+}
+
+func TestEngine_Redact_PairWithNoRewriterIsAnInternalError(t *testing.T) {
+	// Never the body unchanged: a format or operation routing learns
+	// before filtering does must fail closed, not leak.
+	body := []byte(sysBody("mail " + exEmail))
 	tests := []struct {
-		name string
-		path string
-		body string
+		name, format, op string
 	}{
-		{"not an anthropic conversation path", "/v1/chat/completions", `{"model":"m","messages":[{"role":"user","content":"` + exEmail + `"}]}`},
-		{"non-JSON body on an unrelated path", "/v1/chat/completions", "not json at all " + exEmail},
+		{"no format", "", "messages"},
+		{"unknown format", "cohere", "messages"},
+		{"no operation", "anthropic", ""},
+		{"unknown operation", "anthropic", "batches"},
+		{"anthropic has no completion", "anthropic", "completion"},
+		{"anthropic has no embeddings", "anthropic", "embeddings"},
+		{"openai has no count_tokens", "openai", "count_tokens"},
+		{"gemini has no completion", "gemini", "completion"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			eng := testEngine()
-			body := []byte(tt.body)
-			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: tt.path, Body: body, Format: "anthropic"})
-			if err != nil {
-				t.Fatalf("Redact: %v, want nil error for a non-target body", err)
+			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: tt.format, Operation: tt.op})
+			var fe *FilterError
+			if !errors.As(err, &fe) || fe.Kind != "internal" {
+				t.Fatalf("err = %v, want *FilterError{Kind: \"internal\"}", err)
 			}
-			if string(res.Body) != string(body) || res.Counts != nil {
-				t.Fatalf("Result = %+v, want the body unchanged and no counts", res)
+			if res.Body != nil || res.Counts != nil {
+				t.Fatalf("Result = %+v on error, want the zero value", res)
 			}
 		})
 	}
 }
 
-func TestEngine_Redact_NonAnthropicFormatIsNotATarget(t *testing.T) {
-	eng := testEngineWithCategories(CategoryEmail)
-	body := []byte(sysBody(exEmail))
-
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "openai"})
-	if err != nil || string(res.Body) != string(body) {
-		t.Fatalf("Redact = %+v, %v, want the body unchanged with no error", res, err)
+func TestEngine_Redact_NoPIIInAnyFormatReturnsTheOriginalBytes(t *testing.T) {
+	// Criterion 23: a body with nothing to redact reaches the provider
+	// byte-identical, whatever its format and content operation. The
+	// bodies use odd spacing so a re-marshal would show.
+	tests := []struct {
+		format, op, body string
+	}{
+		{"anthropic", "messages", `{ "model":"m",  "messages":[{"role":"user","content":"hi"}] }`},
+		{"anthropic", "count_tokens", `{ "model":"m",  "messages":[{"role":"user","content":"hi"}] }`},
+		{"openai", "messages", `{ "model":"m", "messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null,"tool_calls":[{"id":"c","type":"function","function":{"name":"f","arguments":"{ \"a\" : 1 }"}}]}] }`},
+		{"openai", "completion", `{ "model":"codestral-latest", "prompt":"def f(", "suffix":"return x" }`},
+		{"openai", "embeddings", `{ "model":"mistral-embed", "input":["a", "b"] }`},
+		{"gemini", "messages", `{ "contents":[{"role":"user","parts":[{"text":"hi"}]}], "systemInstruction":{"parts":[{"text":"be brief"}]} }`},
+		{"gemini", "count_tokens", `{ "generateContentRequest":{"model":"models/gemini-2.5-pro","contents":[{"parts":[{"text":"hi"}]}]} }`},
+		{"gemini", "embeddings", `{ "requests":[{"model":"models/text-embedding-004","content":{"parts":[{"text":"hi"}]}}] }`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.format+"/"+tt.op, func(t *testing.T) {
+			eng := testEngine()
+			body := []byte(tt.body)
+			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Body: body, Format: tt.format, Operation: tt.op})
+			if err != nil {
+				t.Fatalf("Redact: %v", err)
+			}
+			if string(res.Body) != tt.body || res.Counts != nil {
+				t.Fatalf("Result = %s (counts %v), want the exact original bytes", res.Body, res.Counts)
+			}
+		})
 	}
 }
 
@@ -211,7 +254,7 @@ func TestEngine_Redact_EveryCategoryDisabledNeverInspectsTheBody(t *testing.T) {
 	eng := &Engine{patterns: map[Category][]*regexp.Regexp{}}
 	malformed := []byte(`{"model":`) // not even valid JSON, on a target path
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: malformed, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: malformed, Format: "anthropic", Operation: "messages"})
 	if err != nil {
 		t.Fatalf("Redact: %v, want nil: every category disabled must not even parse the body", err)
 	}
@@ -235,7 +278,7 @@ func TestEngine_Redact_TargetBodyParseFailuresGiveInputError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			eng := testEngine()
-			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: []byte(tt.body), Format: "anthropic"})
+			res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: []byte(tt.body), Format: "anthropic", Operation: "messages"})
 
 			var fe *FilterError
 			if !errors.As(err, &fe) || fe.Kind != "input" {
@@ -259,7 +302,7 @@ func TestEngine_Redact_PanicDuringRedactionIsRecoveredWithoutLeakingItsValue(t *
 	eng := &Engine{patterns: map[Category][]*regexp.Regexp{CategoryEmail: {nil}}}
 	body := []byte(sysBody(secretText))
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic", Operation: "messages"})
 
 	var fe *FilterError
 	if !errors.As(err, &fe) || fe.Kind != "internal" {
@@ -286,7 +329,7 @@ func TestEngine_Redact_NoMarkerAnywhereInTheOutput(t *testing.T) {
 		`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"bash","input":{"a":{"b":{"c":"` + markerEmail + `"}}}}]},` +
 		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"result ` + markerEmail + `"}]}]}`)
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic", Operation: "messages"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -323,7 +366,7 @@ func TestNew_CategoriesFromConfigRestrictWhichPatternsRun(t *testing.T) {
 	}
 
 	body := []byte(sysBody(exEmail + " " + exSSNUS + " " + exAPIKeyOpenAI))
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic", Operation: "messages"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -344,32 +387,11 @@ func TestNew_EveryCategoryDisabledStillSucceedsButRedactIsANoOp(t *testing.T) {
 	}
 
 	malformed := []byte(`{"model":`)
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: malformed, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: malformed, Format: "anthropic", Operation: "messages"})
 	if err != nil {
 		t.Fatalf("Redact: %v, want nil: nothing to scan, so a malformed body is not even inspected", err)
 	}
 	if string(res.Body) != string(malformed) {
 		t.Fatalf("Body = %s, want the original bytes", res.Body)
-	}
-}
-
-// --- ReadsFormat (specs/0009) --------------------------------------------------
-
-func TestReadsFormat(t *testing.T) {
-	tests := []struct {
-		format string
-		want   bool
-	}{
-		{"anthropic", true},
-		{"openai", false},
-		{"gemini", false},
-		{"", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.format, func(t *testing.T) {
-			if got := ReadsFormat(tt.format); got != tt.want {
-				t.Fatalf("ReadsFormat(%q) = %v, want %v", tt.format, got, tt.want)
-			}
-		})
 	}
 }

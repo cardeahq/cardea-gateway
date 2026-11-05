@@ -282,7 +282,7 @@ func csSentinelRecord(i int) RequestRecord {
 	r.Model = &model
 	r.Outcome.Reason = &reason
 	r.Session = Session{ID: &session, Status: "claimed"}
-	r.ToolResults = []ToolResult{{ToolCallID: csSentinl + "-TOOLCALL", Fingerprint: &fp}}
+	r.ToolResults = []ToolResult{{ToolCallID: ptr(csSentinl + "-TOOLCALL"), Fingerprint: &fp}}
 	return r
 }
 

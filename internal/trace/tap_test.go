@@ -110,17 +110,13 @@ func jsonHeader() http.Header {
 }
 
 func startTap(tr *Tracer, status int, h http.Header) *ResponseTap {
-	tap := tr.NewResponseTap(true)
-	tap.Start(status, h)
-	return tap
+	return startTapFor(tr, "anthropic", "messages", status, h)
 }
 
-// startTapNoUsage is startTap with readUsage false, for specs/0009's
-// "Tokens stays nil" cases (a list-mode call of a format other than
-// anthropic, where the Anthropic usage reader would misread an
-// OpenAI-style usage object as zero tokens).
-func startTapNoUsage(tr *Tracer, status int, h http.Header) *ResponseTap {
-	tap := tr.NewResponseTap(false)
+// startTapFor starts a tap reading the given routing format and operation
+// (specs/0003-technical, Reading other formats).
+func startTapFor(tr *Tracer, format, op string, status int, h http.Header) *ResponseTap {
+	tap := tr.NewResponseTap(format, op)
 	tap.Start(status, h)
 	return tap
 }
@@ -156,11 +152,22 @@ type wantToolCall struct {
 
 var anyTime = &time.Time{}
 
+// noID is wantToolCall.id for a tool call that carries no identifier (a
+// Gemini function call without an id): ToolCallID must be nil.
+const noID = "\x00none"
+
+func (w wantToolCall) idPtr() *string {
+	if w.id == noID {
+		return nil
+	}
+	return &w.id
+}
+
 func checkToolCall(t *testing.T, got ToolCall, want wantToolCall) {
 	t.Helper()
-	if got.ToolCallID != want.id || got.ToolName != want.name || got.ServerSide != want.serverSide {
-		t.Fatalf("tool call = {id %q, name %q, server_side %v}, want {id %q, name %q, server_side %v}",
-			got.ToolCallID, got.ToolName, got.ServerSide, want.id, want.name, want.serverSide)
+	if !equalPtr(got.ToolCallID, want.idPtr()) || got.ToolName != want.name || got.ServerSide != want.serverSide {
+		t.Fatalf("tool call = {id %v, name %q, server_side %v}, want {id %v, name %q, server_side %v}",
+			deref(got.ToolCallID), got.ToolName, got.ServerSide, deref(want.idPtr()), want.name, want.serverSide)
 	}
 	if got.Outcome != want.outcome {
 		t.Fatalf("tool call %s Outcome = %q, want %q", want.id, got.Outcome, want.outcome)
@@ -303,8 +310,8 @@ func TestTap_SSE_DisconnectBeforeABlockClosesMakesItNotDelivered(t *testing.T) {
 		}
 		checkToolCall(t, info.ToolCalls[0], webSearchCall(&t0))
 		got := info.ToolCalls[1]
-		if got.ToolCallID != "toolu_01B2" || got.ToolName != "bash" {
-			t.Fatalf("second tool call = %s/%s, want toolu_01B2/bash", got.ToolCallID, got.ToolName)
+		if !equalPtr(got.ToolCallID, ptr("toolu_01B2")) || got.ToolName != "bash" {
+			t.Fatalf("second tool call = %v/%s, want toolu_01B2/bash", deref(got.ToolCallID), got.ToolName)
 		}
 		if got.Outcome != "not_delivered" {
 			t.Fatalf("Outcome = %q, want not_delivered", got.Outcome)
@@ -522,7 +529,7 @@ func TestTap_SSE_InvalidArgumentsFailTheToolCallOnly(t *testing.T) {
 		t.Fatalf("len(ToolCalls) = %d, want 2", len(info.ToolCalls))
 	}
 	bad := info.ToolCalls[0]
-	if bad.ToolCallID != "toolu_bad" || bad.Recorded {
+	if !equalPtr(bad.ToolCallID, ptr("toolu_bad")) || bad.Recorded {
 		t.Fatalf("invalid tool call = %+v, want toolu_bad with Recorded false", bad)
 	}
 	if bad.SizeBytes != nil || bad.Fingerprint != nil || bad.ArgumentNames != nil {
@@ -556,48 +563,6 @@ func TestTap_JSON_MatchesTheStreamedForm(t *testing.T) {
 		if *info.ToolCalls[i].Fingerprint != *s.ToolCalls[i].Fingerprint {
 			t.Fatalf("tool call %d fingerprint: JSON %s, SSE %s; want equal", i, *info.ToolCalls[i].Fingerprint, *s.ToolCalls[i].Fingerprint)
 		}
-	}
-}
-
-// --- readUsage (specs/0009) ---------------------------------------------------
-
-func TestTap_ReadUsageFalseLeavesTokensNilButReadsEverythingElse(t *testing.T) {
-	tr := newTestTracer(t, nil)
-	tap := startTapNoUsage(tr, http.StatusOK, jsonHeader())
-	tap.Write([]byte(standardJSONBody), t0)
-	info := tap.Result()
-
-	if info.Tokens != nil {
-		t.Fatalf("Tokens = %+v, want nil with readUsage false", info.Tokens)
-	}
-	if !equalPtr(info.ResponseID, ptr(responseID)) {
-		t.Fatalf("ResponseID = %v, want %s: readUsage must only affect Tokens", deref(info.ResponseID), responseID)
-	}
-	if !equalPtr(info.ResponseModel, ptr(responseModel)) {
-		t.Fatalf("ResponseModel = %v, want %s", deref(info.ResponseModel), responseModel)
-	}
-	if !equalPtr(info.StopReason, ptr("tool_use")) {
-		t.Fatalf("StopReason = %v, want tool_use", deref(info.StopReason))
-	}
-	if len(info.ToolCalls) != 2 {
-		t.Fatalf("len(ToolCalls) = %d, want 2", len(info.ToolCalls))
-	}
-}
-
-// TestTap_ReadUsageFalseOnAnOpenAIStyleUsageObjectStillGivesNilTokens pins
-// down the reason readUsage exists at all: the Anthropic usage reader
-// would otherwise misread an OpenAI-style {"usage":{"prompt_tokens":...}}
-// object as zero tokens rather than leaving Tokens absent.
-func TestTap_ReadUsageFalseOnAnOpenAIStyleUsageObjectStillGivesNilTokens(t *testing.T) {
-	tr := newTestTracer(t, nil)
-	body := `{"id":"chatcmpl-1","model":"mistral-large-latest","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],` +
-		`"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`
-	tap := startTapNoUsage(tr, http.StatusOK, jsonHeader())
-	tap.Write([]byte(body), t0)
-	info := tap.Result()
-
-	if info.Tokens != nil {
-		t.Fatalf("Tokens = %+v, want nil: an OpenAI-style usage object must never be misread as zero tokens", info.Tokens)
 	}
 }
 

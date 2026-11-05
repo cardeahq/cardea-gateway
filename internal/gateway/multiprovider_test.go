@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest"
 
 	"github.com/cardeahq/cardea-gateway/internal/config"
@@ -69,9 +71,8 @@ func newMPUpstream(t *testing.T) (*mpUpstream, string) {
 
 // mpSetup is the standard three-provider configuration from the
 // functional spec's acceptance criteria: Anthropic (claude-*), Mistral
-// (mistral-*, codestral-*, accepted unscanned, the OpenAI-style default)
-// and Gemini (gemini-*, accepted unscanned), filtering on with every
-// category.
+// (mistral-*, codestral-*, the OpenAI-style default) and Gemini
+// (gemini-*), filtering on with every category.
 type mpSetup struct {
 	anthropic, mistral, gemini *mpUpstream
 	anthropicURL               string
@@ -97,7 +98,7 @@ func newMPSetup(t *testing.T) *mpSetup {
 }
 
 // mpConfig builds the standard list-mode config.Config. filteringOn and
-// policiesPath let tests exercise the unscanned-provider check.
+// policiesPath turn the content stages on.
 func mpConfig(t *testing.T, s *mpSetup, filteringOn bool, policiesPath string) config.Config {
 	t.Helper()
 	t.Setenv(mpAnthropicKeyEnv, mpAnthropicKey)
@@ -114,8 +115,8 @@ func mpConfig(t *testing.T, s *mpSetup, filteringOn bool, policiesPath string) c
 		Routing: config.RoutingConfig{
 			Providers: []config.ProviderEntry{
 				{Name: "anthropic", Kind: "anthropic", BaseURL: s.anthropicURL, APIKeyEnv: mpAnthropicKeyEnv, Models: []string{"claude-*"}},
-				{Name: "mistral", Kind: "mistral", BaseURL: s.mistralURL, APIKeyEnv: mpMistralKeyEnv, Models: []string{"mistral-*", "codestral-*"}, AcceptUnscanned: true},
-				{Name: "gemini", Kind: "gemini", BaseURL: s.geminiURL, APIKeyEnv: mpGeminiKeyEnv, Models: []string{"gemini-*"}, AcceptUnscanned: true},
+				{Name: "mistral", Kind: "mistral", BaseURL: s.mistralURL, APIKeyEnv: mpMistralKeyEnv, Models: []string{"mistral-*", "codestral-*"}},
+				{Name: "gemini", Kind: "gemini", BaseURL: s.geminiURL, APIKeyEnv: mpGeminiKeyEnv, Models: []string{"gemini-*"}},
 			},
 			Defaults: map[string]string{"openai": "mistral"},
 		},
@@ -133,6 +134,11 @@ func mpConfig(t *testing.T, s *mpSetup, filteringOn bool, policiesPath string) c
 // way cli.serve's list-mode branch does, and returns the built Gateway.
 func mpBuild(t *testing.T, cfg config.Config) *Gateway {
 	t.Helper()
+	return mpBuildWith(t, cfg, zaptest.NewLogger(t))
+}
+
+func mpBuildWith(t *testing.T, cfg config.Config, logger *zap.Logger) *Gateway {
+	t.Helper()
 	set, err := provider.NewSet(cfg.Routing.Providers)
 	if err != nil {
 		t.Fatalf("provider.NewSet: %v", err)
@@ -149,29 +155,24 @@ func mpBuild(t *testing.T, cfg config.Config) *Gateway {
 	if err != nil {
 		t.Fatalf("routing.NewTable: %v", err)
 	}
-	g, err := New(cfg, zaptest.NewLogger(t), set, table)
+	g, err := New(cfg, logger, set, table)
 	if err != nil {
 		t.Fatalf("gateway.New: %v", err)
 	}
 	return g
 }
 
-func mpBuildExpectError(t *testing.T, cfg config.Config) error {
+func geminiCall(action, body string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:"+action, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	return r
+}
+
+func noUpstreamReached(t *testing.T, s *mpSetup) {
 	t.Helper()
-	set, err := provider.NewSet(cfg.Routing.Providers)
-	if err != nil {
-		return err
+	if s.anthropic.count() != 0 || s.mistral.count() != 0 || s.gemini.count() != 0 {
+		t.Fatalf("a provider was contacted: anthropic=%d mistral=%d gemini=%d", s.anthropic.count(), s.mistral.count(), s.gemini.count())
 	}
-	var routes []routing.Route
-	for _, e := range cfg.Routing.Providers {
-		routes = append(routes, routing.Route{Provider: e.Name, Kind: e.Kind, Formats: []routing.Format{routing.FormatOf(e.Kind)}, Patterns: e.Models})
-	}
-	table, err := routing.NewTable(routes, nil)
-	if err != nil {
-		return err
-	}
-	_, err = New(cfg, zaptest.NewLogger(t), set, table)
-	return err
 }
 
 func anthropicCall(model string) *http.Request {
@@ -188,7 +189,7 @@ func openAICall(path, model string) *http.Request {
 	return r
 }
 
-// --- AC 1-3, 5, 7, 8, 10: the right upstream, with its own key -------------
+// --- AC 1-3, 5, 7, 10: the right upstream, with its own key -------------
 
 func TestMultiProvider_RoutesEachCallToTheRightUpstreamWithItsOwnKey(t *testing.T) {
 	s := newMPSetup(t)
@@ -247,20 +248,37 @@ func TestMultiProvider_RoutesEachCallToTheRightUpstreamWithItsOwnKey(t *testing.
 	})
 
 	t.Run("AC7: GET /v1/models goes to the OpenAI-style default", func(t *testing.T) {
+		before := s.mistral.count()
 		r := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 		rec := serve(g, r)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200", rec.Code)
 		}
-	})
-
-	t.Run("AC8: a non-JSON OpenAI-style body still reaches the default", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader("not json"))
-		rec := serve(g, r)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", rec.Code)
+		if s.mistral.count() != before+1 {
+			t.Fatal("mistral did not receive the model listing")
 		}
 	})
+}
+
+func TestMultiProvider_AC8_NonJSONChatBodyIsRoutedThenFailedClosedByFiltering(t *testing.T) {
+	s := newMPSetup(t)
+	cfg := mpConfig(t, s, true, "")
+	g := mpBuild(t, cfg)
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader("not json"))
+	rec := serve(g, r)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	env := decodeErr(t, rec)
+	if env.Error.Stage != "filtering" {
+		t.Fatalf("error.stage = %q, want filtering", env.Error.Stage)
+	}
+	noUpstreamReached(t, s)
+	req, _ := callRecords(t, cfg.Tracing.Sink.Path)
+	if req["provider"] != "mistral" {
+		t.Fatalf("request record provider = %v, want mistral: the call was routed before filtering failed it", req["provider"])
+	}
 }
 
 func TestMultiProvider_TwoMistralProviders_FirstListedServesAMatchingModel(t *testing.T) {
@@ -295,13 +313,6 @@ func TestMultiProvider_Rejections(t *testing.T) {
 	cfg.Routing.Defaults["anthropic"] = "anthropic"
 	g := mpBuild(t, cfg)
 
-	noUpstreamReached := func(t *testing.T) {
-		t.Helper()
-		if s.anthropic.count() != 0 || s.mistral.count() != 0 || s.gemini.count() != 0 {
-			t.Fatal("a rejected call reached an upstream")
-		}
-	}
-
 	t.Run("AC4: Anthropic request for a Mistral model is rejected, not even sent to the Anthropic default", func(t *testing.T) {
 		rec := serve(g, anthropicCall("mistral-large-latest"))
 		if rec.Code != http.StatusBadRequest {
@@ -311,7 +322,7 @@ func TestMultiProvider_Rejections(t *testing.T) {
 		if env.Error.Stage != "routing" {
 			t.Fatalf("error.stage = %q, want routing", env.Error.Stage)
 		}
-		noUpstreamReached(t)
+		noUpstreamReached(t, s)
 	})
 
 	t.Run("with an Anthropic default configured, an unmatched Anthropic-format request goes to it instead of being rejected", func(t *testing.T) {
@@ -329,6 +340,56 @@ func TestMultiProvider_Rejections(t *testing.T) {
 		env := decodeErr(t, rec)
 		if env.Error.Stage != "routing" {
 			t.Fatalf("error.stage = %q, want routing", env.Error.Stage)
+		}
+	})
+
+	t.Run("AC29: unsupported operations are rejected before any provider", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			req        func() *http.Request
+			wantReason string // "" when only the 404 is asserted
+		}{
+			{"anthropic message batches", func() *http.Request {
+				r := httptest.NewRequest(http.MethodPost, "/v1/messages/batches", strings.NewReader(`{"requests":[{"custom_id":"a","params":{"model":"claude-sonnet-5","messages":[]}}]}`))
+				r.Header.Set("anthropic-version", "2023-06-01")
+				return r
+			}, "unsupported_operation format=anthropic method=POST path=/v1/messages/batches"},
+			{"gemini files", func() *http.Request {
+				return httptest.NewRequest(http.MethodPost, "/v1beta/files", strings.NewReader(`{}`))
+			}, "unsupported_operation format=gemini method=POST path=/v1beta/files"},
+			{"gemini cached contents", func() *http.Request {
+				return httptest.NewRequest(http.MethodPost, "/v1beta/cachedContents", strings.NewReader(`{"model":"models/gemini-2.5-pro","contents":[]}`))
+			}, "unsupported_operation format=gemini method=POST path=/v1beta/cachedContents"},
+			{"mistral model deletion", func() *http.Request {
+				return httptest.NewRequest(http.MethodDelete, "/v1/models/ft:mistral-large:abc", nil)
+			}, "unsupported_operation format=openai method=DELETE path=/v1/models/ft:mistral-large:abc"},
+			// specs/0009 format detection gives /v1/agents/... no format, so
+			// only the 404 and the untouched providers are asserted here.
+			{"mistral agents", func() *http.Request {
+				return httptest.NewRequest(http.MethodPost, "/v1/agents/completions", strings.NewReader(`{"agent_id":"ag_1","messages":[]}`))
+			}, ""},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				before := s.anthropic.count() + s.mistral.count() + s.gemini.count()
+				rec := serve(g, tt.req())
+				if rec.Code != http.StatusNotFound {
+					t.Fatalf("status = %d, want 404", rec.Code)
+				}
+				if env := decodeErr(t, rec); env.Error.Stage != "routing" {
+					t.Fatalf("error.stage = %q, want routing", env.Error.Stage)
+				}
+				if after := s.anthropic.count() + s.mistral.count() + s.gemini.count(); after != before {
+					t.Fatal("an unsupported operation reached a provider")
+				}
+				if tt.wantReason == "" {
+					return
+				}
+				req, _ := callRecords(t, cfg.Tracing.Sink.Path)
+				if got := field(req, "outcome", "reason"); got != tt.wantReason {
+					t.Fatalf("request record reason = %v, want %q", got, tt.wantReason)
+				}
+			})
 		}
 	})
 
@@ -358,36 +419,8 @@ func TestMultiProvider_NoDefaultRejectsAnUnknownModel(t *testing.T) {
 
 // --- AC 12, 24: single mode ------------------------------------------------
 
-func TestMultiProvider_SingleModePassthroughForwardsEveryPath(t *testing.T) {
-	// AC12
-	upstream, upstreamURL := newMPUpstream(t)
-	prov, err := provider.NewHTTPProxy("passthrough", upstreamURL)
-	if err != nil {
-		t.Fatalf("NewHTTPProxy: %v", err)
-	}
-	set, table := singleSetAndTable("passthrough", "", prov)
-	cfg := config.Config{
-		Server:   config.ServerConfig{ListenAddr: "127.0.0.1:0"},
-		Pipeline: config.PipelineConfig{MaxBodyBytes: 1 << 20},
-	}
-	g, err := New(cfg, zaptest.NewLogger(t), set, table)
-	if err != nil {
-		t.Fatalf("gateway.New: %v", err)
-	}
-
-	for _, path := range []string{"/v1/messages", "/v1/chat/completions", "/anything/at/all", "/v1beta/models/gemini-2.5-pro:generateContent"} {
-		rec := serve(g, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"a","model":"b"}`)))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("path %s: status = %d, want 200: single mode forwards whatever its model, URL or format", path, rec.Code)
-		}
-	}
-	if upstream.count() != 4 {
-		t.Fatalf("upstream received %d calls, want 4", upstream.count())
-	}
-}
-
-func TestMultiProvider_SingleAnthropicForwardsARepeatedModelBodyAsToday(t *testing.T) {
-	// AC24
+func singleAnthropicGateway(t *testing.T) (*mpUpstream, *Gateway) {
+	t.Helper()
 	upstream, upstreamURL := newMPUpstream(t)
 	t.Setenv("AK_MP_SINGLE_ANTHROPIC_KEY", "sk-single")
 	prov, err := provider.NewAnthropicProvider(upstreamURL, "AK_MP_SINGLE_ANTHROPIC_KEY")
@@ -403,6 +436,44 @@ func TestMultiProvider_SingleAnthropicForwardsARepeatedModelBodyAsToday(t *testi
 	if err != nil {
 		t.Fatalf("gateway.New: %v", err)
 	}
+	return upstream, g
+}
+
+func TestMultiProvider_AC12_SingleAnthropicServesItsFormatAndRejectsTheRest(t *testing.T) {
+	upstream, g := singleAnthropicGateway(t)
+
+	for _, model := range []string{"claude-sonnet-5", "gpt-4", "mistral-large-latest"} {
+		if rec := serve(g, anthropicCall(model)); rec.Code != http.StatusOK {
+			t.Fatalf("model %s: status = %d, want 200: single mode serves every model of its format", model, rec.Code)
+		}
+	}
+	if upstream.count() != 3 {
+		t.Fatalf("upstream received %d calls, want 3", upstream.count())
+	}
+
+	batches := httptest.NewRequest(http.MethodPost, "/v1/messages/batches", strings.NewReader(`{"requests":[]}`))
+	batches.Header.Set("anthropic-version", "2023-06-01")
+	for name, r := range map[string]*http.Request{
+		"OpenAI-style chat":         openAICall("/v1/chat/completions", "claude-sonnet-5"),
+		"Anthropic message batches": batches,
+		"unknown path":              httptest.NewRequest(http.MethodPost, "/anything/at/all", strings.NewReader(`{}`)),
+	} {
+		rec := serve(g, r)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: status = %d, want 404", name, rec.Code)
+		}
+		if env := decodeErr(t, rec); env.Error.Stage != "routing" {
+			t.Fatalf("%s: error.stage = %q, want routing", name, env.Error.Stage)
+		}
+	}
+	if upstream.count() != 3 {
+		t.Fatalf("upstream received %d calls, want still 3: rejected calls must never reach it", upstream.count())
+	}
+}
+
+func TestMultiProvider_SingleAnthropicForwardsARepeatedModelBodyAsToday(t *testing.T) {
+	// AC24
+	upstream, g := singleAnthropicGateway(t)
 
 	r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"a","model":"b"}`))
 	rec := serve(g, r)
@@ -414,9 +485,9 @@ func TestMultiProvider_SingleAnthropicForwardsARepeatedModelBodyAsToday(t *testi
 	}
 }
 
-// --- Single mode with Mistral: no redaction, no conversation groups --------
+// --- AC 23: single mode with Mistral is scanned ----------------------------
 
-func TestMultiProvider_SingleModeMistralForwardsAnEmailUnredacted(t *testing.T) {
+func TestMultiProvider_AC23_SingleModeMistralRedactsAndNeverWarns(t *testing.T) {
 	upstream, upstreamURL := newMPUpstream(t)
 	t.Setenv("AK_MP_SINGLE_MISTRAL_KEY", "sk-single-mistral")
 	prov, err := provider.NewMistralProvider(upstreamURL, "AK_MP_SINGLE_MISTRAL_KEY")
@@ -424,95 +495,195 @@ func TestMultiProvider_SingleModeMistralForwardsAnEmailUnredacted(t *testing.T) 
 		t.Fatalf("NewMistralProvider: %v", err)
 	}
 	set, table := singleSetAndTable("mistral", "mistral", prov)
+	logger, logs := observed()
 	cfg := config.Config{
 		Server:    config.ServerConfig{ListenAddr: "127.0.0.1:0"},
+		Provider:  config.ProviderConfig{Name: "mistral", BaseURL: upstreamURL, APIKeyEnv: "AK_MP_SINGLE_MISTRAL_KEY"},
 		Pipeline:  config.PipelineConfig{MaxBodyBytes: 1 << 20, Stages: config.StagesConfig{Filtering: true}},
 		Filtering: filteringCfg(),
-	}
-	g, err := New(cfg, zaptest.NewLogger(t), set, table)
-	if err != nil {
-		t.Fatalf("gateway.New: %v", err)
-	}
-
-	const email = "person@example.com"
-	body := `{"model":"mistral-large-latest","messages":[{"role":"user","content":"contact ` + email + `"}]}`
-	r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
-	rec := serve(g, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	got := upstream.last(t).body
-	if !strings.Contains(string(got), email) {
-		t.Fatalf("upstream body does not contain the unredacted email: %s", got)
-	}
-}
-
-// --- AC 15, 16, 23: unscanned-provider checks and warnings -----------------
-
-func TestMultiProvider_ListMode_MistralNotAcceptedFailsStartupNamingMistral(t *testing.T) {
-	// AC15
-	s := newMPSetup(t)
-	cfg := mpConfig(t, s, true, "")
-	for i := range cfg.Routing.Providers {
-		if cfg.Routing.Providers[i].Name == "mistral" {
-			cfg.Routing.Providers[i].AcceptUnscanned = false
-		}
-	}
-	err := mpBuildExpectError(t, cfg)
-	if err == nil {
-		t.Fatal("gateway.New = nil error, want it to refuse to start")
-	}
-	if !strings.Contains(err.Error(), "mistral") {
-		t.Fatalf("error %q does not name mistral", err)
-	}
-}
-
-func TestMultiProvider_ListMode_WarnsOncePerUnscannedProviderAndStillForwardsUnredacted(t *testing.T) {
-	// AC16
-	s := newMPSetup(t)
-	logger, logs := observed()
-	cfg := mpConfig(t, s, true, "")
-
-	set, err := provider.NewSet(cfg.Routing.Providers)
-	if err != nil {
-		t.Fatalf("provider.NewSet: %v", err)
-	}
-	var routes []routing.Route
-	for _, e := range cfg.Routing.Providers {
-		routes = append(routes, routing.Route{Provider: e.Name, Kind: e.Kind, Formats: []routing.Format{routing.FormatOf(e.Kind)}, Patterns: e.Models})
-	}
-	defaults := map[routing.Format]string{routing.FormatOpenAI: "mistral"}
-	table, err := routing.NewTable(routes, defaults)
-	if err != nil {
-		t.Fatalf("routing.NewTable: %v", err)
 	}
 	g, err := New(cfg, logger, set, table)
 	if err != nil {
 		t.Fatalf("gateway.New: %v", err)
 	}
-
-	var warnedMistral, warnedGemini bool
-	for _, e := range logs.All() {
-		text := strings.ToLower(e.Message + " " + jsonContext(e.ContextMap()))
-		if strings.Contains(text, "mistral") {
-			warnedMistral = true
-		}
-		if strings.Contains(text, "gemini") {
-			warnedGemini = true
-		}
-	}
-	if !warnedMistral || !warnedGemini {
-		t.Fatalf("want a startup warning naming each unscanned provider; mistral=%v gemini=%v", warnedMistral, warnedGemini)
+	if n := logs.FilterLevelExact(zapcore.WarnLevel).Len(); n != 0 {
+		t.Fatalf("startup logged %d warnings, want none: there is no unscanned provider any more", n)
 	}
 
-	const email = "unscanned-marker@example.com"
-	body := `{"model":"mistral-large-latest","messages":[{"role":"user","content":"` + email + `"}]}`
+	apiKey := "sk-" + strings.Repeat("Q", 24)
+	body := `{"model":"mistral-large-latest","messages":[{"role":"user","content":"my key is ` + apiKey + `"}]}`
 	rec := serve(g, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if got := s.mistral.last(t).body; !strings.Contains(string(got), email) {
-		t.Fatalf("mistral did not receive the unredacted email: %s", got)
+	got := string(upstream.last(t).body)
+	if strings.Contains(got, apiKey) {
+		t.Fatalf("mistral received the API key unredacted: %s", got)
+	}
+	if !strings.Contains(got, "[REDACTED:api_key]") {
+		t.Fatalf("mistral body has no [REDACTED:api_key] placeholder: %s", got)
+	}
+
+	// An Anthropic-format request is not this provider's format.
+	rec = serve(g, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-5","messages":[]}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("Anthropic-format request to a single Mistral: status = %d, want 404", rec.Code)
+	}
+	if upstream.count() != 1 {
+		t.Fatalf("upstream received %d calls, want 1", upstream.count())
+	}
+}
+
+// --- AC 15: every provider is scanned, no startup warning ------------------
+
+func TestMultiProvider_AC15_MistralAndGeminiReceivePlaceholders(t *testing.T) {
+	s := newMPSetup(t)
+	cfg := mpConfig(t, s, true, "")
+	logger, logs := observed()
+	g := mpBuildWith(t, cfg, logger)
+
+	for _, e := range logs.FilterLevelExact(zapcore.WarnLevel).All() {
+		text := strings.ToLower(e.Message + " " + jsonContext(e.ContextMap()))
+		if strings.Contains(text, "mistral") || strings.Contains(text, "gemini") {
+			t.Fatalf("startup warning about a provider: %s", text)
+		}
+	}
+
+	const email = "falcon-lead@example.com"
+	rec := serve(g, openAICall2("mistral-large-latest", `{"role":"user","content":"write to `+email+`"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mistral: status = %d, want 200", rec.Code)
+	}
+	rec = serve(g, geminiCall("generateContent", `{"contents":[{"role":"user","parts":[{"text":"write to `+email+`"}]}]}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gemini: status = %d, want 200", rec.Code)
+	}
+	for name, u := range map[string]*mpUpstream{"mistral": s.mistral, "gemini": s.gemini} {
+		got := string(u.last(t).body)
+		if strings.Contains(got, email) {
+			t.Fatalf("%s received the email unredacted: %s", name, got)
+		}
+		if !strings.Contains(got, "[REDACTED:email]") {
+			t.Fatalf("%s body has no [REDACTED:email] placeholder: %s", name, got)
+		}
+	}
+}
+
+func TestMultiProvider_Criterion21_GeminiStreamingRequestIsRedactedAndTheStreamRelayed(t *testing.T) {
+	s := newMPSetup(t)
+	const stream = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"responseId\":\"r1\"}\n\n"
+	s.gemini.respond = func(w http.ResponseWriter, _ []byte) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(stream))
+	}
+	cfg := mpConfig(t, s, true, "")
+	g := mpBuild(t, cfg)
+
+	apiKey := "AKIA" + strings.Repeat("Z", 16)
+	r := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+		strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"key `+apiKey+`"}]}]}`))
+	rec := serve(g, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := string(s.gemini.last(t).body); strings.Contains(got, apiKey) || !strings.Contains(got, "[REDACTED:api_key]") {
+		t.Fatalf("gemini body = %s, want the key replaced by a placeholder", got)
+	}
+	if rec.Body.String() != stream {
+		t.Fatalf("caller received %q, want the stream unchanged", rec.Body.String())
+	}
+}
+
+// --- AC 16: one policy, three formats --------------------------------------
+
+func TestMultiProvider_AC16_OnePolicyDeniesTheSameTextInEveryFormat(t *testing.T) {
+	s := newMPSetup(t)
+	policyPath := writePolicyFile(t, t.TempDir(), `deny contains "falcon" if {
+	some m in input.messages
+	some part in m.content
+	part.type == "text"
+	contains(part.text, "Project Falcon")
+}`)
+	cfg := mpConfig(t, s, true, policyPath)
+	g := mpBuild(t, cfg)
+
+	const text = "what is the status of Project Falcon?"
+	reqs := map[string]*http.Request{
+		"anthropic messages": httptest.NewRequest(http.MethodPost, "/v1/messages",
+			strings.NewReader(`{"model":"claude-sonnet-5","max_tokens":10,"messages":[{"role":"user","content":"`+text+`"}]}`)),
+		"openai chat":     openAICall2("mistral-large-latest", `{"role":"user","content":"`+text+`"}`),
+		"gemini generate": geminiCall("generateContent", `{"contents":[{"role":"user","parts":[{"text":"`+text+`"}]}]}`),
+	}
+	var first *errBody
+	for name, r := range reqs {
+		rec := serve(g, r)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s: status = %d, want 403", name, rec.Code)
+		}
+		env := decodeErr(t, rec)
+		if env.Error.Stage != "policies" {
+			t.Fatalf("%s: error.stage = %q, want policies", name, env.Error.Stage)
+		}
+		env.Error.RequestID = ""
+		if first == nil {
+			first = &env
+		} else if env != *first {
+			t.Fatalf("%s: error = %+v, want the same error as the other formats %+v", name, env, *first)
+		}
+	}
+	noUpstreamReached(t, s)
+}
+
+// --- AC 31: tracing reads Mistral responses --------------------------------
+
+func TestMultiProvider_AC31_StreamedMistralToolCallAndTokensAreTraced(t *testing.T) {
+	s := newMPSetup(t)
+	const id = "cmpl-ac31"
+	stream := "data: {\"id\":\"" + id + "\",\"model\":\"mistral-large-latest\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\n" +
+		"data: {\"id\":\"" + id + "\",\"model\":\"mistral-large-latest\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":\"call_ac31\",\"type\":\"function\",\"index\":0,\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"command\\\": \\\"ls\\\"}\"}}]},\"finish_reason\":null}]}\n\n" +
+		"data: {\"id\":\"" + id + "\",\"model\":\"mistral-large-latest\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":120,\"total_tokens\":150,\"completion_tokens\":30}}\n\n" +
+		"data: [DONE]\n\n"
+	s.mistral.respond = func(w http.ResponseWriter, _ []byte) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(stream))
+	}
+	cfg := mpConfig(t, s, true, "")
+	g := mpBuild(t, cfg)
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"mistral-large-latest","stream":true,"messages":[{"role":"user","content":"list files"}]}`))
+	rec := serve(g, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if rec.Body.String() != stream {
+		t.Fatal("the caller did not receive the stream unchanged")
+	}
+
+	req, resp := callRecords(t, cfg.Tracing.Sink.Path)
+	if req["stream"] != true || req["model"] != "mistral-large-latest" {
+		t.Fatalf("request record stream/model = %v/%v, want true/mistral-large-latest", req["stream"], req["model"])
+	}
+	if resp == nil {
+		t.Fatal("no response record")
+	}
+	if resp["response_id"] != id || resp["response_model"] != "mistral-large-latest" || resp["stop_reason"] != "tool_calls" {
+		t.Fatalf("response details = %v/%v/%v, want %s/mistral-large-latest/tool_calls", resp["response_id"], resp["response_model"], resp["stop_reason"], id)
+	}
+	tokens, _ := resp["tokens"].(map[string]any)
+	if tokens == nil || tokens["sent"] != float64(120) || tokens["received"] != float64(30) {
+		t.Fatalf("tokens = %v, want sent 120, received 30", resp["tokens"])
+	}
+	tcs, _ := resp["tool_calls"].([]any)
+	if len(tcs) != 1 {
+		t.Fatalf("tool_calls = %v, want 1", resp["tool_calls"])
+	}
+	tc := tcs[0].(map[string]any)
+	if tc["tool_call_id"] != "call_ac31" || tc["tool_name"] != "bash" || tc["outcome"] != "delivered" || tc["recorded"] != true {
+		t.Fatalf("tool call = %v, want call_ac31/bash delivered and recorded", tc)
+	}
+	if names, _ := tc["argument_names"].([]any); len(names) != 1 || names[0] != "command" {
+		t.Fatalf("argument_names = %v, want [command]", tc["argument_names"])
 	}
 }
 
@@ -521,39 +692,11 @@ func jsonContext(m map[string]any) string {
 	return string(b)
 }
 
-func TestMultiProvider_SingleMode_MistralWithFilteringWarnsButStarts(t *testing.T) {
-	// AC23
-	_, upstreamURL := newMPUpstream(t)
-	t.Setenv("AK_MP_SINGLE_MISTRAL_WARN_KEY", "sk-single-mistral-warn")
-	prov, err := provider.NewMistralProvider(upstreamURL, "AK_MP_SINGLE_MISTRAL_WARN_KEY")
-	if err != nil {
-		t.Fatalf("NewMistralProvider: %v", err)
-	}
-	set, table := singleSetAndTable("mistral", "mistral", prov)
-	logger, logs := observed()
-	cfg := config.Config{
-		Server:    config.ServerConfig{ListenAddr: "127.0.0.1:0"},
-		Provider:  config.ProviderConfig{Name: "mistral", BaseURL: upstreamURL, APIKeyEnv: "AK_MP_SINGLE_MISTRAL_WARN_KEY"},
-		Pipeline:  config.PipelineConfig{MaxBodyBytes: 1 << 20, Stages: config.StagesConfig{Filtering: true}},
-		Filtering: filteringCfg(),
-	}
-	g, err := New(cfg, logger, set, table)
-	if err != nil {
-		t.Fatalf("gateway.New: %v, want it to start", err)
-	}
-	if g == nil {
-		t.Fatal("gateway.New returned nil Gateway")
-	}
-
-	var warned bool
-	for _, e := range logs.All() {
-		if strings.Contains(strings.ToLower(e.Message+" "+jsonContext(e.ContextMap())), "mistral") {
-			warned = true
-		}
-	}
-	if !warned {
-		t.Fatal("want one startup warning naming mistral in single mode")
-	}
+// openAICall2 is an OpenAI-style chat request for model carrying one message.
+func openAICall2(model, message string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"`+model+`","messages":[`+message+`]}`))
+	r.Header.Set("Content-Type", "application/json")
+	return r
 }
 
 // --- AC17: trace records and policy input name the provider ----------------

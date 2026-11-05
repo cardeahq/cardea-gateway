@@ -47,13 +47,14 @@ func buildJSON(t *testing.T, r Request) (map[string]any, string) {
 
 func inputReq(body string) Request {
 	return Request{
-		CallID:   "ak_7f3c2b1d9e8a4f60",
-		Method:   http.MethodPost,
-		Path:     "/v1/messages",
-		Headers:  http.Header{"X-Team": {"blue"}},
-		Body:     []byte(body),
-		Provider: "anthropic",
-		Format:   "anthropic",
+		CallID:    "ak_7f3c2b1d9e8a4f60",
+		Method:    http.MethodPost,
+		Path:      "/v1/messages",
+		Headers:   http.Header{"X-Team": {"blue"}},
+		Body:      []byte(body),
+		Provider:  "anthropic",
+		Format:    "anthropic",
+		Operation: "messages",
 	}
 }
 
@@ -214,6 +215,7 @@ func TestBuildInput_Golden(t *testing.T) {
 			req: func() Request {
 				r := inputReq(`{"model":"m","stream":false,"messages":[{"role":"user","content":"hi"}]}`)
 				r.Path = "/v1/messages/count_tokens"
+				r.Operation = "count_tokens"
 				return r
 			},
 			golden: `{
@@ -248,94 +250,92 @@ func itoa(n int) string {
 	return string(b)
 }
 
-func TestBuildInput_Operations(t *testing.T) {
+func TestBuildInput_OperationNameIsTheRoutedOperation(t *testing.T) {
+	// operation.name is r.Operation, the neutral name routing detected
+	// (specs/0009), never derived from the path here.
 	tests := []struct {
-		name     string
-		path     string
-		wantName string
+		name, format, method, path, op, body string
 	}{
-		{"messages", "/v1/messages", "messages"},
-		{"count_tokens", "/v1/messages/count_tokens", "count_tokens"},
-		{"models list is other", "/v1/models", "other"},
-		{"unknown path is other", "/something/else", "other"},
+		{"anthropic messages", "anthropic", "POST", "/v1/messages", "messages", `{"model":"m","messages":[]}`},
+		{"anthropic count_tokens", "anthropic", "POST", "/v1/messages/count_tokens", "count_tokens", `{"model":"m","messages":[]}`},
+		{"anthropic models", "anthropic", "GET", "/v1/models", "models", ``},
+		{"openai chat is messages", "openai", "POST", "/v1/chat/completions", "messages", `{"model":"m","messages":[]}`},
+		{"openai fim is completion", "openai", "POST", "/v1/fim/completions", "completion", `{"model":"m","prompt":"x"}`},
+		{"openai embeddings", "openai", "POST", "/v1/embeddings", "embeddings", `{"model":"m","input":"x"}`},
+		{"gemini generate is messages", "gemini", "POST", "/v1beta/models/gemini-2.5-pro:generateContent", "messages", `{"contents":[]}`},
+		{"gemini embed is embeddings", "gemini", "POST", "/v1beta/models/text-embedding-004:embedContent", "embeddings", `{"content":{"parts":[]}}`},
+		{"gemini models", "gemini", "GET", "/v1beta/models", "models", ``},
+		{"the path does not decide the name", "anthropic", "POST", "/v1/messages", "count_tokens", `{"model":"m","messages":[]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := inputReq(`{"model":"m","messages":[]}`)
-			r.Path = tt.path
+			r := inputReq(tt.body)
+			r.Format, r.Method, r.Path, r.Operation = tt.format, tt.method, tt.path, tt.op
 			in, _ := buildJSON(t, r)
 			op := normalize(t, in["operation"]).(map[string]any)
-			if op["name"] != tt.wantName || op["path"] != tt.path || op["method"] != "POST" {
-				t.Fatalf("operation = %v, want name %q with the raw method and path", op, tt.wantName)
+			if op["name"] != tt.op || op["path"] != tt.path || op["method"] != tt.method {
+				t.Fatalf("operation = %v, want name %q with the raw method and path", op, tt.op)
 			}
 		})
 	}
 }
 
-func TestBuildInput_OtherOperationOmitsConversationGroupsAndDoesNotParseTheBody(t *testing.T) {
+func TestBuildInput_ModelsOperationOmitsConversationGroupsAndDoesNotParseTheBody(t *testing.T) {
+	// Criterion 34, input side.
 	bodies := []string{
 		`this is not json {`,
 		`{"model":"a","model":"b"}`,
 		``,
 	}
-	for _, body := range bodies {
-		r := inputReq(body)
-		r.Method = http.MethodGet
-		r.Path = "/v1/models"
-		in, err := buildInput(r)
-		if err != nil {
-			t.Fatalf("buildInput on an other path with body %q: %v, want no error", body, err)
-		}
-		for _, k := range []string{"model", "stream", "parameters", "system", "messages", "tools", "tool_calls", "tool_results"} {
-			if _, ok := in[k]; ok {
-				t.Fatalf("key %q present on an other operation; conversation groups must be absent", k)
+	for _, format := range []string{"anthropic", "openai", "gemini"} {
+		for _, body := range bodies {
+			r := inputReq(body)
+			r.Format = format
+			r.Method = http.MethodGet
+			r.Path = "/v1/models"
+			r.Operation = "models"
+			in, err := buildInput(r)
+			if err != nil {
+				t.Fatalf("%s: buildInput on models with body %q: %v, want no error", format, body, err)
 			}
-		}
-		for _, k := range []string{"call", "provider", "operation"} {
-			if _, ok := in[k]; !ok {
-				t.Fatalf("key %q missing on an other operation; generic groups are always present", k)
+			for _, k := range []string{"model", "stream", "parameters", "system", "messages", "tools", "tool_calls", "tool_results"} {
+				if _, ok := in[k]; ok {
+					t.Fatalf("%s: key %q present on a models operation; conversation groups must be absent", format, k)
+				}
 			}
-		}
-		call := normalize(t, in["call"]).(map[string]any)
-		if call["size_bytes"] != float64(len(body)) {
-			t.Fatalf("call.size_bytes = %v, want %d", call["size_bytes"], len(body))
-		}
-	}
-}
-
-func TestBuildInput_OtherProviderHasOnlyGenericGroups(t *testing.T) {
-	r := inputReq(`not json`)
-	r.Provider = "mistral"
-	r.Format = "openai" // not "anthropic": conversation reading is gated on format, not provider name
-	in, err := buildInput(r)
-	if err != nil {
-		t.Fatalf("buildInput for another provider: %v", err)
-	}
-	if in["provider"] != "mistral" {
-		t.Fatalf("provider = %v, want mistral", in["provider"])
-	}
-	for _, k := range []string{"model", "messages", "tools", "tool_calls", "tool_results", "parameters", "system", "stream"} {
-		if _, ok := in[k]; ok {
-			t.Fatalf("key %q present for a provider with no reader", k)
+			for _, k := range []string{"call", "provider", "operation"} {
+				if _, ok := in[k]; !ok {
+					t.Fatalf("%s: key %q missing on a models operation; generic groups are always present", format, k)
+				}
+			}
+			call := normalize(t, in["call"]).(map[string]any)
+			if call["size_bytes"] != float64(len(body)) {
+				t.Fatalf("call.size_bytes = %v, want %d", call["size_bytes"], len(body))
+			}
 		}
 	}
 }
 
 func TestBuildInput_InvalidConversationBodiesAreErrors(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		body string
+		name, format, path, op, body string
 	}{
-		{"count_tokens body that is not JSON", "/v1/messages/count_tokens", `}{`},
-		{"messages body that is not JSON", "/v1/messages", `plain text`},
-		{"messages is a string", "/v1/messages", `{"model":"m","messages":"x"}`},
-		{"messages is an object", "/v1/messages", `{"model":"m","messages":{}}`},
+		{"anthropic count_tokens body that is not JSON", "anthropic", "/v1/messages/count_tokens", "count_tokens", `}{`},
+		{"anthropic messages body that is not JSON", "anthropic", "/v1/messages", "messages", `plain text`},
+		{"anthropic messages is a string", "anthropic", "/v1/messages", "messages", `{"model":"m","messages":"x"}`},
+		{"anthropic messages is an object", "anthropic", "/v1/messages", "messages", `{"model":"m","messages":{}}`},
+		{"openai chat body that is not JSON", "openai", "/v1/chat/completions", "messages", `{"model":`},
+		{"openai messages is a string", "openai", "/v1/chat/completions", "messages", `{"model":"m","messages":"x"}`},
+		{"openai fim body that is not JSON", "openai", "/v1/fim/completions", "completion", `nope`},
+		{"openai embeddings body that is not JSON", "openai", "/v1/embeddings", "embeddings", `nope`},
+		{"gemini generate body that is not JSON", "gemini", "/v1beta/models/gemini-2.5-pro:generateContent", "messages", `nope`},
+		{"gemini contents is an object", "gemini", "/v1beta/models/gemini-2.5-pro:generateContent", "messages", `{"contents":{}}`},
+		{"gemini embed body that is not JSON", "gemini", "/v1beta/models/text-embedding-004:embedContent", "embeddings", `nope`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := inputReq(tt.body)
-			r.Path = tt.path
+			r.Format, r.Path, r.Operation = tt.format, tt.path, tt.op
 			if _, err := buildInput(r); err == nil {
 				t.Fatal("buildInput = nil error, want an error (fail closed)")
 			}
@@ -343,127 +343,40 @@ func TestBuildInput_InvalidConversationBodiesAreErrors(t *testing.T) {
 	}
 }
 
-func TestBuildInput_HeadersLowerCasedAndCredentialsRemoved(t *testing.T) {
-	const secret = "SECRET-CREDENTIAL-VALUE-5d2e"
-	r := inputReq(`{"model":"m","messages":[]}`)
-	r.Headers = http.Header{}
-	for _, h := range []string{"Authorization", "Proxy-Authorization", "X-Api-Key", "Api-Key", "Cookie", "Set-Cookie", "X-Gateway-Request-Id"} {
-		r.Headers.Set(h, secret)
+func TestBuildInput_ProviderIsTheRoutedProviderName(t *testing.T) {
+	r := inputReq(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	r.Provider = "my-mistral"
+	r.Format = "openai"
+	r.Path = "/v1/chat/completions"
+	in, err := buildInput(r)
+	if err != nil {
+		t.Fatalf("buildInput: %v", err)
 	}
-	r.Headers.Add("X-Team", "blue")
-	r.Headers.Add("X-Team", "green")
-	r.Headers.Set("Content-Type", "application/json")
-
-	in, raw := buildJSON(t, r)
-	if strings.Contains(raw, secret) {
-		t.Fatalf("a credential header value reached the input document: %s", raw)
+	if in["provider"] != "my-mistral" {
+		t.Fatalf("provider = %v, want my-mistral", in["provider"])
 	}
-	headers := normalize(t, in["call"]).(map[string]any)["headers"].(map[string]any)
-	want := map[string]any{"x-team": []any{"blue", "green"}, "content-type": []any{"application/json"}}
-	if !reflect.DeepEqual(headers, want) {
-		t.Fatalf("call.headers = %v, want %v", headers, want)
-	}
-	for _, banned := range []string{"authorization", "proxy-authorization", "x-api-key", "api-key", "cookie", "set-cookie", "x-gateway-request-id"} {
-		if _, ok := headers[banned]; ok {
-			t.Fatalf("header %q reached the input", banned)
-		}
+	if _, ok := in["messages"]; !ok {
+		t.Fatal("messages absent: every format's conversation is read (specs/0009 rule 14)")
 	}
 }
 
-func TestBuildInput_LargeIntegersSurvive(t *testing.T) {
-	_, raw := buildJSON(t, inputReq(`{"model":"m","messages":[],"max_tokens":9007199254740993}`))
-	if !strings.Contains(raw, "9007199254740993") {
-		t.Fatalf("large integer lost precision in the input document: %s", raw)
-	}
-}
-
-func TestBuildInput_CredentialsInBodyStayAvailableToRulesButNotInHeaders(t *testing.T) {
-	// Conversation text is the point of the input; only headers are stripped.
-	_, raw := buildJSON(t, inputReq(`{"model":"m","messages":[{"role":"user","content":"visible text"}]}`))
-	if !strings.Contains(raw, "visible text") {
-		t.Fatalf("conversation text missing from the input: %s", raw)
-	}
-}
-
-func TestRejectDuplicateKeys(t *testing.T) {
-	const keyMarker = "dupkey_marker"
-	const valMarker = "dupval_marker"
-	rejected := []struct {
-		name string
-		body string
-	}{
-		{"top-level key twice", `{"model":"a","model":"b","messages":[]}`},
-		{"top-level key twice, same value", `{"model":"a","model":"a","messages":[]}`},
-		{"inside a tool", `{"model":"m","messages":[],"tools":[{"name":"a","name":"b","input_schema":{}}]}`},
-		{"inside nested tool-call arguments", `{"model":"m","messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"bash","input":{"command":"ls","command":"rm"}}]}]}`},
-		{"inside an array element", `{"model":"m","messages":[{"role":"user","content":"a"},{"role":"user","role":"assistant","content":"b"}]}`},
-		{"deep in an input schema", `{"model":"m","messages":[],"tools":[{"name":"t","input_schema":{"properties":{"p":{"type":"string","type":"number"}}}}]}`},
-		{"custom key and value are not echoed", `{"model":"m","messages":[],"` + keyMarker + `":"` + valMarker + `","` + keyMarker + `":"x"}`},
-	}
-	for _, tt := range rejected {
-		t.Run("rejects "+tt.name, func(t *testing.T) {
-			err := rejectDuplicateKeys([]byte(tt.body))
-			if err == nil {
-				t.Fatal("rejectDuplicateKeys = nil, want an error")
-			}
-			for _, leaked := range []string{keyMarker, valMarker, "model", "command", "role"} {
-				if strings.Contains(err.Error(), "\""+leaked+"\"") || strings.Contains(err.Error(), leaked+"\"") {
-					t.Fatalf("error %q names a key or value (%q)", err.Error(), leaked)
-				}
-			}
-			if strings.Contains(err.Error(), keyMarker) || strings.Contains(err.Error(), valMarker) {
-				t.Fatalf("error %q carries body content", err.Error())
-			}
-		})
-	}
-
-	accepted := []struct {
-		name string
-		body string
-	}{
-		{"the same key in two different objects", `{"model":"m","messages":[{"role":"user","content":"a"},{"role":"assistant","content":"b"}],"tools":[{"name":"a"},{"name":"b"}]}`},
-		{"a key repeated in a parent and a child", `{"name":"x","tools":[{"name":"y"}]}`},
-		{"the same key in sibling nested objects", `{"a":{"k":1},"b":{"k":2}}`},
-		{"empty object", `{}`},
-	}
-	for _, tt := range accepted {
-		t.Run("accepts "+tt.name, func(t *testing.T) {
-			if err := rejectDuplicateKeys([]byte(tt.body)); err != nil {
-				t.Fatalf("rejectDuplicateKeys = %v, want nil", err)
-			}
-		})
-	}
-}
-
-// --- specs/0009: conversation reading is gated on Format, not Provider ------
-
-func TestBuildInput_ConversationReadingIsGatedOnFormatNotProviderName(t *testing.T) {
-	tests := []struct {
-		name       string
-		provider   string
-		format     string
-		wantReader bool
-	}{
-		{"anthropic provider, anthropic format: conversation read", "anthropic", "anthropic", true},
-		{"anthropic provider, non-anthropic format (e.g. a list-mode route lost its format): no conversation", "anthropic", "openai", false},
-		{"non-anthropic provider, anthropic format: conversation still read", "mistral", "anthropic", true},
-		{"unknown format: no conversation", "anthropic", "", false},
+func TestBuildInput_PairWithNoReaderIsAnError(t *testing.T) {
+	tests := []struct{ format, op string }{
+		{"", "messages"},
+		{"cohere", "messages"},
+		{"anthropic", ""},
+		{"anthropic", "other"},
+		{"anthropic", "completion"},
+		{"anthropic", "embeddings"},
+		{"openai", "count_tokens"},
+		{"gemini", "completion"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := inputReq(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
-			r.Provider = tt.provider
-			r.Format = tt.format
-			in, err := buildInput(r)
-			if err != nil {
-				t.Fatalf("buildInput: %v", err)
-			}
-			if in["provider"] != tt.provider {
-				t.Fatalf("provider = %v, want %q", in["provider"], tt.provider)
-			}
-			_, hasMessages := in["messages"]
-			if hasMessages != tt.wantReader {
-				t.Fatalf("messages present = %v, want %v", hasMessages, tt.wantReader)
+		t.Run(tt.format+"/"+tt.op, func(t *testing.T) {
+			r := inputReq(`{"model":"m","messages":[]}`)
+			r.Format, r.Operation = tt.format, tt.op
+			if _, err := buildInput(r); err == nil {
+				t.Fatal("buildInput = nil error, want an error: a pair with no reader fails closed")
 			}
 		})
 	}

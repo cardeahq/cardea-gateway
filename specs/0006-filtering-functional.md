@@ -19,9 +19,8 @@ know how much or how often.
 - Detect known categories of PII in a request's conversation content and
   in the tool calls and tool results it already carries, before the
   request leaves the Gateway for the provider.
-- Replace each detected occurrence with an opaque placeholder naming its
-  category, so the provider never receives the real value, and so that
-  one occurrence stays individually identifiable.
+- Replace each detected occurrence with a placeholder naming its
+  category, so the provider never receives the real value.
 - Give every operator this protection for a fixed set of built-in
   categories with zero configuration — no file to write, unlike policies
   (specs/0004).
@@ -31,10 +30,12 @@ know how much or how often.
   version of the Gateway can read it back.~~ *Removed by specs/0007: no
   detected value is written anywhere once its placeholder has been
   substituted.*
-- Never let two identical PII values collapse onto the same placeholder
-  within one request, so anyone who sees the redacted text cannot learn
-  that two fields hold the same value, even without learning what that
-  value is.
+- Never let a placeholder reveal anything about the value it replaced —
+  including whether two occurrences hold the same value: every
+  occurrence of a category is replaced by the same, fixed placeholder.
+- Mark every request record whose content was redacted, naming the
+  categories that were found and removed, so an operator can see from
+  the trace alone that the provider received an altered request.
 - Behave exactly as today for a request that contains none of the known
   PII categories.
 
@@ -87,7 +88,7 @@ developer pastes an API key from a bug report straight into the
 conversation. The operator upgrades to this version and changes no
 config: filtering is already on, with all three categories active. From
 that point, the provider never receives the real email address or key —
-only placeholders like `[email:f47ac10b-...]` — while the agent and its
+only placeholders like `[REDACTED:email]` — while the agent and its
 caller see no difference in status codes or latency. The operator's logs
 show one line per request with something redacted: which categories, how
 many occurrences, never the values themselves. *Amended by specs/0007:
@@ -98,7 +99,7 @@ volatility, since filtering no longer caches anything.*
 filtering, except that the provider is reasoning over placeholders where
 PII used to be. If their prompt asked the model to validate or act on the
 actual value — "does this look like a valid SSN?" — the model now sees
-only `[ssn:UUID]` and cannot do that; this is the deliberate cost of
+only `[REDACTED:ssn]` and cannot do that; this is the deliberate cost of
 redacting before the provider ever sees the value. If the model happens
 to echo a placeholder string back in its answer, the developer sees that
 literal placeholder text in the response, by design — nothing in this
@@ -122,13 +123,39 @@ version disguises it.
    `system`, `messages`, `tool_calls` and `tool_results`. It does not
    scan request headers, the model name, generation parameters, or the
    `tools` list of names/descriptions/schemas the agent offers.
+
+   This holds for every provider and every supported operation that
+   carries content (specs/0009, *Supported operations*), read in the
+   request's own format:
+
+   | Operation | Scanned | Not scanned |
+   | --- | --- | --- |
+   | Anthropic messages, count tokens | System prompt (string or text blocks); text blocks of every message; `input` of every `tool_use` block; content of every `tool_result` block (string or text blocks) | `thinking` blocks, images, documents, tool definitions, model, generation settings |
+   | OpenAI-style chat | Text of every message whatever its role (system, developer, user, assistant, tool), as a plain string or as text parts; argument values of every tool call an assistant message carries | Tool and function definitions, response-format schemas, image and audio parts, model, generation settings |
+   | OpenAI-style fill-in-the-middle | The prompt and the suffix | Model, generation settings, stop sequences |
+   | OpenAI-style embeddings | Every input text | Model, encoding settings |
+   | Gemini generate (streamed or not), count tokens | Text parts of the system instruction and of every content entry; argument values of every function call; the response of every function response; the same parts when count tokens wraps a full generate request | Tool and function declarations, inline binary data, file references, safety and generation settings, cached-content references |
+   | Gemini embed, batch embed | Text parts of the content, or of every request's content in a batch | Model, task type, title, output settings |
+
+   Model listings carry no content: filtering runs for them and has
+   nothing to redact.
+
+   Tool-call arguments are redacted as values: each string value inside
+   them is scanned, and they reach the provider in the form the format
+   requires. OpenAI-style arguments are a JSON document carried as a
+   string, and remain one. Arguments that are not valid JSON where the
+   format expects JSON are scanned as plain text. Redaction changes only
+   the scanned text; every other field, including ones the Gateway does
+   not know, reaches the provider with the same value.
 4. Every occurrence of a known, enabled category's pattern within that
-   scope is replaced by a placeholder of the form `[category:UUID]`. The
-   UUID is freshly generated for every occurrence — including a value
-   that repeats elsewhere in the same request — and never reused. A
-   placeholder that repeated across occurrences would let anyone who
-   sees the redacted text learn that two fields hold the same value,
-   which defeats part of the point of redacting it.
+   scope is replaced by the placeholder `[REDACTED:category]` — for
+   example `[REDACTED:email]`. The placeholder is the same for every
+   occurrence of a category and carries nothing derived from the value,
+   so the redacted text reveals neither the value nor whether two
+   occurrences held the same one. The `REDACTED:` prefix tells the model
+   (and anyone reading the text) that a value was deliberately removed,
+   rather than leaving a bare `[email]` that reads like a template slot
+   to fill in.
 5. ~~Before the redacted request is forwarded, the real value of every
    occurrence is written to the configured cache, keyed by its
    placeholder and tagged with its category. If that write cannot
@@ -143,7 +170,7 @@ version disguises it.
      France national formats; any of the three is detected under this
      one category.
    - **API key**, covering common vendor-prefixed secret formats (for
-     example a key that starts `sk-`, `ghp_`, `AKIA`). A standalone
+     example a key that starts `sk-`, `sk-proj-`, `ghp_`, `AKIA`). A standalone
      token with no recognizable prefix is not detected under this
      category in this version, even if it looks like a secret — see
      *Non-goals*. Exact patterns are a technical-spec concern.
@@ -217,8 +244,12 @@ filtering failure to corrupt there.
 
 - One log line per request where at least one occurrence was redacted:
   the per-call identifier and, per category, how many occurrences were
-  redacted — never the detected values, and never a value's placeholder
-  UUID alongside anything that could be traced back to it.
+  redacted — never the detected values.
+- On the call's request record (specs/0003), `redacted: true` and
+  `redacted_categories` listing, sorted, every category found and
+  removed (for example `["api_key", "email"]`). A request with nothing
+  redacted has `redacted: false` and `redacted_categories: []`. The
+  per-category counts stay in the filtering stage's `detail.redactions`.
 - A request with nothing detected adds no log line, matching specs/0001
   and specs/0004's convention for allowed calls.
 - One log line at error level per filtering failure, naming the stage and
@@ -241,15 +272,16 @@ failure) the error that occurred.
 1. **Given** the default configuration, **when** a request's conversation
    contains an email address, **then** the request forwarded to the
    provider has that occurrence replaced by a placeholder of the form
-   `[email:UUID]`, and the provider never receives the real address.
+   `[REDACTED:email]`, and the provider never receives the real address.
 2. **Given** the same request, **when** the same email address appears
-   twice in it, **then** each occurrence is replaced by a different
-   UUID.
+   twice in it, **then** both occurrences are replaced by the identical
+   `[REDACTED:email]` placeholder, exactly as two different addresses
+   would be.
 3. **Given** a request containing a US-format SSN, a UK-format SSN and a
    French-format SSN, **when** filtering runs, **then** all three are
-   detected and each is replaced with its own `[ssn:UUID]` placeholder.
+   detected and each is replaced with a `[REDACTED:ssn]` placeholder.
 4. **Given** a request containing an API-key-shaped token, **when**
-   filtering runs, **then** it is replaced with an `[api_key:UUID]`
+   filtering runs, **then** it is replaced with an `[REDACTED:api_key]`
    placeholder.
 5. **Given** a request with no PII matching any enabled category,
    **when** it is proxied, **then** it reaches the provider
@@ -286,7 +318,8 @@ failure) the error that occurred.
 13. **Given** a request's `tools` definitions (names, descriptions,
     schemas) containing text that matches a PII pattern, **when**
     filtering runs, **then** it is left untouched, since tool definitions
-    are outside the scanned scope.
+    are outside the scanned scope. This holds for Anthropic tools,
+    OpenAI-style tools and Gemini function declarations alike.
 14. **Given** a request denied by an earlier stage, **when** it is
     denied, **then** filtering never runs: nothing is detected for it.
     *Amended by specs/0007: "nothing is written to the cache for it" no
@@ -301,6 +334,37 @@ failure) the error that occurred.
     specs/0007: see that spec's acceptance criterion 3 for what setting
     any of the removed cache controls now does instead (rejected as an
     unrecognized setting).*
+17. **Given** the default configuration and a Mistral provider, **when**
+    an OpenAI-style chat request has an email in a system message, in a
+    tool-role message and in a string value of an assistant tool call's
+    arguments, **then** each is replaced by its own placeholder, and the
+    tool call's arguments are still a string holding valid JSON.
+18. **Given** the same, **when** a fill-in-the-middle request's prompt
+    holds an API key and its suffix an SSN, **then** both are redacted.
+19. **Given** the same, **when** an embeddings request's input is a list
+    of texts, one holding an email, **then** that text is redacted and the
+    others reach the provider unchanged.
+20. **Given** the default configuration and a Gemini provider, **when** a
+    generate request has an email in its system instruction, in a user
+    text part and in a function response, **then** all three are
+    redacted.
+21. **Given** the same, **when** a streaming generate request carries an
+    API key, **then** it is redacted before forwarding, and the streamed
+    response reaches the caller unchanged.
+22. **Given** the same, **when** a count-tokens request wraps a full
+    generate request holding an SSN, or a batch embed request holds an
+    email in its second request, **then** each is redacted.
+23. **Given** an OpenAI-style or Gemini request with no PII, **when** it
+    is proxied, **then** it reaches the provider byte-identical.
+24. **Given** filtering on, **when** an OpenAI-style chat or Gemini
+    generate request body is not valid JSON, **then** the call is denied
+    with "governance unavailable" naming filtering and the provider
+    receives nothing.
+25. **Given** a request containing an email and an API key, **when** it
+    is forwarded, **then** its request record has `redacted: true` and
+    `redacted_categories: ["api_key", "email"]`; **given** a request
+    with nothing redacted, its record has `redacted: false` and
+    `redacted_categories: []`.
 
 ## Relationship to 0007
 

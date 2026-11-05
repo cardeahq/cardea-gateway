@@ -1,15 +1,13 @@
 // Package filtering detects email addresses, US/UK/France SSNs and
-// vendor-prefixed API keys in an Anthropic Messages or count_tokens
-// request body, and replaces each occurrence with a fresh
-// "[category:UUID]" placeholder before the request is forwarded.
+// vendor-prefixed API keys in the content of an Anthropic, OpenAI-style
+// or Gemini request body, and replaces each occurrence with a
+// "[REDACTED:category]" placeholder before the request is forwarded.
 package filtering
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -21,14 +19,15 @@ import (
 
 // Request is what the pipeline hands the engine for one call.
 type Request struct {
-	CallID string
-	Path   string
-	Body   []byte
-	Format string
+	CallID    string
+	Path      string
+	Body      []byte
+	Format    string // routing format: "anthropic", "openai" or "gemini"
+	Operation string // routing operation: "messages", "count_tokens", "completion", "embeddings" or "models"
 }
 
 // Result is one Redact call's outcome. Counts is nil when nothing was
-// redacted (not a target body, or nothing matched); Body equals the
+// redacted (a models operation, or nothing matched); Body equals the
 // input body in that case.
 type Result struct {
 	Body   []byte
@@ -58,9 +57,12 @@ func New(cfg config.FilteringConfig, logger *zap.Logger) (*Engine, error) {
 	return &Engine{patterns: patterns}, nil
 }
 
-// ReadsFormat reports whether filtering can scan requests of format f.
-func ReadsFormat(f string) bool {
-	return f == "anthropic"
+// rewriters maps each (format, operation) pair carrying content to the
+// rewriter that redacts its scanned members in place.
+var rewriters = map[string]map[string]func(*scan, map[string]json.RawMessage) error{
+	"anthropic": {"messages": (*scan).redactAnthropic, "count_tokens": (*scan).redactAnthropic},
+	"openai":    {"messages": (*scan).redactChat, "completion": (*scan).redactFIM, "embeddings": (*scan).redactEmbeddings},
+	"gemini":    {"messages": (*scan).redactGenerate, "count_tokens": (*scan).redactGenerate, "embeddings": (*scan).redactEmbed},
 }
 
 // Redact scans r.Body for every enabled category and returns the
@@ -80,29 +82,22 @@ func (e *Engine) Redact(ctx context.Context, r Request) (res Result, err error) 
 		return Result{Body: r.Body}, nil
 	}
 
-	top, isTarget, berr := buildTarget(r.Format, r.Path, r.Body)
-	if berr != nil {
-		return Result{}, berr
-	}
-	if !isTarget {
+	byOp, known := rewriters[r.Format]
+	if known && r.Operation == "models" {
 		return Result{Body: r.Body}, nil
 	}
-
-	sc := &scan{ctx: ctx, engine: e, counts: map[Category]int{}}
-
-	if raw, ok := top["system"]; ok {
-		newSystem, err := sc.redactSystem(raw)
-		if err != nil {
-			return Result{}, asInputErr(err)
-		}
-		top["system"] = newSystem
+	rewrite, ok := byOp[r.Operation]
+	if !ok {
+		return Result{}, &FilterError{Kind: "internal"}
 	}
-	if raw, ok := top["messages"]; ok {
-		newMessages, err := sc.redactMessages(raw)
-		if err != nil {
-			return Result{}, asInputErr(err)
-		}
-		top["messages"] = newMessages
+
+	top, err := decodeTop(r.Body)
+	if err != nil {
+		return Result{}, err
+	}
+	sc := &scan{ctx: ctx, engine: e, counts: map[Category]int{}}
+	if err := rewrite(sc, top); err != nil {
+		return Result{}, asInputErr(err)
 	}
 
 	body, _ := json.Marshal(top)
@@ -125,7 +120,7 @@ func asInputErr(err error) error {
 // redactText is the leaf-level primitive every string field goes
 // through: every enabled category's patterns are tried, non-overlapping
 // matches (sorted by start, ties broken by the longer match) are each
-// replaced by a fresh placeholder.
+// replaced by its category's placeholder.
 func (s *scan) redactText(str string) string {
 	type match struct {
 		start, end int
@@ -156,21 +151,10 @@ func (s *scan) redactText(str string) string {
 			continue // overlaps an already-consumed match
 		}
 		b.WriteString(str[last:m.start])
-		id := newPlaceholderID()
-		b.WriteString("[" + string(m.category) + ":" + id + "]")
+		b.WriteString("[REDACTED:" + string(m.category) + "]")
 		s.counts[m.category]++
 		last = m.end
 	}
 	b.WriteString(str[last:])
 	return b.String()
-}
-
-// newPlaceholderID returns a fresh, crypto/rand-backed UUIDv4, never
-// reused across occurrences (specs/0006).
-func newPlaceholderID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }

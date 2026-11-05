@@ -14,6 +14,7 @@ func TestCategoryPatterns_MatchTheirExamples(t *testing.T) {
 		{"ssn uk", CategorySSN, "nino " + exSSNUK + " here", exSSNUK},
 		{"ssn fr", CategorySSN, "nir " + exSSNFR + " here", exSSNFR},
 		{"api key openai", CategoryAPIKey, "key " + exAPIKeyOpenAI + " end", exAPIKeyOpenAI},
+		{"api key openai project", CategoryAPIKey, "key " + exAPIKeyOpenAIProject + " end", exAPIKeyOpenAIProject},
 		{"api key github", CategoryAPIKey, "key " + exAPIKeyGitHub + " end", exAPIKeyGitHub},
 		{"api key aws", CategoryAPIKey, "key " + exAPIKeyAWS + " end", exAPIKeyAWS},
 		{"api key slack", CategoryAPIKey, "key " + exAPIKeySlack + " end", exAPIKeySlack},

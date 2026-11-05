@@ -131,14 +131,19 @@ func (s *tracingTestStage) Request(_ context.Context, c *Call) (Decision, error)
 	if s.log != nil {
 		s.log.record("tracing.Request")
 	}
-	// No routing stage ran ahead of tracing in these tests, matching the
-	// pipeline spec's nil-route case: tool results and usage are read as
-	// they always were (specs/0009, Design -> "What later stages read").
-	info, err := s.tracer.Request(c.Request, c.Body, c.AgentID, trace.RequestOptions{ToolResults: true})
+	// Most tests here run no routing stage ahead of tracing; those calls
+	// are Anthropic Messages requests, so read them as such. A routed call
+	// is read in its own format and operation (specs/0003-technical,
+	// Reading other formats).
+	format, op := c.Format, c.Operation
+	if c.Route == nil {
+		format, op = routing.FormatAnthropic, routing.OpMessages
+	}
+	info, err := s.tracer.Request(c.Request, c.Body, c.AgentID, trace.RequestOptions{Format: string(format), Operation: string(op)})
 	if err != nil {
 		return Decision{}, err
 	}
-	return AllowTraced(info, s.tracer.NewResponseTap(true)), nil
+	return AllowTraced(info, s.tracer.NewResponseTap(string(format), string(op))), nil
 }
 
 type agentStage struct{ agentID string }
@@ -159,7 +164,7 @@ func (s *routeStage) Request(context.Context, *Call) (Decision, error) {
 	if len(formats) > 0 {
 		format = formats[0]
 	}
-	return AllowRouted(s.route, format, nil), nil
+	return AllowRouted(s.route, format, routing.OpMessages, nil), nil
 }
 
 func observedLogger() (*zap.Logger, *observer.ObservedLogs) {
@@ -388,7 +393,7 @@ func TestRecords_EveryFieldPresent(t *testing.T) {
 
 	req, resp := sink.one(t, "request"), sink.one(t, "response")
 	wantReq := []string{"schema", "record", "call_id", "remote_addr", "agent_id", "session", "received_at", "duration_us",
-		"provider", "model", "stream", "size_bytes", "outcome", "stages", "tool_results", "findings"}
+		"provider", "model", "stream", "size_bytes", "outcome", "stages", "redacted", "redacted_categories", "tool_results", "findings"}
 	wantResp := []string{"schema", "record", "call_id", "remote_addr", "agent_id", "session", "started_at", "first_byte_us",
 		"duration_us", "outcome", "stages", "streamed", "response_id", "provider", "response_model", "stop_reason", "tokens",
 		"tool_calls", "findings"}
@@ -1290,6 +1295,50 @@ func TestRequestRecord_StageDetail(t *testing.T) {
 				if rules[i] != tt.wantRules[i] {
 					t.Fatalf("detail.rules = %v, want %v", rules, tt.wantRules)
 				}
+			}
+		})
+	}
+}
+
+func TestRequestRecord_RedactedSummary(t *testing.T) {
+	tests := []struct {
+		name     string
+		stages   []Stage
+		wantRed  bool
+		wantCats []any
+	}{
+		{
+			name:     "no filtering detail: not redacted, empty categories",
+			stages:   []Stage{allowStage("identification", nil)},
+			wantRed:  false,
+			wantCats: []any{},
+		},
+		{
+			name: "filtering redacted two categories: redacted, sorted categories",
+			stages: []Stage{&detailStage{name: "filtering", detail: trace.StageDetail{
+				Redactions: map[string]int{"email": 2, "api_key": 1},
+			}}},
+			wantRed:  true,
+			wantCats: []any{"api_key", "email"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sink := &fakeSink{}
+			p := New(zaptest.NewLogger(t), 1<<20, sink, tt.stages...)
+			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+			doRequest(t, p, next, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}")))
+
+			req := sink.one(t, "request")
+			if req["redacted"] != tt.wantRed {
+				t.Fatalf("redacted = %v, want %v", req["redacted"], tt.wantRed)
+			}
+			cats, ok := req["redacted_categories"].([]any)
+			if !ok {
+				t.Fatalf("redacted_categories = %#v, want an array (never null)", req["redacted_categories"])
+			}
+			if !slices.Equal(cats, tt.wantCats) {
+				t.Fatalf("redacted_categories = %v, want %v", cats, tt.wantCats)
 			}
 		})
 	}

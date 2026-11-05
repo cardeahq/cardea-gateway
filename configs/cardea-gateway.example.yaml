@@ -49,15 +49,11 @@ provider:
 #       base_url: "https://api.mistral.ai"
 #       api_key_env: MISTRAL_API_KEY
 #       models: ["mistral-*", "codestral-*", "devstral-*"]
-#       # Mistral-format requests are not read for redaction or
-#       # conversation-based policy rules; this acknowledges that.
-#       accept_unscanned: true
 #     - name: gemini
 #       kind: gemini
 #       base_url: "https://generativelanguage.googleapis.com"
 #       api_key_env: GEMINI_API_KEY
 #       models: ["gemini-*"]
-#       accept_unscanned: true
 #   defaults:
 #     # Where a call with no model, or one matching no listed provider,
 #     # goes for a given API format. No default: such a call is rejected.
@@ -149,7 +145,7 @@ policies:
 
 # PII filtering: before a request reaches the provider, email addresses,
 # SSNs (US/UK/France) and vendor-prefixed API keys are replaced with a
-# [category:UUID] placeholder. Responses are never touched. On by
+# [REDACTED:category] placeholder, e.g. [REDACTED:email]. Responses are never touched. On by
 # default, with zero configuration needed.
 filtering:
   categories:

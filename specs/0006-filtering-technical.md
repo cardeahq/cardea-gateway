@@ -8,7 +8,8 @@
 The functional spec asks for a fourth pipeline stage that detects email
 addresses, US/UK/France SSNs and API keys inside a request's conversation
 text and tool calls/results, replaces each occurrence with a
-`[category:UUID]` placeholder (never reusing a UUID). Responses are
+`[REDACTED:category]` placeholder, and marks the request record as
+redacted with the categories found. Responses are
 untouched; restoration is explicitly out of scope (specs/0006-functional,
 *Non-goals*). *Amended by specs/0007: this spec originally also had
 filtering write the real value to a pluggable cache for a later version
@@ -88,13 +89,14 @@ request ─▶ pipeline.Handler ─▶ identification ─▶ tracing ─▶ poli
                                                                           │
                                                        filtering.Engine.Redact
                                                                           │
-                              r := filtering.Request{CallID, Path, Body: c.Body}
-                              top, isTarget := buildTarget(r.Body)   (provider==anthropic, op in {messages,count_tokens})
+                              r := filtering.Request{CallID, Path, Body: c.Body, Format: c.Format, Operation: c.Operation}
+                              dispatch on (Format, Operation) ─▶ anthropic.go / openai.go / gemini.go
                                           │
-                       not a target / no category enabled ─▶ Result{Body: r.Body} unchanged, no error
+                       "models" operation / no category enabled ─▶ Result{Body: r.Body} unchanged, no error
                                           │
-                              top["system"]   ─▶ redactSystem   (string, or blocks; only "text" blocks touched)
-                              top["messages"] ─▶ redactMessages (per-message, per-block — see redactBlock)
+                              anthropic: top["system"]   ─▶ redactSystem   (string, or blocks; only "text" blocks touched)
+                                         top["messages"] ─▶ redactMessages (per-message, per-block — see redactBlock)
+                              openai, gemini: see *Formats and operations*
                               every other top-level key        ─▶ copied as raw bytes, untouched
                                           │
                               body := json.Marshal(top)   ─▶ Result{Body: body, Counts: {category: n, ...}}
@@ -166,16 +168,14 @@ Every other key on a message or a block (`id`, `name`, `tool_use_id`,
 `is_error`, `cache_control`, `citations`, …) is copied as raw bytes,
 whether this package recognizes it or not.
 
-**Non-overlapping matches, one fresh UUID per occurrence.** Within one
-string, every enabled category's compiled patterns are tried; matches are
-sorted by start offset (a tie broken by the longer match), and a match
-that starts before the previous one ended is dropped as an overlap. Each
-surviving match gets its own `newUUID()` — never reused, even for a value
-that repeats verbatim elsewhere in the same string or request — then
-replaced with `[category:UUID]` in the output. *Amended by specs/0007:
-the matched value was originally also written to the cache as
-`Entry{Category, Value}` under that UUID before the substitution; there
-is no cache to write to any more — see specs/0007-technical.*
+**Non-overlapping matches, one fixed placeholder per category.** Within
+one string, every enabled category's compiled patterns are tried; matches
+are sorted by start offset (a tie broken by the longer match), and a
+match that starts before the previous one ended is dropped as an
+overlap. Each surviving match is replaced with `[REDACTED:category]` in
+the output. The placeholder holds nothing derived from the value — no
+identifier, hash or length — so identical and different values of one
+category are indistinguishable once redacted.
 
 **No per-call state on `Engine`.** `Engine` is built once at startup and
 shared across every concurrent request, so it cannot hold a request's
@@ -188,13 +188,90 @@ process: the compiled patterns for each enabled category. *Amended by
 specs/0007: `Engine` originally also held the cache and its per-entry
 TTL; both fields are removed.*
 
-**Gating, like `policy`'s.** Filtering only attempts to parse a body when
-the provider is `anthropic` and the path is `/v1/messages` or
-`/v1/messages/count_tokens` — the same two conditions
-`policy.addAnthropicConversation` gates on, duplicated rather than
-shared for the same reason the Anthropic reader itself is duplicated.
-Outside that gate, or with every category disabled, `Redact` returns the
-body unchanged and no error — not a failure, just nothing to scan.
+### Formats and operations
+
+`Redact` dispatches on `(r.Format, r.Operation)`, which routing has
+already validated (specs/0009-technical, Operation detection). Every
+routed call has one of these pairs; any other pair is a programming
+error and returns `*FilterError{"internal"}`, never the body unchanged,
+so a future format or operation added to routing without a filtering
+reader fails closed instead of leaking.
+
+| Format | Operation | Rewriter | Scanned members |
+| --- | --- | --- | --- |
+| `anthropic` | `messages`, `count_tokens` | `anthropic.go` | `system`, `messages` (as above) |
+| `openai` | `messages` | `openai.go`, `redactChat` | `messages[]` |
+| `openai` | `completion` | `openai.go`, `redactFIM` | `prompt`, `suffix` |
+| `openai` | `embeddings` | `openai.go`, `redactEmbeddings` | `input` |
+| `gemini` | `messages`, `count_tokens` | `gemini.go`, `redactGenerate` | `systemInstruction`, `contents`, and for `count_tokens` the same two inside `generateContentRequest` |
+| `gemini` | `embeddings` | `gemini.go`, `redactEmbed` | `content`, or `requests[].content` |
+| any | `models` | none | nothing: `Result{Body: r.Body}` |
+
+Every rewriter shares the same frame as the Anthropic one: reject
+duplicate keys at any depth, decode the top level into
+`map[string]json.RawMessage`, rewrite only the members in the table,
+copy every other member as raw bytes, and return the body unchanged when
+`counts` is empty. Each format's decoder lives in its own file and is
+not shared with `internal/policy` or `internal/trace`, for the reason
+above.
+
+**OpenAI-style chat (`redactChat`).** `messages` must be an array of
+objects, else `*FilterError{"input"}`. For each message, whatever its
+`role`:
+
+- `content`: a string is redacted whole; an array is walked part by part,
+  redacting `text` of parts whose `type` is `"text"`; any other part
+  (`image_url`, `input_audio`, `document_url`, unknown) is copied as raw
+  bytes; `null` is left as is.
+- `tool_calls[].function.arguments` (assistant messages): a JSON string.
+  Decode it with `UseNumber`; if it is valid JSON, `redactTree` it and
+  re-encode it to a string, so the provider still receives a string
+  holding valid JSON. If it is not valid JSON, `redactText` the raw
+  string. `id`, `type` and `function.name` are copied untouched.
+- Every other key (`role`, `name`, `tool_call_id`, `prefix`, unknown) is
+  copied as raw bytes.
+
+`tools`, `tool_choice`, `response_format` and every other top-level
+member are copied as raw bytes.
+
+**OpenAI-style FIM (`redactFIM`).** `prompt` and `suffix`, each a string
+when present, are redacted whole. A non-string value is
+`*FilterError{"input"}`.
+
+**OpenAI-style embeddings (`redactEmbeddings`).** `input` is a string
+(redacted whole) or an array whose string elements are each redacted. An
+element that is not a string (a token-ID array) is copied as raw bytes:
+it is not text and cannot carry a pattern the categories match.
+
+**Gemini generate and count tokens (`redactGenerate`).** The Gemini REST
+API accepts both the camelCase and snake_case spelling of every field
+(`systemInstruction` and `system_instruction`, `functionCall` and
+`function_call`, …). Each rewriter looks for both spellings, and an
+object carrying both spellings of one field is `*FilterError{"input"}`,
+for the same reason a duplicated key is: the Gateway and the provider
+could read different values.
+
+- `systemInstruction`: a `Content` object, redacted as below.
+- `contents`: an array of `Content` objects, each redacted as below.
+- For `count_tokens`, `generateContentRequest`, when present, is
+  redacted recursively as a generate request.
+
+A `Content` object's `parts` is an array; for each part:
+
+- `text`: redacted.
+- `functionCall.args`: an object, walked with `redactTree`.
+- `functionResponse.response`: an object, walked with `redactTree`.
+- `inlineData`, `fileData`, `executableCode`, `codeExecutionResult`,
+  `thought` parts and unknown fields: copied as raw bytes.
+
+`role`, `tools`, `toolConfig`, `safetySettings`, `generationConfig`,
+`cachedContent` and every other member are copied as raw bytes.
+
+**Gemini embeddings (`redactEmbed`).** `embedContent` carries one
+`content`; `batchEmbedContents` carries `requests[]`, each with a
+`content`. Each `content` is redacted as a `Content` object above.
+`model`, `taskType`, `title` and `outputDimensionality` are copied as raw
+bytes.
 
 **Content-Length.** The pipeline already fully reads the request body
 into memory before any stage runs (`io.ReadAll(io.LimitReader(...))` in
@@ -213,8 +290,10 @@ the limit governs what the pipeline *reads*, not what it forwards.
 
 ### `internal/filtering` — new
 
-Files: `engine.go`, `anthropic.go`, `cache.go`, `memory_cache.go`,
-`patterns.go`, `errors.go`, plus tests. *Amended by specs/0007:
+Files: `engine.go`, `anthropic.go`, `openai.go`, `gemini.go`,
+`cache.go`, `memory_cache.go`, `patterns.go`, `errors.go`, plus tests
+(`openai.go` and `gemini.go` added by specs/0009's every-stage rule;
+see *Formats and operations*). *Amended by specs/0007:
 `cache.go`'s `Cache`/`Entry` and `memory_cache.go` in their entirety are
 deleted; `Request`/`Result` move into `engine.go` and `Category` (with
 its constants) moves into `patterns.go` — see specs/0007-technical,
@@ -257,13 +336,15 @@ type Cache interface {
 
 // Request is what the pipeline hands the engine for one call.
 type Request struct {
-	CallID string
-	Path   string
-	Body   []byte
+	CallID    string
+	Path      string
+	Body      []byte
+	Format    string // routing format: "anthropic", "openai" or "gemini"
+	Operation string // routing operation: "messages", "count_tokens", "completion", "embeddings" or "models"
 }
 
 // Result is one Redact call's outcome. Counts is nil when nothing was
-// redacted (not a target body, or nothing matched); Body equals the
+// redacted (a models operation, or nothing matched); Body equals the
 // input body in that case.
 type Result struct {
 	Body   []byte
@@ -340,39 +421,40 @@ removed; see specs/0007-technical for the replacement)*:
 
 1. If every category is disabled, return `Result{Body: r.Body}, nil`
    without inspecting the body at all.
-2. `top, isTarget, err := buildTarget(providerName, r.Path, r.Body)`; a
-   non-target body (wrong provider, wrong path, not JSON) returns
-   `Result{Body: r.Body}, nil`; a target body that fails to parse (bad
-   JSON, a duplicate key, `messages` not an array) returns
-   `Result{}, &FilterError{"input"}`.
-3. `sc := &scan{ctx: ctx, engine: e, counts: map[Category]int{}}`.
-4. `newSystem, err := sc.redactSystem(top["system"])` when `system` is
-   present; same error handling.
-5. `newMessages, err := sc.redactMessages(top["messages"])`.
-6. `top["system"], top["messages"] = newSystem, newMessages`; every other
-   key of `top` is untouched.
-7. `body, _ := json.Marshal(top)` (marshal of `map[string]json.RawMessage`
+2. If `r.Operation` is `models`, return `Result{Body: r.Body}, nil`.
+   If `(r.Format, r.Operation)` has no rewriter (*Formats and
+   operations*), return `Result{}, &FilterError{"internal"}`.
+3. `top, err := decodeTop(r.Body)`; bad JSON, a duplicate key or a
+   non-object top level returns `Result{}, &FilterError{"input"}`.
+4. `sc := &scan{ctx: ctx, engine: e, counts: map[Category]int{}}`.
+5. Call the pair's rewriter on `top` (`redactAnthropic`, `redactChat`,
+   `redactFIM`, `redactEmbeddings`, `redactGenerate` or `redactEmbed`).
+   It replaces only the members it scans; every other key of `top` is
+   untouched. An error is returned as `asInputErr(err)`.
+6. `body, _ := json.Marshal(top)` (marshal of `map[string]json.RawMessage`
    cannot fail: every value is already valid JSON).
-8. `len(sc.counts) == 0` (nothing matched): return `Result{Body: r.Body}`
-   — the *original* bytes, since step 7's `body` differs from `r.Body`
+7. `len(sc.counts) == 0` (nothing matched): return `Result{Body: r.Body}`
+   — the *original* bytes, since step 6's `body` differs from `r.Body`
    only in key order even when nothing was redacted, and returning it
    anyway would make "nothing detected" indistinguishable from "detected
    but happened to redact to the same text," which it isn't.
-9. Otherwise return `Result{Body: body, Counts: sc.counts}, nil`.
+8. Otherwise return `Result{Body: body, Counts: sc.counts}, nil`.
 
-A deferred `recover()` wraps steps 3–9: any panic becomes
+A deferred `recover()` wraps steps 2–8: any panic becomes
 `&FilterError{"internal"}`, logging nothing about the recovered value.
 
 **`anthropic.go`.**
 
 ```go
-// buildTarget reports whether body is an Anthropic messages or
-// count_tokens request (provider == "anthropic" and path is one of the
-// two conversation routes). Non-target bodies return isTarget == false,
-// err == nil — not a failure, nothing to scan. A target body that is not
-// valid JSON, repeats a key at any depth, or whose top level is not an
-// object, or whose messages is not an array, is an *FilterError{"input"}.
-func buildTarget(providerName, path string, body []byte) (top map[string]json.RawMessage, isTarget bool, err error)
+// decodeTop rejects duplicate keys at any depth and decodes body's top
+// level. A body that is not valid JSON, repeats a key, or whose top
+// level is not an object is a *FilterError{"input"}. Shared by every
+// format's rewriter.
+func decodeTop(body []byte) (map[string]json.RawMessage, error)
+
+// redactAnthropic rewrites an Anthropic messages or count_tokens body;
+// messages that is not an array is a *FilterError{"input"}.
+func (s *scan) redactAnthropic(top map[string]json.RawMessage) error
 
 // scan carries the state of one Redact call. Engine itself holds no
 // per-call data, so this is what every helper method hangs off — see
@@ -405,13 +487,37 @@ func (s *scan) redactBlock(raw json.RawMessage) (json.RawMessage, error)
 // touched.
 func (s *scan) redactTree(v any) (any, error)
 
-// rejectDuplicateKeys and operationName duplicate policy's own (package-
-// private) versions rather than import internal/policy, for the same
-// reason policy's own Anthropic reader isn't shared with tracing: the
-// two stages read the same wire format for different purposes and
-// should stay free to diverge.
+// rejectDuplicateKeys duplicates policy's own (package-private) version
+// rather than import internal/policy, for the same reason policy's own
+// readers aren't shared with tracing: the stages read the same wire
+// formats for different purposes and should stay free to diverge.
 func rejectDuplicateKeys(body []byte) error
-func operationName(path string) string
+```
+
+**`openai.go`.**
+
+```go
+func (s *scan) redactChat(top map[string]json.RawMessage) error
+func (s *scan) redactFIM(top map[string]json.RawMessage) error
+func (s *scan) redactEmbeddings(top map[string]json.RawMessage) error
+
+// redactArguments redacts an OpenAI-style tool call's arguments string:
+// as a JSON tree re-encoded to a string when it parses, else as text.
+func (s *scan) redactArguments(raw json.RawMessage) (json.RawMessage, error)
+```
+
+**`gemini.go`.**
+
+```go
+func (s *scan) redactGenerate(top map[string]json.RawMessage) error
+func (s *scan) redactEmbed(top map[string]json.RawMessage) error
+
+// field returns the member named camel or snake, the key it was found
+// under, and an error when both spellings are present.
+func field(obj map[string]json.RawMessage, camel, snake string) (raw json.RawMessage, key string, err error)
+
+// redactContent redacts a Gemini Content object's parts (see Design).
+func (s *scan) redactContent(raw json.RawMessage) (json.RawMessage, error)
 ```
 
 **`patterns.go`.**
@@ -422,7 +528,7 @@ func operationName(path string) string
 var categoryPatterns = map[Category][]*regexp.Regexp{
 	CategoryEmail:  {reEmail},
 	CategorySSN:    {reSSNUS, reSSNUK, reSSNFR},
-	CategoryAPIKey: {reAPIKeyOpenAI, reAPIKeyGitHub, reAPIKeyAWS, reAPIKeySlack, reAPIKeyGoogle},
+	CategoryAPIKey: {reAPIKeyOpenAI, reAPIKeyOpenAIProject, reAPIKeyGitHub, reAPIKeyAWS, reAPIKeySlack, reAPIKeyGoogle},
 }
 
 var (
@@ -449,10 +555,14 @@ var (
 	// Vendor-prefixed secrets only — see Non-goals and Alternatives
 	// considered for why no generic high-entropy pattern ships.
 	reAPIKeyOpenAI = regexp.MustCompile(`\bsk-[A-Za-z0-9]{20,}\b`)
-	reAPIKeyGitHub = regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36}\b`)
-	reAPIKeyAWS    = regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)
-	reAPIKeySlack  = regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}\b`)
-	reAPIKeyGoogle = regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)
+	// reAPIKeyOpenAIProject: an OpenAI project key (sk-proj-...), whose
+	// body is base64url and so contains '_' and '-'. No trailing \b: the
+	// key may end in '-', and the greedy class consumes it whole anyway.
+	reAPIKeyOpenAIProject = regexp.MustCompile(`\bsk-proj-[A-Za-z0-9_-]{20,}`)
+	reAPIKeyGitHub        = regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36}\b`)
+	reAPIKeyAWS           = regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)
+	reAPIKeySlack         = regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}\b`)
+	reAPIKeyGoogle        = regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)
 )
 ```
 
@@ -460,7 +570,7 @@ var (
 field goes through:**
 
 ```go
-func (s *scan) redactText(str string) (string, error) {
+func (s *scan) redactText(str string) string {
 	type match struct {
 		start, end int
 		category   Category
@@ -474,7 +584,7 @@ func (s *scan) redactText(str string) (string, error) {
 		}
 	}
 	if len(matches) == 0 {
-		return str, nil
+		return str
 	}
 	sort.Slice(matches, func(i, j int) bool {
 		if matches[i].start != matches[j].start {
@@ -490,16 +600,12 @@ func (s *scan) redactText(str string) (string, error) {
 			continue // overlaps an already-consumed match
 		}
 		b.WriteString(str[last:m.start])
-		id := newPlaceholderID() // crypto/rand-backed UUIDv4
-		if err := s.engine.cache.Set(s.ctx, id, Entry{Category: m.category, Value: str[m.start:m.end]}, s.engine.ttl); err != nil {
-			return "", &FilterError{Kind: "cache_write"}
-		}
-		b.WriteString("[" + string(m.category) + ":" + id + "]")
+		b.WriteString("[REDACTED:" + string(m.category) + "]")
 		s.counts[m.category]++
 		last = m.end
 	}
 	b.WriteString(str[last:])
-	return b.String(), nil
+	return b.String()
 }
 ```
 
@@ -526,7 +632,7 @@ func (s *filteringStage) Request(ctx context.Context, c *pipeline.Call) (pipelin
 
 `Request`:
 
-1. `res, err := s.engine.Redact(ctx, filtering.Request{CallID: c.ID, Path: c.Request.URL.Path, Body: c.Body})`.
+1. `res, err := s.engine.Redact(ctx, filtering.Request{CallID: c.ID, Path: c.Request.URL.Path, Body: c.Body, Format: string(c.Format), Operation: string(c.Operation)})`.
 2. On error: classify via `errors.As` into `*filtering.FilterError` (kind
    `"internal"` if not one), log
    `s.logger.Error("filtering failed", zap.String("call_id", c.ID), zap.String("kind", kind))`,
@@ -580,6 +686,15 @@ before any stage can change `c.Body`.
 `bodyRead` instead of re-measuring `len(c.Body)`. Its call site in
 `pipeline.go` passes the captured value.
 
+`records.go`: `buildRequestRecord` also sets the record's redaction
+summary from the stage results it already walks: every category with a
+non-zero count in any stage's `detail.Redactions` goes into
+`RedactedCategories`, sorted with `sort.Strings`, and `Redacted` is
+`len(RedactedCategories) > 0`. `RedactedCategories` starts as
+`[]string{}` so it encodes `[]`, never `null`. The pipeline stays
+ignorant of the filtering package: it reads only the category names the
+stage reported.
+
 ### `internal/trace` — modified
 
 `record.go`: `StageDetail` gains a field, and its doc comment is
@@ -601,6 +716,18 @@ type StageDetail struct {
 A policy denial/allow leaves `Redactions` nil (encodes `null`); a
 filtering detail leaves `Revision` `""` and `Rules` nil, for the same
 reason.
+
+`RequestRecord` gains a top-level redaction summary, placed after
+`Stages`, so a consumer need not dig into the filtering stage entry to
+tell whether the provider received an altered request:
+
+```go
+	Redacted           bool     `json:"redacted"`
+	RedactedCategories []string `json:"redacted_categories"` // sorted; [] when nothing was redacted
+```
+
+`schemas/trace-record.v1.schema.json` lists both as required request
+record properties. Adding fields is allowed within v1.
 
 ## Configuration
 
@@ -685,14 +812,15 @@ under `pipeline.stages`.
 | Condition | Result |
 | --- | --- |
 | Every category disabled, or the stage disabled | `Redact` is a no-op (or never called); body forwarded exactly as received |
-| Body is not an Anthropic `messages`/`count_tokens` request (other provider, other path, not JSON) | Not a target: body forwarded unchanged, no error, no detail |
-| Target body is not valid JSON, repeats an object key at any depth, or `messages` is not an array | `*FilterError{"input"}`; stage returns the error; 503 `governance_unavailable`; provider receives nothing |
+| Operation `models` (carries no content) | Body forwarded unchanged, no error, no detail |
+| A `(Format, Operation)` pair with no rewriter | `*FilterError{"internal"}`; 503; provider receives nothing. Unreachable while routing and filtering agree; it exists so a mismatch fails closed |
+| Content body is not valid JSON, repeats an object key at any depth, carries both spellings of a Gemini field, or a scanned member has the wrong JSON type (`messages` not an array, FIM `prompt` not a string, …) | `*FilterError{"input"}`; stage returns the error; 503 `governance_unavailable`; provider receives nothing |
 | ~~`cache.Set` fails (a future backend unreachable, or the in-memory cache closed)~~ | ~~`*FilterError{"cache_write"}`; same 503 handling; the body already built up to that point is discarded, never partially forwarded~~ *— removed by specs/0007: there is no cache to fail.* |
 | A panic during redaction | Recovered inside `Engine.Redact` itself into `*FilterError{"internal"}`, before the pipeline's own generic stage-panic recovery (which logs the panic's `%v` and could otherwise leak content) ever sees it |
 | ~~`filtering.cache.backend` is anything but `"memory"`~~ | ~~`config.Load` fails at startup, naming the value~~ *— removed by specs/0007; see specs/0007-technical, Failure modes, for what setting it now does.* |
 | ~~`filtering.cache.capacity` or `.ttl` is zero or negative~~ | ~~`config.Load` fails at startup~~ *— removed by specs/0007.* |
-| A redaction occurs | Body rewritten; `c.Request.ContentLength` and the `Content-Length` header updated to match; one info log line with per-category counts; `trace.StageDetail.Redactions` set on the request record's `filtering` stage entry |
-| Nothing is detected | Body, `ContentLength` and headers untouched; no log line; `trace.StageDetail` omitted (nil) |
+| A redaction occurs | Body rewritten; `c.Request.ContentLength` and the `Content-Length` header updated to match; one info log line with per-category counts; `trace.StageDetail.Redactions` set on the request record's `filtering` stage entry, from which the record's `redacted: true` and `redacted_categories` are derived |
+| Nothing is detected | Body, `ContentLength` and headers untouched; no log line; `trace.StageDetail` omitted (nil); the record has `redacted: false`, `redacted_categories: []` |
 
 **Requests fail closed**, matching every other stage (specs/0001,
 specs/0004): a detection failure denies the call with the standard
@@ -706,7 +834,7 @@ since there is no cache.*
 matched text (unlike `policy.EvalError`, there's no parser-error-with-
 file-position case here worth quoting, since there's no operator-authored
 file to blame). The per-request log line carries counts per category,
-never a value or a placeholder's UUID. *Amended by specs/0007: the
+never a value. *Amended by specs/0007: the
 original last sentence here — "`Entry.Value` exists only in the cache,
 written once and read by nothing in this version" — no longer applies;
 `Entry` and the cache it lived in are both deleted, so the real value
@@ -720,8 +848,8 @@ exists nowhere once `redactText` returns.*
   SSN, one of each vendor-prefixed API key — each lands as its category's
   placeholder; a category disabled in config lets its own pattern's text
   through unredacted while others in the same string are still redacted;
-  the same email appearing three times in one string gets three distinct
-  UUIDs; two overlapping matches (e.g. a US-SSN-shaped substring inside a
+  the same email appearing three times in one string becomes three
+  identical `[REDACTED:email]` placeholders; two overlapping matches (e.g. a US-SSN-shaped substring inside a
   longer API-key-shaped token) keep only the earlier/longer one per the
   merge rule. *Amended by specs/0007: "three distinct cache entries" no
   longer applies — there is no cache to hold them.*
@@ -740,9 +868,27 @@ exists nowhere once `redactText` returns.*
   byte-identical; every top-level key other than `system`/`messages`
   (`model`, `tools`, `parameters`, `metadata`) preserved byte-identical
   even when it contains PII-shaped text.
-- **Non-target bodies.** Provider not `"anthropic"`; path not
-  `/v1/messages` or `/v1/messages/count_tokens`; non-JSON body on an
-  unrelated path — all return unchanged with no error.
+- **OpenAI-style chat.** PII in a string `content`, in a `text` part, in
+  a system, developer and tool-role message, and in an assistant tool
+  call's `arguments` at depth 3 — each redacted; the redacted `arguments`
+  is still a JSON string that parses; non-JSON `arguments` redacted as
+  text; an `image_url` part, `tools` and `response_format` holding
+  PII-shaped text preserved byte-identical.
+- **OpenAI-style FIM and embeddings.** `prompt` and `suffix` redacted;
+  `input` as a string and as an array of strings, other elements
+  unchanged; a token-ID array element preserved; a non-string `prompt`
+  is `*FilterError{"input"}`.
+- **Gemini.** `systemInstruction` and `system_instruction`; a `text`
+  part; `functionCall.args` and `functionResponse.response` at depth 3;
+  `countTokens` with `contents` and with `generateContentRequest`;
+  `embedContent` and `batchEmbedContents` (second request) — each
+  redacted; `inlineData`, `fileData` and `tools` preserved byte-identical;
+  an object with both `functionCall` and `function_call` is
+  `*FilterError{"input"}`.
+- **Dispatch.** `models` in each format returns the body unchanged; an
+  unknown format or operation is `*FilterError{"internal"}`.
+- **No PII, every format.** A body of each format and content operation
+  with nothing to redact comes back byte-identical.
 - **Failure.** A duplicate top-level key; a duplicate key nested inside a
   `tool_use`'s `input`; `messages` present but not an array — each gives
   `*FilterError{"input"}`. A redaction helper made to panic (test hook)
@@ -792,7 +938,12 @@ not the original request's.
 
 `internal/pipeline`: a fake stage that shrinks `c.Body` proves
 `buildRequestRecord`'s `size_bytes` still reports the length the caller
-originally sent, not the post-stage size.
+originally sent, not the post-stage size. A stage reporting
+`Redactions{"email": 2, "api_key": 1}` yields `redacted: true` and
+`redacted_categories: ["api_key", "email"]`; a call with no such detail
+yields `redacted: false` and `redacted_categories: []` (never `null`).
+The gateway end-to-end filtering test asserts the same on a real
+redaction (functional criterion 25).
 
 `internal/config`: defaults and env overrides for every new field; an
 unknown key under `filtering` fails. *Amended by specs/0007: the
@@ -802,13 +953,16 @@ with the fields they validated; see specs/0007-technical, Testing, for
 what replaces them.*
 
 End to end (one test, mirroring 0004's): default config, a prompt
-containing an email — provider receives `[email:UUID]` in its place, and
+containing an email — provider receives `[REDACTED:email]` in its place, and
 the response is relayed byte-identical (functional criterion 1, 11); no
 PII anywhere — byte-identical forward (criterion 5); the stage disabled —
 PII of every category reaches the provider (criterion 7); PII only in a
 `tool_use` argument and a `tool_result`, none in the top-level
 `messages` text — both still redacted (criterion 12); a PII-shaped string
 inside the `tools` list's `description` — left untouched (criterion 13).
+The same against Mistral and Gemini `httptest` upstreams for criteria
+17–24: each receives placeholders, and a non-JSON body is failed closed
+with the upstream receiving nothing.
 *Amended by specs/0007: the forced cache-write-failure case (criterion
 10) is removed along with the criterion itself.*
 
@@ -853,8 +1007,8 @@ inside the `tools` list's `description` — left untouched (criterion 13).
   can mutate directly; building a generic hook for a single caller is
   unneeded machinery that specs/0001 never anticipated and nothing else
   would use.
-- **Sharing `policy`'s `rejectDuplicateKeys`/`operationName` instead of
-  duplicating them** — rejected, for the same reason specs/0004 gave for
+- **Sharing `policy`'s `rejectDuplicateKeys` instead of duplicating
+  it** — rejected, for the same reason specs/0004 gave for
   not sharing its Anthropic reader with tracing: the two stages
   incidentally read the same wire format for unrelated reasons and should
   stay free to diverge independently.

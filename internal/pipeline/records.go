@@ -3,6 +3,7 @@ package pipeline
 import (
 	"net"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/cardeahq/cardea-gateway/internal/routing"
@@ -22,19 +23,20 @@ func remoteAddr(r *http.Request) string {
 
 func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, bodyRead bool, requestSize int64) trace.RequestRecord {
 	rec := trace.RequestRecord{
-		Schema:      trace.Schema,
-		Record:      "request",
-		CallID:      c.ID,
-		RemoteAddr:  remoteAddr(c.Request),
-		AgentID:     optional(c.AgentID),
-		Session:     trace.Session{Status: "absent"},
-		ReceivedAt:  trace.Timestamp(c.Received),
-		DurationUS:  time.Since(c.Received).Microseconds(),
-		Provider:    routeProvider(c.Route),
-		Outcome:     trace.RequestOutcome{Result: "forwarded"},
-		Stages:      make([]trace.RequestStage, 0, len(results)),
-		ToolResults: []trace.ToolResult{},
-		Findings:    []trace.Finding{},
+		Schema:             trace.Schema,
+		Record:             "request",
+		CallID:             c.ID,
+		RemoteAddr:         remoteAddr(c.Request),
+		AgentID:            optional(c.AgentID),
+		Session:            trace.Session{Status: "absent"},
+		ReceivedAt:         trace.Timestamp(c.Received),
+		DurationUS:         time.Since(c.Received).Microseconds(),
+		Provider:           routeProvider(c.Route),
+		Outcome:            trace.RequestOutcome{Result: "forwarded"},
+		Stages:             make([]trace.RequestStage, 0, len(results)),
+		RedactedCategories: []string{},
+		ToolResults:        []trace.ToolResult{},
+		Findings:           []trace.Finding{},
 	}
 	if bodyRead {
 		size := requestSize
@@ -73,7 +75,16 @@ func buildRequestRecord(c *Call, results []stageResult, denial *Denial, failed, 
 			st.StartedAt, st.DurationUS = &ts, &us
 		}
 		rec.Stages = append(rec.Stages, st)
+		if r.detail != nil {
+			for cat, n := range r.detail.Redactions {
+				if n > 0 {
+					rec.RedactedCategories = append(rec.RedactedCategories, cat)
+				}
+			}
+		}
 	}
+	sort.Strings(rec.RedactedCategories)
+	rec.Redacted = len(rec.RedactedCategories) > 0
 	return rec
 }
 

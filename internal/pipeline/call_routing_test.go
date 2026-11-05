@@ -13,8 +13,8 @@ import (
 	"github.com/cardeahq/cardea-gateway/internal/routing"
 )
 
-// specs/0009: the routing stage attaches a route, format and model to the
-// call via AllowRouted, or denies with just the model via DenyWithModel.
+// specs/0009: the routing stage attaches a route, format, operation and
+// model to the call via AllowRouted, or denies with just the model via DenyWithModel.
 // These tests pin down what the pipeline does with either decision,
 // independent of any particular routing algorithm.
 
@@ -22,17 +22,19 @@ func testRoute() routing.Route {
 	return routing.Route{Provider: "anthropic", Kind: "anthropic", Formats: []routing.Format{routing.FormatAnthropic}, Patterns: []string{"claude-*"}}
 }
 
-// routedStage always allows, attaching route/format/model via AllowRouted.
+// routedStage always allows, attaching route/format/operation/model via
+// AllowRouted.
 type routedStage struct {
 	name   string
 	route  routing.Route
 	format routing.Format
+	op     routing.Operation
 	model  *string
 }
 
 func (s *routedStage) Name() string { return s.name }
 func (s *routedStage) Request(context.Context, *Call) (Decision, error) {
-	return AllowRouted(s.route, s.format, s.model), nil
+	return AllowRouted(s.route, s.format, s.op, s.model), nil
 }
 
 // deniedWithModelStage always denies via DenyWithModel.
@@ -55,7 +57,7 @@ func TestAllowRouted_PopulatesCallFields(t *testing.T) {
 	// exactly as AgentID is elsewhere in this package's tests.
 	route := testRoute()
 	model := "claude-sonnet-5"
-	routingStage := &fakeStage{name: "routing", decision: AllowRouted(route, routing.FormatAnthropic, &model)}
+	routingStage := &fakeStage{name: "routing", decision: AllowRouted(route, routing.FormatAnthropic, routing.OpCountTokens, &model)}
 	next := &fakeStage{name: "tracing", decision: Allow()}
 
 	p := New(zaptest.NewLogger(t), 1<<20, nil, routingStage, next)
@@ -72,6 +74,9 @@ func TestAllowRouted_PopulatesCallFields(t *testing.T) {
 	if c.Format != routing.FormatAnthropic {
 		t.Fatalf("Call.Format = %q, want %q", c.Format, routing.FormatAnthropic)
 	}
+	if c.Operation != routing.OpCountTokens {
+		t.Fatalf("Call.Operation = %q, want %q", c.Operation, routing.OpCountTokens)
+	}
 	if c.Model == nil || *c.Model != model {
 		t.Fatalf("Call.Model = %v, want %q", c.Model, model)
 	}
@@ -80,7 +85,7 @@ func TestAllowRouted_PopulatesCallFields(t *testing.T) {
 func TestAllowRouted_ALaterPlainAllowCannotOverwriteTheRoute(t *testing.T) {
 	route := testRoute()
 	model := "claude-sonnet-5"
-	routing1 := &fakeStage{name: "routing", decision: AllowRouted(route, routing.FormatAnthropic, &model)}
+	routing1 := &fakeStage{name: "routing", decision: AllowRouted(route, routing.FormatAnthropic, routing.OpMessages, &model)}
 	later := &fakeStage{name: "tracing", decision: Allow()}
 
 	p := New(zaptest.NewLogger(t), 1<<20, nil, routing1, later)
@@ -96,6 +101,9 @@ func TestAllowRouted_ALaterPlainAllowCannotOverwriteTheRoute(t *testing.T) {
 	}
 	if c.Format != routing.FormatAnthropic {
 		t.Fatalf("Call.Format = %q after a later plain Allow(), want %q", c.Format, routing.FormatAnthropic)
+	}
+	if c.Operation != routing.OpMessages {
+		t.Fatalf("Call.Operation = %q after a later plain Allow(), want %q", c.Operation, routing.OpMessages)
 	}
 	if c.Model == nil || *c.Model != model {
 		t.Fatalf("Call.Model = %v after a later plain Allow(), want %q", c.Model, model)
@@ -132,7 +140,7 @@ func TestDenyWithModel_SetsCallModelButNoRoute(t *testing.T) {
 // stage allowed the call with AllowRouted.
 func TestPipeline_RouteAttachedToUpstreamRequestContext(t *testing.T) {
 	route := testRoute()
-	stage := &routedStage{name: "routing", route: route, format: routing.FormatAnthropic}
+	stage := &routedStage{name: "routing", route: route, format: routing.FormatAnthropic, op: routing.OpMessages}
 
 	p := New(zaptest.NewLogger(t), 1<<20, nil, stage)
 	var gotRoute routing.Route
