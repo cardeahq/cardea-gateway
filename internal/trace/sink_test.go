@@ -20,16 +20,17 @@ var ts = Timestamp(time.Date(2026, 9, 27, 14, 3, 11, 402113000, time.UTC))
 // so its encoding shows how "does not apply" is written.
 func minimalRequestRecord(callID string) RequestRecord {
 	return RequestRecord{
-		Schema:      Schema,
-		Record:      "request",
-		CallID:      callID,
-		RemoteAddr:  "203.0.113.42",
-		Session:     Session{Status: "absent"},
-		ReceivedAt:  ts,
-		Outcome:     RequestOutcome{Result: "forwarded"},
-		Stages:      []RequestStage{{Name: "tracing", Decision: "not_run"}},
-		ToolResults: []ToolResult{},
-		Findings:    []Finding{},
+		Schema:             Schema,
+		Record:             "request",
+		CallID:             callID,
+		RemoteAddr:         "203.0.113.42",
+		Session:            Session{Status: "absent"},
+		ReceivedAt:         ts,
+		Outcome:            RequestOutcome{Result: "forwarded"},
+		Stages:             []RequestStage{{Name: "tracing", Decision: "not_run"}},
+		RedactedCategories: []string{},
+		ToolResults:        []ToolResult{},
+		Findings:           []Finding{},
 	}
 }
 
@@ -43,7 +44,7 @@ func minimalResponseRecord(callID string) ResponseRecord {
 		StartedAt:  ts,
 		Outcome:    ResponseOutcome{Result: "unanswered", Status: 502},
 		Stages:     []ResponseStage{{Name: "tracing", StartedAt: ts, Observation: "completed"}},
-		ToolCalls:  []ToolCall{{ToolCallID: "toolu_1", ToolName: "bash", Outcome: "not_delivered"}},
+		ToolCalls:  []ToolCall{{ToolCallID: ptr("toolu_1"), ToolName: "bash", Outcome: "not_delivered"}},
 		Findings:   []Finding{},
 	}
 }
@@ -134,7 +135,7 @@ func TestLogSink_EveryFieldPresentWithNullAndEmptyList(t *testing.T) {
 	_ = json.Unmarshal([]byte(lines[1]), &resp)
 
 	assertKeys(t, "request", req, "schema", "record", "call_id", "remote_addr", "agent_id", "session", "received_at", "duration_us",
-		"model", "stream", "size_bytes", "outcome", "stages", "tool_results", "findings")
+		"model", "stream", "size_bytes", "outcome", "stages", "redacted", "redacted_categories", "tool_results", "findings")
 	assertKeys(t, "request.session", asObject(t, "session", req["session"]), "id", "status", "source", "source_name")
 	assertKeys(t, "request.outcome", asObject(t, "outcome", req["outcome"]), "result", "status", "stage", "reason")
 	stage := asObject(t, "request.stages[0]", asArray(t, "request.stages", req["stages"])[0])
@@ -211,7 +212,7 @@ func TestLogSink_ConcurrentWritersNeverInterleave(t *testing.T) {
 				// Make lines long enough that an unsynchronized write would tear.
 				r.ToolCalls = make([]ToolCall, 20)
 				for i := range r.ToolCalls {
-					r.ToolCalls[i] = ToolCall{ToolCallID: strings.Repeat("t", 64), ToolName: "bash", Outcome: "delivered"}
+					r.ToolCalls[i] = ToolCall{ToolCallID: ptr(strings.Repeat("t", 64)), ToolName: "bash", Outcome: "delivered"}
 				}
 				if err := s.Write(r); err != nil {
 					t.Errorf("Write: %v", err)

@@ -22,7 +22,7 @@ type filteringStage struct {
 func (s *filteringStage) Name() string { return "filtering" }
 
 func (s *filteringStage) Request(ctx context.Context, c *pipeline.Call) (pipeline.Decision, error) {
-	res, err := s.engine.Redact(ctx, filtering.Request{CallID: c.ID, Path: c.Request.URL.Path, Body: c.Body, Format: string(c.Format)})
+	res, err := s.engine.Redact(ctx, filtering.Request{CallID: c.ID, Path: c.Request.URL.Path, Body: c.Body, Format: string(c.Format), Operation: string(c.Operation)})
 	if err != nil {
 		kind := "internal"
 		var fe *filtering.FilterError

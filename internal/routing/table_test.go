@@ -206,7 +206,7 @@ func repeat(s string, n int) string {
 
 // --- Single mode -------------------------------------------------------------
 
-func TestResolve_SingleModeResolvesEverything(t *testing.T) {
+func TestResolve_SingleModeResolvesEveryCallOfItsFormat(t *testing.T) {
 	tbl := NewSingleTable(Route{Provider: "anthropic", Kind: "anthropic", Formats: []Format{FormatAnthropic}, Single: true})
 
 	tests := []struct {
@@ -215,16 +215,15 @@ func TestResolve_SingleModeResolvesEverything(t *testing.T) {
 		model  string
 		found  bool
 	}{
-		{"known format, model found", FormatAnthropic, "claude-sonnet-5", true},
-		{"unknown format", FormatUnknown, "", false},
-		{"no model", FormatOpenAI, "", false},
-		{"any format, any model", FormatGemini, "gemini-2.5-pro", true},
+		{"its format, model found", FormatAnthropic, "claude-sonnet-5", true},
+		{"its format, a model no pattern would match", FormatAnthropic, "gpt-4", true},
+		{"its format, no model", FormatAnthropic, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r, rej := tbl.Resolve(tt.format, tt.model, tt.found)
 			if rej != RejectNone {
-				t.Fatalf("rejection = %q, want none: single mode never denies", rej)
+				t.Fatalf("rejection = %q, want none: single mode ignores the model", rej)
 			}
 			if r.Provider != "anthropic" || !r.Single {
 				t.Fatalf("route = %+v, want the single anthropic route", r)
@@ -236,12 +235,47 @@ func TestResolve_SingleModeResolvesEverything(t *testing.T) {
 	}
 }
 
-func TestNewSingleTable_RouteIsReturnedAsGiven(t *testing.T) {
-	route := Route{Provider: "custom", Kind: "", Formats: nil, Single: true}
-	tbl := NewSingleTable(route)
-	r, rej := tbl.Resolve(FormatUnknown, "", false)
-	if rej != RejectNone || r.Provider != "custom" {
-		t.Fatalf("route = %+v (rej %q), want the passthrough route custom", r, rej)
+func TestResolve_SingleModeRejectsAnotherFormat(t *testing.T) {
+	tbl := NewSingleTable(Route{Provider: "anthropic", Kind: "anthropic", Formats: []Format{FormatAnthropic}, Single: true})
+
+	tests := []struct {
+		name   string
+		format Format
+		want   Rejection
+	}{
+		{"unknown format", FormatUnknown, RejectUnknownFormat},
+		{"openai format the route does not speak", FormatOpenAI, RejectNotServed},
+		{"gemini format the route does not speak", FormatGemini, RejectNotServed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, rej := tbl.Resolve(tt.format, "claude-sonnet-5", true)
+			if rej != tt.want {
+				t.Fatalf("rejection = %q, want %q", rej, tt.want)
+			}
+			if r.Provider != "" {
+				t.Fatalf("route = %+v, want the zero route on rejection", r)
+			}
+		})
+	}
+}
+
+func TestResolve_SingleModeMistralServesOnlyOpenAIStyle(t *testing.T) {
+	tbl := NewSingleTable(Route{Provider: "mistral", Kind: "mistral", Formats: []Format{FormatOpenAI}, Single: true})
+	if r, rej := tbl.Resolve(FormatOpenAI, "anything", true); rej != RejectNone || r.Provider != "mistral" {
+		t.Fatalf("openai: route = %+v (rej %q), want mistral", r, rej)
+	}
+	if _, rej := tbl.Resolve(FormatAnthropic, "claude-sonnet-5", true); rej != RejectNotServed {
+		t.Fatalf("anthropic: rejection = %q, want %q", rej, RejectNotServed)
+	}
+}
+
+func TestRejection_NewValues(t *testing.T) {
+	if RejectUnsupportedOp != "unsupported_operation" {
+		t.Fatalf("RejectUnsupportedOp = %q, want unsupported_operation", RejectUnsupportedOp)
+	}
+	if RejectNotServed != "format_not_served" {
+		t.Fatalf("RejectNotServed = %q, want format_not_served", RejectNotServed)
 	}
 }
 

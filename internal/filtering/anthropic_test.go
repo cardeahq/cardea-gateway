@@ -3,41 +3,55 @@ package filtering
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
 
-// --- buildTarget --------------------------------------------------------------
+// --- decodeTop ------------------------------------------------------------------
 
-func TestBuildTarget_MatchesBothAnthropicConversationRoutes(t *testing.T) {
-	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
-	for _, path := range []string{"/v1/messages", "/v1/messages/count_tokens"} {
-		top, isTarget, err := buildTarget("anthropic", path, body)
-		if err != nil || !isTarget || top == nil {
-			t.Fatalf("path %s: top=%v isTarget=%v err=%v, want a matched target", path, top, isTarget, err)
-		}
+func TestDecodeTop_DecodesTheTopLevelObject(t *testing.T) {
+	top, err := decodeTop([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatalf("decodeTop: %v", err)
+	}
+	if string(top["model"]) != `"m"` || top["messages"] == nil {
+		t.Fatalf("top = %v, want model and messages members as raw JSON", top)
 	}
 }
 
-func TestBuildTarget_NonTargetBodiesReturnUnchangedWithNoError(t *testing.T) {
+func TestDecodeTop_RejectsBadBodiesAsInputErrors(t *testing.T) {
 	tests := []struct {
-		name   string
-		format string
-		path   string
-		body   string
+		name string
+		body string
 	}{
-		{"wrong format", "openai", "/v1/messages", `{"model":"m","messages":[]}`},
-		{"unknown format", "", "/v1/messages", `{"model":"m","messages":[]}`},
-		{"wrong path", "anthropic", "/v1/chat/completions", `{"model":"m","messages":[]}`},
-		{"non-JSON body on an unrelated path", "anthropic", "/v1/chat/completions", "not json at all"},
+		{"not JSON", "not json at all"},
+		{"truncated JSON", `{"model":`},
+		{"top level is an array", `[{"model":"m"}]`},
+		{"top level is a string", `"hello"`},
+		{"duplicate top-level key", `{"model":"a","model":"b"}`},
+		{"duplicate nested key", `{"messages":[{"role":"user","role":"assistant"}]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			top, isTarget, err := buildTarget(tt.format, tt.path, []byte(tt.body))
-			if isTarget || err != nil || top != nil {
-				t.Fatalf("top=%v isTarget=%v err=%v, want nil/false/nil", top, isTarget, err)
+			_, err := decodeTop([]byte(tt.body))
+			var fe *FilterError
+			if !errors.As(err, &fe) || fe.Kind != "input" {
+				t.Fatalf("err = %v, want *FilterError{Kind: \"input\"}", err)
 			}
 		})
+	}
+}
+
+func TestEngine_Redact_AnthropicCountTokensIsRedactedLikeMessages(t *testing.T) {
+	eng := testEngine()
+	body := []byte(sysBody("mail " + exEmail))
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages/count_tokens", Body: body, Format: "anthropic", Operation: "count_tokens"})
+	if err != nil {
+		t.Fatalf("Redact: %v", err)
+	}
+	if res.Counts[CategoryEmail] != 1 || strings.Contains(string(res.Body), exEmail) {
+		t.Fatalf("Result = %s (counts %v), want the email redacted", res.Body, res.Counts)
 	}
 }
 
@@ -113,10 +127,10 @@ func TestScan_RedactBlock_ToolUseInputRedactedAtDepthAndInArraysKeysUntouched(t 
 		t.Fatalf("output is not JSON: %v: %s", err, out)
 	}
 	input := block["input"].(map[string]any)
-	if strings.Contains(fmtAny(input["a"]), "person@example.com") && !strings.Contains(fmtAny(input["a"]), "[email:") {
+	if strings.Contains(fmtAny(input["a"]), "person@example.com") && !strings.Contains(fmtAny(input["a"]), "[REDACTED:email]") {
 		t.Fatalf("nested string value was not redacted: %v", input["a"])
 	}
-	if !strings.Contains(fmtAny(input["list"]), "[email:") {
+	if !strings.Contains(fmtAny(input["list"]), "[REDACTED:email]") {
 		t.Fatalf("array element string value was not redacted: %v", input["list"])
 	}
 	found := false
@@ -252,7 +266,7 @@ func TestEngine_Redact_TopLevelFieldsOutsideSystemAndMessagesAreByteIdentical(t 
 		`"parameters":{"note":"` + exEmail + `"},"metadata":{"note":"` + exEmail + `"},` +
 		`"messages":[{"role":"user","content":"hi"}]}`)
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic", Operation: "messages"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -276,7 +290,7 @@ func TestEngine_Redact_PIIOnlyInToolCallAndToolResultIsStillRedacted(t *testing.
 		`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"lookup","input":{"query":"` + exEmail + `"}}]},` +
 		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"found ` + exSSNUS + `"}]}]}`)
 
-	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic"})
+	res, err := eng.Redact(context.Background(), Request{CallID: "c1", Path: "/v1/messages", Body: body, Format: "anthropic", Operation: "messages"})
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}

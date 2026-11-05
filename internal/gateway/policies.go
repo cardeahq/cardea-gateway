@@ -22,13 +22,14 @@ func (s *policiesStage) Name() string { return "policies" }
 
 func (s *policiesStage) Request(ctx context.Context, c *pipeline.Call) (pipeline.Decision, error) {
 	req := policy.Request{
-		CallID:  c.ID,
-		Method:  c.Request.Method,
-		Path:    c.Request.URL.Path,
-		Headers: c.Request.Header,
-		Body:    c.Body,
-		AgentID: c.AgentID,
-		Format:  string(c.Format),
+		CallID:    c.ID,
+		Method:    c.Request.Method,
+		Path:      c.Request.URL.Path,
+		Headers:   c.Request.Header,
+		Body:      c.Body,
+		AgentID:   c.AgentID,
+		Format:    string(c.Format),
+		Operation: string(c.Operation),
 	}
 	if c.Route != nil {
 		req.Provider = c.Route.Provider

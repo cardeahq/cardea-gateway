@@ -49,8 +49,8 @@ func DetectFormat(r *http.Request) Format {
 	return FormatUnknown
 }
 
-// FormatOf returns the format a provider kind speaks; FormatUnknown for ""
-// (passthrough) or an unknown kind.
+// FormatOf returns the format a provider kind speaks; FormatUnknown for an
+// unknown kind.
 func FormatOf(kind string) Format {
 	switch kind {
 	case "anthropic":

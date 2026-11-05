@@ -17,7 +17,7 @@ const (
 var categoryPatterns = map[Category][]*regexp.Regexp{
 	CategoryEmail:  {reEmail},
 	CategorySSN:    {reSSNUS, reSSNUK, reSSNFR},
-	CategoryAPIKey: {reAPIKeyOpenAI, reAPIKeyGitHub, reAPIKeyAWS, reAPIKeySlack, reAPIKeyGoogle},
+	CategoryAPIKey: {reAPIKeyOpenAI, reAPIKeyOpenAIProject, reAPIKeyGitHub, reAPIKeyAWS, reAPIKeySlack, reAPIKeyGoogle},
 }
 
 var (
@@ -46,8 +46,12 @@ var (
 	// Vendor-prefixed secrets only — see Non-goals and Alternatives
 	// considered for why no generic high-entropy pattern ships.
 	reAPIKeyOpenAI = regexp.MustCompile(`\bsk-[A-Za-z0-9]{20,}\b`)
-	reAPIKeyGitHub = regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36}\b`)
-	reAPIKeyAWS    = regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)
-	reAPIKeySlack  = regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}\b`)
-	reAPIKeyGoogle = regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)
+	// reAPIKeyOpenAIProject: an OpenAI project key (sk-proj-...), whose
+	// body is base64url and so contains '_' and '-'. No trailing \b: the
+	// key may end in '-', and the greedy class consumes it whole anyway.
+	reAPIKeyOpenAIProject = regexp.MustCompile(`\bsk-proj-[A-Za-z0-9_-]{20,}`)
+	reAPIKeyGitHub        = regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36}\b`)
+	reAPIKeyAWS           = regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)
+	reAPIKeySlack         = regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}\b`)
+	reAPIKeyGoogle        = regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)
 )

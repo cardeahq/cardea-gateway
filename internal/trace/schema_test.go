@@ -68,8 +68,11 @@ func schemaRecords() map[string]Record {
 				{Name: "identification", StartedAt: ptr(schemaTS(402200)), DurationUS: ptr(int64(41)), Decision: "allowed"},
 				{Name: "policies", StartedAt: ptr(schemaTS(402640)), DurationUS: ptr(int64(903)), Decision: "allowed",
 					Detail: &StageDetail{Revision: "r7", Rules: []string{}}},
+				{Name: "filtering", StartedAt: ptr(schemaTS(403550)), DurationUS: ptr(int64(120)), Decision: "allowed",
+					Detail: &StageDetail{Redactions: map[string]int{"api_key": 1, "email": 2}}},
 			},
-			ToolResults: []ToolResult{{ToolCallID: "toolu_01A9", IsError: false, SizeBytes: 5120, Fingerprint: ptr("fp_9c1e0b7d44a2f316")}},
+			Redacted: true, RedactedCategories: []string{"api_key", "email"},
+			ToolResults: []ToolResult{{ToolCallID: ptr("toolu_01A9"), IsError: false, SizeBytes: 5120, Fingerprint: ptr("fp_9c1e0b7d44a2f316")}},
 			Findings:    []Finding{},
 		},
 		"request denied by policy, later stages not run": RequestRecord{
@@ -81,13 +84,13 @@ func schemaRecords() map[string]Record {
 					Detail: &StageDetail{Revision: "r7", Rules: []string{"no-rm-rf"}}},
 				{Name: "tracing", Decision: "not_run"},
 			},
-			ToolResults: []ToolResult{}, Findings: []Finding{},
+			RedactedCategories: []string{}, ToolResults: []ToolResult{}, Findings: []Finding{},
 		},
 		"request refused before its body was read": RequestRecord{
 			Schema: Schema, Record: "request", CallID: "ak_0000000000000002", RemoteAddr: "203.0.113.42", Session: absent, ReceivedAt: schemaTS(3),
-			Outcome:     RequestOutcome{Result: "failed", Status: ptr(413), Stage: ptr("pipeline"), Reason: ptr("body_too_large")},
-			Stages:      []RequestStage{},
-			ToolResults: []ToolResult{}, Findings: []Finding{},
+			Outcome:            RequestOutcome{Result: "failed", Status: ptr(413), Stage: ptr("pipeline"), Reason: ptr("body_too_large")},
+			Stages:             []RequestStage{},
+			RedactedCategories: []string{}, ToolResults: []ToolResult{}, Findings: []Finding{},
 		},
 		"response delivered with tokens and tool calls": ResponseRecord{
 			Schema: Schema, Record: "response", CallID: "ak_7f3c2b1d9e8a4f60", RemoteAddr: "203.0.113.42", AgentID: ptr("acme-bot"), Session: claimed,
@@ -97,11 +100,34 @@ func schemaRecords() map[string]Record {
 			Streamed: true, ResponseID: ptr("msg_01XFDUDYJgAACzvnptvVoYEL"), Provider: ptr("anthropic"), ResponseModel: ptr("claude-sonnet-5-20260801"),
 			StopReason: ptr("tool_use"), Tokens: &Tokens{Sent: 1834, Received: 212},
 			ToolCalls: []ToolCall{
-				{ToolCallID: "toolu_01B2", ToolName: "bash", ArgumentNames: []string{"command"}, SizeBytes: ptr(int64(38)),
+				{ToolCallID: ptr("toolu_01B2"), ToolName: "bash", ArgumentNames: []string{"command"}, SizeBytes: ptr(int64(38)),
 					Fingerprint: ptr("fp_03d8a6c2e91b7f40"), RelayedAt: ptr(schemaTS(571930)), Outcome: "delivered", Recorded: true},
-				{ToolCallID: "toolu_01B3", ToolName: "read", Outcome: "not_delivered", Recorded: false},
+				{ToolCallID: ptr("toolu_01B3"), ToolName: "read", Outcome: "not_delivered", Recorded: false},
 			},
 			Findings: []Finding{{Kind: "response_truncated"}},
+		},
+		// specs/0003-technical: a Gemini function call or function response
+		// without an id has a null tool_call_id, and the schema allows it.
+		"request with a Gemini function response that has no id": RequestRecord{
+			Schema: Schema, Record: "request", CallID: "ak_0000000000000004", RemoteAddr: "203.0.113.42", Session: absent, ReceivedAt: schemaTS(5),
+			DurationUS: 900, Provider: ptr("gemini"), Model: ptr("gemini-2.5-pro"), SizeBytes: ptr(int64(300)),
+			Outcome:            RequestOutcome{Result: "forwarded"},
+			Stages:             []RequestStage{},
+			RedactedCategories: []string{},
+			ToolResults:        []ToolResult{{ToolCallID: nil, SizeBytes: 17, Fingerprint: ptr("fp_0123456789abcdef")}},
+			Findings:           []Finding{},
+		},
+		"response with a Gemini function call that has no id": ResponseRecord{
+			Schema: Schema, Record: "response", CallID: "ak_0000000000000004", RemoteAddr: "203.0.113.42", Session: absent, StartedAt: schemaTS(6), DurationUS: 4000,
+			Outcome:  ResponseOutcome{Result: "delivered", UpstreamStatus: ptr(200), Status: 200},
+			Stages:   []ResponseStage{{Name: "tracing", StartedAt: schemaTS(7), DurationUS: 30, Observation: "completed"}},
+			Streamed: true, ResponseID: ptr("resp-1"), Provider: ptr("gemini"), ResponseModel: ptr("gemini-2.5-pro-002"),
+			StopReason: ptr("STOP"), Tokens: &Tokens{Sent: 20, Received: 8},
+			ToolCalls: []ToolCall{
+				{ToolCallID: nil, ToolName: "get_weather", ArgumentNames: []string{"city"}, SizeBytes: ptr(int64(16)),
+					Fingerprint: ptr("fp_fedcba9876543210"), RelayedAt: ptr(schemaTS(8)), Outcome: "delivered", Recorded: true},
+			},
+			Findings: []Finding{},
 		},
 		"response unanswered": ResponseRecord{
 			Schema: Schema, Record: "response", CallID: "ak_0000000000000003", RemoteAddr: "203.0.113.42", Session: absent, StartedAt: schemaTS(4), DurationUS: 10004213,

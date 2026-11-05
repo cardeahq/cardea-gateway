@@ -273,7 +273,7 @@ func TestGatewayNew_ReturnsErrorNotPartialGatewayOnGateFailure(t *testing.T) {
 		},
 		Authorization: config.AuthorizationConfig{APIKeyEnvs: []string{"AK_GW_TEST_UNSET_AUTHZ_ENV_VAR_XYZ789"}},
 	}
-	set, table := singleSetAndTable("stub", "", prov)
+	set, table := singleSetAndTable("stub", "anthropic", prov)
 	g, err := New(cfg, zaptest.NewLogger(t), set, table)
 	if err == nil {
 		t.Fatal("New with a gate construction failure = nil error, want error")

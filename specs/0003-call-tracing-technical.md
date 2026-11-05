@@ -54,10 +54,10 @@ Anthropic wire format, sessions, fingerprints and the sink in a new
 
 - Everything the functional spec excludes: tool-call decisions, network
   and OpenTelemetry sinks, sampling, collecting or assembling traces.
-- Provider formats other than the Anthropic Messages API. With any other
-  provider, records are still written, but the fields read from bodies
-  (`model`, `tool_results`, `tool_calls`, `response_id`, …) take their
-  not-applicable values. The next provider's spec adds its parser.
+- A provider format with no reader. Every format routing accepts
+  (specs/0009: Anthropic, OpenAI-style, Gemini) has a request reader and
+  a response reader here (*Reading other formats*); a format without
+  them cannot be routed.
 - Content encodings other than identity and gzip on responses.
 - A running token total. The `token_counting` stage (0001) was removed
   after this spec: its only output was a log line, and each response
@@ -117,7 +117,8 @@ tracing produces no records at all.
 A call denied before tracing runs (by the body check or identification)
 still gets a request record. Tracing's own fields then take their
 not-applicable values: `session.status: "absent"`, `model: null`,
-`tool_results: []`.
+`tool_results: []`; with no filtering stage run, `redacted: false` and
+`redacted_categories: []`.
 
 ### Remote address
 
@@ -179,6 +180,80 @@ needs it.
   an error, and the pipeline fails the call closed with stage `tracing`.
   A body that is not JSON, or has no `messages`, is not an error: it has
   no tool results, and the provider judges it.
+
+### Reading other formats
+
+The sections above describe the Anthropic reader. The tracing stage
+passes the call's routing format and operation (`RequestOptions`,
+`NewResponseTap(format, op)`), and both `Tracer.Request` and the tap
+dispatch on them. Each format's shapes live in its own file
+(`anthropic.go`, `openai.go`, `gemini.go`). Session reading, canonical
+JSON, fingerprints, the read limit, crash protection, `Disconnected`
+and `Result` are shared and behave identically for every format. A
+`(format, operation)` pair with no reader is a programming error:
+`Request` returns an error (the call fails closed) and the tap marks
+itself `Failed`. `models` carries no tool results or tool calls; its
+response gives `null` details.
+
+**OpenAI-style request.**
+
+- `model`, `stream`: the body's top-level members, as for Anthropic.
+- New tool results (`messages` operation only): skip trailing `system`
+  messages; then every `tool`-role message after the last `assistant`
+  message, in order. `tool_call_id` must be a non-empty string, else a
+  read failure. `is_error` is `false` (the format has no flag).
+  `size_bytes` and `fingerprint` cover the canonical form of `content`
+  (a string or an array of parts).
+- `completion`, `embeddings`: model and stream only; no tool results.
+
+**OpenAI-style response, SSE.** Each `data:` payload is one chunk; the
+payload `[DONE]` ends the stream and is otherwise ignored.
+
+| Chunk member | What the tap takes |
+| --- | --- |
+| `id`, `model` | `response_id`, `response_model` (first chunk carrying them) |
+| `choices[].delta.tool_calls[]` | keyed by (choice `index`, tool call `index`): the first delta opens the tool call with `id` and `function.name`; every delta appends `function.arguments` to its buffer |
+| `choices[].finish_reason` | closes every open tool call of that choice (canonicalize, set argument fields, `relayed_at` = this write); `stop_reason` from choice 0 |
+| `usage` | `prompt_tokens` → sent, `completion_tokens` → received (last chunk carrying it) |
+
+A tool call still open at `[DONE]` is closed then. Mistral sends a tool
+call's arguments in one delta, other OpenAI-style servers in fragments;
+both give the same result.
+
+**OpenAI-style response, JSON.** `id`, `model`, `choices[0].finish_reason`,
+`usage` as above; every `choices[].message.tool_calls[]` is a tool call
+whose arguments are the `function.arguments` string, parsed as JSON
+(not JSON: `recorded: false` and `Failed`, as for invalid Anthropic
+arguments). Embeddings: `id`, `model`, `usage.prompt_tokens` → sent,
+received `0`; no stop reason, no tool calls.
+
+**Gemini request.**
+
+- `model`: the URL's model segment, passed in `RequestOptions.Model` by
+  the tracing stage (the body carries none). `stream`: `true` exactly for
+  `streamGenerateContent`.
+- New tool results (`messages` operation only): the `functionResponse`
+  parts of the last `contents` entry, when its `role` is `user` or
+  absent. `tool_call_id` is the part's `id`, or `null` when it has none.
+  `is_error` is `false`. `size_bytes` and `fingerprint` cover the
+  canonical form of `response`. camelCase and snake_case spellings are
+  both read; both in one object is a read failure.
+- `count_tokens`, `embeddings`: model and stream only.
+
+**Gemini response.** Each `GenerateContentResponse` (an SSE `data:`
+payload with `alt=sse`; the whole body, or each element of a JSON array
+body for `streamGenerateContent` without `alt=sse`):
+
+| Member | What the tap takes |
+| --- | --- |
+| `responseId`, `modelVersion` | `response_id`, `response_model` |
+| `candidates[0].content.parts[].functionCall` | one tool call, opened and closed in the same response (Gemini never splits arguments): `id` or `null`, `name`, `args` as the arguments, `relayed_at` = this write |
+| `candidates[0].finishReason` | `stop_reason` (last one seen) |
+| `usageMetadata` | `promptTokenCount` → sent, `candidatesTokenCount` + `thoughtsTokenCount` → received (last one seen) |
+
+A JSON array body is parsed in `Result`, element by element, with every
+tool call's `relayed_at` the time of the last relayed write, as for any
+non-streamed body. `countTokens` and embed responses give `null` details.
 
 ### Reading the response: the tap
 
@@ -387,6 +462,8 @@ type RequestRecord struct {
 	SizeBytes   *int64         `json:"size_bytes"` // nil when the body was not read in full (400, 413)
 	Outcome     RequestOutcome `json:"outcome"`
 	Stages      []RequestStage `json:"stages"`
+	Redacted           bool     `json:"redacted"`            // specs/0006
+	RedactedCategories []string `json:"redacted_categories"` // specs/0006; sorted, [] when none
 	ToolResults []ToolResult   `json:"tool_results"`
 	Findings    []Finding      `json:"findings"`
 }
@@ -464,7 +541,7 @@ type ResponseStage struct {
 }
 
 type ToolResult struct {
-	ToolCallID  string  `json:"tool_call_id"`
+	ToolCallID  *string `json:"tool_call_id"` // nil only for a Gemini function response without an id
 	IsError     bool    `json:"is_error"`
 	SizeBytes   int64   `json:"size_bytes"`
 	Fingerprint *string `json:"fingerprint"`
@@ -472,7 +549,7 @@ type ToolResult struct {
 
 // Outcome is one of "delivered", "not_delivered".
 type ToolCall struct {
-	ToolCallID    string     `json:"tool_call_id"`
+	ToolCallID    *string    `json:"tool_call_id"` // nil only for a Gemini function call without an id
 	ToolName      string     `json:"tool_name"`
 	ServerSide    bool       `json:"server_side"`
 	ArgumentNames []string   `json:"argument_names"` // nil encodes null: not recorded
@@ -515,11 +592,20 @@ type RequestInfo struct {
 	ToolResults []ToolResult
 }
 
-// Request never returns an error for a missing or invalid session, only
-// for tool_result blocks it cannot read.
-func (t *Tracer) Request(r *http.Request, body []byte, agentID string) (RequestInfo, error)
+// RequestOptions tells Request how to read this call.
+type RequestOptions struct {
+	Format       string  // routing format: "anthropic", "openai" or "gemini"
+	Operation    string  // routing operation
+	Model        *string // the URL's model for Gemini; nil otherwise
+	GeminiStream bool    // the call is a Gemini streaming action
+}
 
-func (t *Tracer) NewResponseTap() *ResponseTap
+// Request never returns an error for a missing or invalid session, only
+// for tool results it cannot read, or a format/operation it has no reader for.
+func (t *Tracer) Request(r *http.Request, body []byte, agentID string, opts RequestOptions) (RequestInfo, error)
+
+// NewResponseTap returns a tap that reads responses of this format and operation.
+func (t *Tracer) NewResponseTap(format, operation string) *ResponseTap
 ```
 
 `tap.go`:
@@ -551,7 +637,13 @@ func (t *ResponseTap) Result() ResponseInfo
 ```
 
 `session.go` holds session-source matching and baggage parsing.
-`anthropic.go` holds the Messages request and response shapes.
+`anthropic.go`, `openai.go` and `gemini.go` hold each format's request
+and response shapes (*Reading other formats*).
+`schemas/trace-record.v1.schema.json` changes with the record types in
+the same commit: `tool_results[].tool_call_id` and
+`tool_calls[].tool_call_id` become `["string", "null"]`, described as
+`null` only for a Gemini function call or response that carries no
+identifier.
 `canonical.go` holds `canonicalJSON(raw []byte) ([]byte, error)` and the
 HMAC. None of these export anything beyond the above.
 
@@ -647,11 +739,23 @@ type tracingStage struct {
 func (s *tracingStage) Name() string { return "tracing" }
 
 func (s *tracingStage) Request(_ context.Context, c *pipeline.Call) (pipeline.Decision, error) {
-	info, err := s.tracer.Request(c.Request, c.Body, c.AgentID)
+	opts := trace.RequestOptions{
+		Format:       string(c.Format),
+		Operation:    string(c.Operation),
+		GeminiStream: c.Format == routing.FormatGemini && routing.GeminiStreams(c.Request.URL.Path),
+	}
+	if c.Format == routing.FormatGemini {
+		// Read from the URL here rather than c.Model, which routing
+		// leaves nil in single mode.
+		if m, found, _ := routing.ExtractModel(c.Format, c.Request, nil); found {
+			opts.Model = &m
+		}
+	}
+	info, err := s.tracer.Request(c.Request, c.Body, c.AgentID, opts)
 	if err != nil {
 		return pipeline.Decision{}, err
 	}
-	return pipeline.AllowTraced(info, s.tracer.NewResponseTap()), nil
+	return pipeline.AllowTraced(info, s.tracer.NewResponseTap(string(c.Format), string(c.Operation))), nil
 }
 ```
 
@@ -672,7 +776,7 @@ func (s *tracingStage) Request(_ context.Context, c *pipeline.Call) (pipeline.De
 
 `provider.go` gains the unexported `errorHandler(w http.ResponseWriter, r
 *http.Request, err error)` described under *Detecting an unanswered
-provider*. `anthropic.go` and `httpproxy.go` set it as `ErrorHandler` on
+provider*. `anthropic.go`, `mistral.go` and `gemini.go` set it as `ErrorHandler` on
 their `ReverseProxy`.
 
 ### `internal/config` — modified
@@ -889,6 +993,27 @@ from `*json.SyntaxError.Offset`.
 - **Tap, JSON mode.** A non-streamed response with a tool call gives the
   same argument fingerprint as the streamed version of the same call.
   Error bodies give no tool calls and nil identifiers.
+- **OpenAI-style** (functional criteria 32, 33): a recorded Mistral chat
+  stream with a tool call and usage, fed whole and byte by byte, gives
+  the tool call's id, name, argument names, fingerprint, `relayed_at` at
+  the `finish_reason` write, `stop_reason` `tool_calls` and both token
+  counts; arguments split across deltas give the same fingerprint; a
+  tool call open at `[DONE]` is closed; a stream cut before
+  `finish_reason` leaves it `not_delivered`; the JSON response gives the
+  same fingerprint; non-JSON `arguments` is `recorded: false` and
+  `Failed`; an embeddings response gives sent tokens only. Request: two
+  `tool` messages after the last assistant message are the new results,
+  earlier ones are not; a missing `tool_call_id` is an error.
+- **Gemini** (criteria 34, 35): an `alt=sse` stream, a JSON-array stream
+  and a single JSON body with a `functionCall` give the same tool call
+  and token counts; a `functionCall` without `id` gives `tool_call_id`
+  `null`; `finishReason` is the stop reason. Request: a
+  `functionResponse` in the last `user` entry is a new result, with a
+  `null` id when it has none; `function_response` (snake_case) is read
+  alike; both spellings in one part is an error.
+- **Dispatch.** `models` in any format gives no tool results and `null`
+  response details; an unknown format or operation is a `Request` error
+  and a `Failed` tap.
 - **Read limit** (criteria 30, 31):
   - arguments over `max_read_bytes` give `recorded: false` with
     `delivered` and `relayed_at` set, and `Failed` unset;

@@ -107,11 +107,12 @@ func buildProviders(t *testing.T, baseURL string) map[string]Provider {
 	if err != nil {
 		t.Fatalf("NewGeminiProvider: %v", err)
 	}
-	proxy, err := NewHTTPProxy("test", baseURL)
+	t.Setenv("TEST_MISTRAL_KEY_FOR_ERRORS", "ms-secret")
+	mistral, err := NewMistralProvider(baseURL, "TEST_MISTRAL_KEY_FOR_ERRORS")
 	if err != nil {
-		t.Fatalf("NewHTTPProxy: %v", err)
+		t.Fatalf("NewMistralProvider: %v", err)
 	}
-	return map[string]Provider{"anthropic": anthropic, "gemini": gemini, "http proxy": proxy}
+	return map[string]Provider{"anthropic": anthropic, "gemini": gemini, "mistral": mistral}
 }
 
 func TestProviders_SignalUpstreamFailedWhenTheProviderNeverAnswers(t *testing.T) {

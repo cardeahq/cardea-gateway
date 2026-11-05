@@ -69,45 +69,74 @@ type RequestInfo struct {
 	ToolResults []ToolResult
 }
 
-// RequestOptions tells Request what it may read for this call.
+// RequestOptions tells Request how to read this call.
 type RequestOptions struct {
-	// ToolResults says whether to read tool_result blocks.
-	ToolResults bool
-	// GeminiStream says the call is a Gemini streaming action: Gemini
-	// request bodies carry no top-level "stream" field.
-	GeminiStream bool
+	Format       string  // routing format: "anthropic", "openai" or "gemini"
+	Operation    string  // routing operation
+	Model        *string // the URL's model for Gemini; nil otherwise
+	GeminiStream bool    // the call is a Gemini streaming action
+}
+
+// readers lists, per format, the operations tracing can read.
+var readers = map[string]map[string]bool{
+	"anthropic": {"messages": true, "count_tokens": true, "models": true},
+	"openai":    {"messages": true, "completion": true, "embeddings": true, "models": true},
+	"gemini":    {"messages": true, "count_tokens": true, "embeddings": true, "models": true},
+}
+
+func noReader(format, operation string) error {
+	if readers[format][operation] {
+		return nil
+	}
+	return fmt.Errorf("tracing has no reader for format %q, operation %q", format, operation)
 }
 
 // Request never returns an error for a missing or invalid session, only
-// for tool_result blocks it cannot read.
+// for tool results it cannot read, or a format/operation it has no reader for.
 func (t *Tracer) Request(r *http.Request, body []byte, agentID string, opts RequestOptions) (RequestInfo, error) {
+	if err := noReader(opts.Format, opts.Operation); err != nil {
+		return RequestInfo{}, err
+	}
 	info := RequestInfo{
 		Session:     t.session(r, body, agentID),
 		ToolResults: []ToolResult{},
 	}
-
-	req, ok := parseMessagesRequest(body)
-	if ok {
-		info.Model = req.Model
-		info.Stream = req.Stream
-	}
-	if opts.GeminiStream {
-		info.Stream = true
-	}
-	if !ok || !opts.ToolResults {
+	if opts.Operation == "models" {
 		return info, nil
 	}
 
-	results, err := newToolResults(req.Messages)
+	var results []toolResultBlock
+	var err error
+	if opts.Format == "gemini" {
+		info.Model = opts.Model
+		info.Stream = opts.GeminiStream
+		if opts.Operation == "messages" {
+			results, err = newGeminiToolResults(body)
+		}
+	} else {
+		req, ok := parseMessagesRequest(body)
+		if !ok {
+			return info, nil
+		}
+		info.Model = req.Model
+		info.Stream = req.Stream
+		switch {
+		case opts.Format == "anthropic":
+			results, err = newToolResults(req.Messages)
+		case opts.Operation == "messages":
+			results, err = newOpenAIToolResults(req.Messages)
+		}
+	}
 	if err != nil {
 		return RequestInfo{}, err
 	}
-	for _, res := range results {
+
+	for i, res := range results {
 		tr := ToolResult{ToolCallID: res.id, IsError: res.isError}
 		if len(res.content) > 0 {
 			canonical, err := canonicalJSON(res.content)
 			if err != nil {
-				return RequestInfo{}, fmt.Errorf("tool_result for %s: content is %w", res.id, err)
+				return RequestInfo{}, fmt.Errorf("tool result %d: content is %w", i, err)
 			}
 			fp := fingerprint(t.key, canonical)
 			tr.SizeBytes = int64(len(canonical))
@@ -118,8 +147,9 @@ func (t *Tracer) Request(r *http.Request, body []byte, agentID string, opts Requ
 	return info, nil
 }
 
-func (t *Tracer) NewResponseTap(readUsage bool) *ResponseTap {
-	return &ResponseTap{key: t.key, maxReadBytes: t.maxReadBytes, readUsage: readUsage}
+// NewResponseTap returns a tap that reads responses of this format and operation.
+func (t *Tracer) NewResponseTap(format, operation string) *ResponseTap {
+	return &ResponseTap{key: t.key, maxReadBytes: t.maxReadBytes, format: format, operation: operation}
 }
 
 func (t *Tracer) sourcesFor(agentID string) []source {

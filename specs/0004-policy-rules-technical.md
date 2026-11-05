@@ -55,10 +55,9 @@ touches OPA, the policy files and the input document, plus a thin stage in
 - Everything the functional spec excludes: response rules, rewriting a
   request, state across calls, remote policy sources, a dry-run mode, a
   rule-testing tool, free-text deny messages.
-- Provider formats other than the Anthropic Messages API. With another
-  provider, the input still has the generic groups (call, agent, session,
-  provider, operation, headers) and none of the conversation groups; the
-  next provider's spec adds its reader.
+- An input shape that depends on the provider. Every format routing
+  accepts (specs/0009) has a reader that produces the same document;
+  a provider whose format has no reader cannot be listed.
 - Reloading anything but policy and data files.
 - Building the input as native OPA values to skip a JSON round trip. Worth
   doing only if profiling asks for it; see *Open questions*.
@@ -124,18 +123,19 @@ expression undefined, so that rule does not fire. That is exactly
 functional rule 12 and the "rules that simply do not match" bullet, and it
 is why the engine does *not* enable strict built-in errors.
 
-**Why an Anthropic reader lives in `policy`, not `trace`.** Tracing reads
+**Why the format readers live in `policy`, not `trace`.** Tracing reads
 only metadata (tool-result ids, sizes) and must never keep content. The
 policy input needs content. Sharing one parser would put content-carrying
 types next to code that promises not to hold any, so the policy package has
-its own reader, and the two stay free to change independently.
+its own reader per format (Anthropic, OpenAI-style, Gemini), and the
+packages stay free to change independently.
 
 ## Packages and types
 
 ### `internal/policy` — new
 
-Files: `engine.go`, `load.go`, `input.go`, `anthropic.go`, `watch.go`,
-`errors.go`, plus tests.
+Files: `engine.go`, `load.go`, `input.go`, `anthropic.go`, `openai.go`,
+`gemini.go`, `watch.go`, `errors.go`, plus tests.
 
 ```go
 // Request is what the pipeline hands the engine for one call. It holds
@@ -149,6 +149,9 @@ type Request struct {
 	Body      []byte
 	AgentID   string // "" when not identified
 	SessionID string // "" when tracing found none (status "claimed" only)
+	Provider  string // the provider the call was routed to
+	Format    string // routing format: "anthropic", "openai" or "gemini"
+	Operation string // routing operation: "messages", "count_tokens", "completion", "embeddings" or "models"
 }
 
 // Result is one evaluation's decision. Rules is sorted and unique; empty
@@ -242,7 +245,7 @@ type snapshot struct {
 
 1. `snap := e.current.Load()`; nil means no policy: return the zero
    `Result{}` immediately, without building the input.
-2. `input, err := buildInput(e.provider, r)`; an error is an `*EvalError`
+2. `input, err := buildInput(r)`; an error is an `*EvalError`
    of kind `"input"`.
 3. If `e.abandoned.Load() >= maxAbandoned` (16, a constant), return
    `*EvalError{overloaded}` without starting an evaluation.
@@ -340,7 +343,7 @@ runs once. `Watch` returns when `ctx` is done, closing the watcher.
 
 ### `internal/policy` — the input document
 
-`buildInput(provider string, r Request) (map[string]any, error)` returns
+`buildInput(r Request) (map[string]any, error)` returns
 the document below, the contract the functional spec describes for rule
 authors (rule 11, key by key). A key whose value does not apply or is
 unknown is **omitted**, never `null` or `""`; a list the Gateway knows is
@@ -385,17 +388,19 @@ Rules for building it:
   `x-gateway-request-id`, which the pipeline already strips from
   inbound requests. The removal list is a constant in the package, with a
   test that fails if any of them can reach the input.
-- **`operation.name`** from the path: `/v1/messages` is `messages`,
-  `/v1/messages/count_tokens` is `count_tokens`, anything else `other`. The
-  raw method and path are always there.
+- **`operation.name`** is `r.Operation`, the neutral name routing
+  detected (specs/0009-technical, Operation detection). The raw method
+  and path are always there.
 - **Conversation groups** (`model`, `stream`, `parameters`, `system`,
-  `messages`, `tools`, `tool_calls`, `tool_results`) are built only when the
-  provider is `anthropic` and the operation is `messages` or
-  `count_tokens`. For those operations a body that is not valid JSON,
-  that repeats a key in any object at any depth, or whose `messages` is
-  not an array, is `EvalError{Kind: "input"}` (fail closed, functional
-  failure list). For any other operation the groups are absent and the
-  body is not parsed.
+  `messages`, `tools`, `tool_calls`, `tool_results`) are built for every
+  operation but `models`, by the reader for `r.Format` (see *Format
+  readers* below). For those operations a body that is not valid JSON,
+  that repeats a key in any object at any depth, or whose scanned members
+  have the wrong JSON type, is `EvalError{Kind: "input"}` (fail closed,
+  functional failure list). For `models` the groups are absent and the
+  body is not parsed. A `(Format, Operation)` pair with no reader is
+  `EvalError{Kind: "internal"}`: unreachable while routing and policy
+  agree, and fails closed if they ever do not.
 - **`parameters`** is every top-level field of the request other than
   `model`, `messages`, `system`, `tools` and `stream`, unchanged
   (`max_tokens`, `temperature`, `metadata`, `tool_choice`, `thinking`, …).
@@ -416,8 +421,33 @@ Rules for building it:
   absent) and `parameters` (its `input_schema`). A server tool without a
   schema carries its `type` instead of `parameters`.
 
-`anthropic.go` holds the unexported structs that read the request and the
-functions that produce these shapes. Before decoding, `rejectDuplicateKeys(body
+### Format readers
+
+Every reader produces the document above; only how it reads the body
+differs. The rules above (normalized parts, `tool_calls` and
+`tool_results` as flat views, `tool_name` lookup, `json.Number`) apply to
+all of them.
+
+| Format, operation | `system` | `messages` | `tools` | `parameters` excludes |
+| --- | --- | --- | --- | --- |
+| `anthropic` `messages`, `count_tokens` | `system` | `messages` as above | `tools` | `model`, `messages`, `system`, `tools`, `stream` |
+| `openai` `messages` | the `system` and `developer` messages' text, joined with `"\n"`, in order; those messages are also kept in `messages` with their role | each message: string `content` or `text` parts become `text`; `image_url`/`input_audio` become `{"type":"image"}`/`{"type":"audio"}` with no data; assistant `tool_calls[]` become `tool_call` parts (`id`, `function.name`, `function.arguments` decoded from its JSON string; a string that is not JSON stays a string); a `tool`-role message becomes a `user` message with one `tool_result` part (`tool_call_id`, `is_error` `false`, its text and `size_bytes`) | `tools[].function` → `name`, `description`, `parameters` | `model`, `messages`, `tools`, `stream` |
+| `openai` `completion` | omitted | one `user` message: `text` parts `prompt`, then `suffix` when present | `[]` | `model`, `prompt`, `suffix`, `stream` |
+| `openai` `embeddings` | omitted | one `user` message: one `text` part per string input; token-ID inputs skipped | `[]` | `model`, `input` |
+| `gemini` `messages`, `count_tokens` | `systemInstruction` text parts joined with `"\n"` | `contents[]`: role `user` stays, `model` becomes `assistant`; `text` parts → `text`; `functionCall` → `tool_call` (`id` when present, `name`, `args` as `arguments`); `functionResponse` → `tool_result` (`tool_call_id` from its `id` when present, `tool_name` its `name`, `response` serialized as `text` and measured as `size_bytes`); `inlineData`/`fileData` → `{"type":"image"}` or `{"type":"file"}` with no data. `count_tokens` reads the same from `generateContentRequest` when present | `tools[].functionDeclarations[]` → `name`, `description`, `parameters` | `contents`, `systemInstruction`, `tools`, `generateContentRequest` |
+| `gemini` `embeddings` | omitted | one `user` message: the `text` parts of `content`, or of each `requests[].content`, in order | `[]` | `content`, `requests` |
+
+`model` is the body's `model` for `anthropic` and `openai`, and the model
+segment of the URL for `gemini` (the value routing extracted, read here
+again from the path). `stream` is the body's `stream` for `anthropic` and
+`openai`, and `true` exactly for a Gemini `streamGenerateContent` path.
+
+A Gemini body may spell every field in camelCase or snake_case; the
+reader accepts both, and an object carrying both spellings of one field
+is `EvalError{Kind: "input"}`, like a repeated key.
+
+`anthropic.go`, `openai.go` and `gemini.go` hold the unexported structs
+that read the request and the functions that produce these shapes. Before decoding, `rejectDuplicateKeys(body
 []byte) error` walks the body once with `json.Decoder` tokens, keeping a
 key set per open object, and returns an error at the first repeated key
 (its message names the byte offset, never the key or any value). Go's
@@ -635,12 +665,23 @@ reference policy text only. `print` is disabled, and `http.send`,
   `Authorization`, `X-Api-Key` and `Cookie` header must be absent); omitted
   keys, never `null`; empty `tools`, `tool_calls`, `tool_results` and
   `parameters` present as `[]` / `{}`; no system prompt gives no `system`
-  key; operation names; non-JSON body on `count_tokens`
-  (kind `input`) and on an `other` path (no error); duplicate keys
+  key; operation names taken from the request's `Operation`; non-JSON
+  body on `count_tokens` (kind `input`) and on `models` (no error, not
+  parsed); duplicate keys
   rejected at the top level (`model` twice), inside `tools`, inside a
   nested tool-call `arguments` object, and in an array element, while the
   same key in two different objects is accepted; the error text contains
   no key and no value.
+- **Format readers.** One conversation, sent as an Anthropic Messages
+  body, an OpenAI-style chat body and a Gemini generate body, gives the
+  same `system`, `messages` text, `tool_calls` (name and arguments) and
+  `tool_results` (tool call id where the format has one, text, size);
+  OpenAI-style `arguments` that are not JSON stay a string; FIM and
+  embeddings give one `user` message of text parts with empty `tools`,
+  `tool_calls` and `tool_results`; Gemini `countTokens` with
+  `generateContentRequest`; Gemini camelCase and snake_case read alike,
+  both at once is kind `input`; an unknown format or operation is kind
+  `internal`.
 - **Loading.** Missing policy file; a path that is not a `.rego` file;
   syntax error names file and row; removed built-in rejected (`http.send`,
   `opa.runtime`); `deny` defined as an object; data key collision, and the

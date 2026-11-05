@@ -80,7 +80,7 @@
       "required": [
         "schema", "record", "call_id", "remote_addr", "agent_id", "session",
         "received_at", "duration_us", "model", "stream", "size_bytes",
-        "outcome", "stages", "tool_results", "findings"
+        "outcome", "stages", "redacted", "redacted_categories", "tool_results", "findings"
       ],
       "properties": {
         "schema": { "const": "cardea-gateway.trace/v1" },
@@ -190,6 +190,16 @@
             }
           }
         },
+        "redacted": {
+          "description": "Whether the filtering stage (specs/0006) replaced any content with a [REDACTED:category] placeholder before the request was forwarded.",
+          "type": "boolean"
+        },
+        "redacted_categories": {
+          "description": "The PII categories found and removed from the request, sorted; [] when nothing was redacted. Counts per category are in the filtering stage's detail.redactions.",
+          "type": "array",
+          "items": { "type": "string" },
+          "examples": [["api_key", "email"]]
+        },
         "tool_results": {
           "description": "The new tool results this request carries.",
           "type": "array",
@@ -198,8 +208,8 @@
             "required": ["tool_call_id", "is_error", "size_bytes", "fingerprint"],
             "properties": {
               "tool_call_id": {
-                "description": "The provider's identifier of the tool call this result answers, as the agent sent it.",
-                "type": "string"
+                "description": "The provider's identifier of the tool call this result answers, as the agent sent it. null only for a Gemini function response that carries no identifier.",
+                "type": ["string", "null"]
               },
               "is_error": { "type": "boolean" },
               "size_bytes": { "type": "integer", "minimum": 0 },
@@ -237,6 +247,8 @@
             { "name": "tracing", "started_at": "2026-09-27T14:03:11.402245Z", "duration_us": 388, "decision": "allowed", "detail": null },
             { "name": "policies", "started_at": "2026-09-27T14:03:11.402640Z", "duration_us": 903, "decision": "allowed", "detail": { "revision": "r7", "rules": [] } }
           ],
+          "redacted": false,
+          "redacted_categories": [],
           "tool_results": [
             { "tool_call_id": "toolu_01A9", "is_error": false, "size_bytes": 5120, "fingerprint": "fp_9c1e0b7d44a2f316" }
           ],
@@ -320,7 +332,7 @@
           "$ref": "#/$defs/stringOrNull"
         },
         "stop_reason": {
-          "description": "Why the model stopped, as the provider reports it, unchanged (for Anthropic: end_turn, tool_use, max_tokens, stop_sequence, and others).",
+          "description": "Why the model stopped, as the provider reports it, unchanged (for Anthropic: end_turn, tool_use, max_tokens, stop_sequence, and others; for Mistral: stop, tool_calls, length, and others; for Gemini: STOP, MAX_TOKENS, SAFETY, and others).",
           "$ref": "#/$defs/stringOrNull"
         },
         "tokens": {
@@ -348,8 +360,8 @@
             ],
             "properties": {
               "tool_call_id": {
-                "description": "The provider's identifier, unchanged; the same value appears in the request record that carries the tool's result.",
-                "type": "string"
+                "description": "The provider's identifier, unchanged; the same value appears in the request record that carries the tool's result. null only for a Gemini function call that carries no identifier.",
+                "type": ["string", "null"]
               },
               "tool_name": { "type": "string" },
               "server_side": { "type": "boolean" },

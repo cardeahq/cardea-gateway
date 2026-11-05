@@ -9,8 +9,8 @@ import (
 // list mode, or the sole provider in single mode.
 type Route struct {
 	Provider string   // configured provider name
-	Kind     string   // "anthropic", "mistral", "gemini"; "" for passthrough
-	Formats  []Format // empty for passthrough
+	Kind     string   // "anthropic", "mistral" or "gemini"
+	Formats  []Format // non-empty
 	Patterns []string // model patterns; empty in single mode
 	Single   bool     // true only for the route built by NewSingleTable
 }
@@ -23,6 +23,8 @@ const (
 	RejectUnknownFormat  Rejection = "unknown_format"
 	RejectFormatMismatch Rejection = "format_mismatch"
 	RejectNoProvider     Rejection = "no_provider"
+	RejectUnsupportedOp  Rejection = "unsupported_operation"
+	RejectNotServed      Rejection = "format_not_served" // single mode: the route does not speak the format
 )
 
 // Table resolves a call's format and model to a Route.
@@ -50,7 +52,8 @@ func NewTable(routes []Route, defaults map[Format]string) (*Table, error) {
 	return t, nil
 }
 
-// NewSingleTable builds a single-mode table that resolves every call to r.
+// NewSingleTable builds a single-mode table whose one route serves every
+// call in its formats.
 func NewSingleTable(r Route) *Table {
 	return &Table{single: true, singleRoute: r}
 }
@@ -58,11 +61,14 @@ func NewSingleTable(r Route) *Table {
 // Resolve applies specs/0009-technical, Design -> Resolution. rej is
 // RejectNone exactly when r is usable.
 func (t *Table) Resolve(f Format, model string, found bool) (r Route, rej Rejection) {
-	if t.single {
-		return t.singleRoute, RejectNone
-	}
 	if f == FormatUnknown {
 		return Route{}, RejectUnknownFormat
+	}
+	if t.single {
+		if !speaksFormat(t.singleRoute, f) {
+			return Route{}, RejectNotServed
+		}
+		return t.singleRoute, RejectNone
 	}
 	if found {
 		anyMatch := false

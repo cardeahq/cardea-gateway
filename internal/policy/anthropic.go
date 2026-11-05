@@ -19,40 +19,17 @@ var conversationExcluded = map[string]bool{"model": true, "messages": true, "sys
 
 // addAnthropicConversation adds the conversation groups of a Messages or
 // count_tokens request to input. Errors never carry body content.
-func addAnthropicConversation(input map[string]any, body []byte) error {
-	if err := rejectDuplicateKeys(body); err != nil {
+func addAnthropicConversation(input map[string]any, r Request) error {
+	top, err := decodeTop(r.Body)
+	if err != nil {
 		return err
 	}
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(body, &top); err != nil || top == nil {
-		return errBadBody
+	if err := addModelAndStream(input, top); err != nil {
+		return err
 	}
-
-	if raw, ok := top["model"]; ok {
-		model, err := decodeValue(raw)
-		if err != nil {
-			return errBadBody
-		}
-		input["model"] = model
+	if input["parameters"], err = parametersOf(top, conversationExcluded); err != nil {
+		return err
 	}
-	stream := false
-	if raw, ok := top["stream"]; ok {
-		_ = json.Unmarshal(raw, &stream)
-	}
-	input["stream"] = stream
-
-	parameters := map[string]any{}
-	for k, raw := range top {
-		if conversationExcluded[k] {
-			continue
-		}
-		v, err := decodeValue(raw)
-		if err != nil {
-			return errBadBody
-		}
-		parameters[k] = v
-	}
-	input["parameters"] = parameters
 
 	if raw, ok := top["system"]; ok {
 		system, err := systemText(raw)
@@ -69,39 +46,22 @@ func addAnthropicConversation(input map[string]any, body []byte) error {
 		return errBadMessages
 	}
 	messages := make([]any, 0, len(rawMessages))
-	toolCalls := []any{}
-	var results []map[string]any
-	callNames := map[string]string{}
+	var calls, results []map[string]any
 	for _, raw := range rawMessages {
-		msg, calls, res, err := normalizeMessage(raw)
+		msg, c, res, err := normalizeMessage(raw)
 		if err != nil {
 			return err
 		}
 		messages = append(messages, msg)
-		for _, c := range calls {
-			toolCalls = append(toolCalls, c)
-			if id, _ := c["id"].(string); id != "" {
-				callNames[id], _ = c["name"].(string)
-			}
-		}
+		calls = append(calls, c...)
 		results = append(results, res...)
 	}
-	toolResults := make([]any, 0, len(results))
-	for _, r := range results {
-		if name, ok := callNames[r["tool_call_id"].(string)]; ok {
-			r["tool_name"] = name
-		}
-		toolResults = append(toolResults, r)
-	}
-	input["messages"] = messages
-	input["tool_calls"] = toolCalls
-	input["tool_results"] = toolResults
 
 	tools, err := normalizeTools(top["tools"])
 	if err != nil {
 		return err
 	}
-	input["tools"] = tools
+	setConversation(input, messages, calls, results, tools)
 	return nil
 }
 

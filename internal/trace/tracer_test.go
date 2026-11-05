@@ -82,7 +82,7 @@ func toolResultBody(content string) string {
 func fingerprintOf(t *testing.T, tr *Tracer, content string) string {
 	t.Helper()
 	body := toolResultBody(content)
-	info, err := tr.Request(newRequest(t, body), []byte(body), "", RequestOptions{ToolResults: true})
+	info, err := tr.Request(newRequest(t, body), []byte(body), "", anthropicMessages)
 	if err != nil {
 		t.Fatalf("Request: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestRequest_Metadata(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info, err := tr.Request(newRequest(t, tt.body), []byte(tt.body), "", RequestOptions{ToolResults: true})
+			info, err := tr.Request(newRequest(t, tt.body), []byte(tt.body), "", anthropicMessages)
 			if err != nil {
 				t.Fatalf("Request: %v, want nil: a body the provider will judge is not tracing's error", err)
 			}
@@ -385,13 +385,13 @@ func TestRequest_ReadsOnlyNewToolResults(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info, err := tr.Request(newRequest(t, tt.body), []byte(tt.body), "", RequestOptions{ToolResults: true})
+			info, err := tr.Request(newRequest(t, tt.body), []byte(tt.body), "", anthropicMessages)
 			if err != nil {
 				t.Fatalf("Request: %v", err)
 			}
 			var got []string
 			for _, r := range info.ToolResults {
-				got = append(got, r.ToolCallID)
+				got = append(got, deref(r.ToolCallID).(string))
 			}
 			if strings.Join(got, ",") != strings.Join(tt.wantIDs, ",") {
 				t.Fatalf("tool result IDs = %v, want %v", got, tt.wantIDs)
@@ -408,7 +408,7 @@ func TestRequest_ToolResultFields(t *testing.T) {
 		`{"type":"tool_result","tool_use_id":"toolu_none"}` +
 		`]}]}`
 
-	info, err := tr.Request(newRequest(t, body), []byte(body), "", RequestOptions{ToolResults: true})
+	info, err := tr.Request(newRequest(t, body), []byte(body), "", anthropicMessages)
 	if err != nil {
 		t.Fatalf("Request: %v", err)
 	}
@@ -432,8 +432,8 @@ func TestRequest_ToolResultFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.got.ToolCallID != tt.wantID {
-				t.Fatalf("ToolCallID = %q, want %q", tt.got.ToolCallID, tt.wantID)
+			if !equalPtr(tt.got.ToolCallID, &tt.wantID) {
+				t.Fatalf("ToolCallID = %v, want %q", deref(tt.got.ToolCallID), tt.wantID)
 			}
 			if tt.got.IsError != tt.wantIsError {
 				t.Fatalf("IsError = %v, want %v", tt.got.IsError, tt.wantIsError)
@@ -462,7 +462,7 @@ func TestRequest_UnreadableToolResultIsAnError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body := `{"model":"m","messages":[{"role":"user","content":[` + tt.block + `]}]}`
-			_, err := tr.Request(newRequest(t, body), []byte(body), "", RequestOptions{ToolResults: true})
+			_, err := tr.Request(newRequest(t, body), []byte(body), "", anthropicMessages)
 			if err == nil {
 				t.Fatal("Request = nil error, want an error for an unreadable tool_result")
 			}
@@ -473,57 +473,108 @@ func TestRequest_UnreadableToolResultIsAnError(t *testing.T) {
 	}
 }
 
-// --- RequestOptions (specs/0009) ----------------------------------------------
+// --- RequestOptions: dispatch on format and operation (specs/0003) ----------
 
-func TestRequest_ToolResultsFalseSkipsToolResultParsingEntirely(t *testing.T) {
-	const marker = "SECRET_TOOL_OUTPUT_MARKER"
+// anthropicMessages reads a call as an Anthropic Messages request.
+var anthropicMessages = RequestOptions{Format: "anthropic", Operation: "messages"}
+
+func TestRequest_ModelsOperationGivesNoToolResults(t *testing.T) {
 	tr := newTestTracer(t, nil)
-	// A tool_result block that would be an error if read (missing
-	// tool_use_id): with ToolResults false it must never be parsed, so
-	// Request succeeds and returns no tool results at all.
-	body := `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","content":"` + marker + `"}]}]}`
-
-	info, err := tr.Request(newRequest(t, body), []byte(body), "", RequestOptions{ToolResults: false})
-	if err != nil {
-		t.Fatalf("Request: %v, want nil: ToolResults false must not even attempt to read tool_result blocks", err)
+	tests := []struct {
+		format, path string
+	}{
+		{"anthropic", "/v1/models"},
+		{"openai", "/v1/models"},
+		{"gemini", "/v1beta/models"},
 	}
-	if len(info.ToolResults) != 0 {
-		t.Fatalf("ToolResults = %+v, want none", info.ToolResults)
-	}
-	// Reading model and stream is unaffected by ToolResults.
-	if !equalPtr(info.Model, ptr("m")) {
-		t.Fatalf("Model = %v, want m", deref(info.Model))
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			info, err := tr.Request(req, nil, "", RequestOptions{Format: tt.format, Operation: "models"})
+			if err != nil {
+				t.Fatalf("Request: %v, want nil: a model listing has nothing to read", err)
+			}
+			if len(info.ToolResults) != 0 {
+				t.Fatalf("ToolResults = %+v, want none", info.ToolResults)
+			}
+		})
 	}
 }
 
-func TestRequest_GeminiStreamSetsStreamRegardlessOfBody(t *testing.T) {
+func TestRequest_UnknownFormatOrOperationIsAnError(t *testing.T) {
+	const marker = "SECRET_BODY_MARKER"
 	tr := newTestTracer(t, nil)
-	// Gemini request bodies carry no top-level "model" or "stream" field
-	// the way Anthropic/OpenAI-style ones do; GeminiStream is how the
-	// streamGenerateContent action is recorded instead.
+	body := `{"model":"m","messages":[{"role":"user","content":"` + marker + `"}]}`
+	tests := []struct {
+		name string
+		opts RequestOptions
+	}{
+		{"no format", RequestOptions{Operation: "messages"}},
+		{"unknown format", RequestOptions{Format: "cohere", Operation: "messages"}},
+		{"no operation", RequestOptions{Format: "anthropic"}},
+		{"unknown operation", RequestOptions{Format: "anthropic", Operation: "batches"}},
+		{"operation the format does not have", RequestOptions{Format: "anthropic", Operation: "completion"}},
+		{"gemini has no completion operation", RequestOptions{Format: "gemini", Operation: "completion"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tr.Request(newRequest(t, body), []byte(body), "", tt.opts)
+			if err == nil {
+				t.Fatalf("Request(%+v) = nil error, want an error: a pair with no reader fails the call closed", tt.opts)
+			}
+			if strings.Contains(err.Error(), marker) {
+				t.Fatalf("error %q leaks body content", err)
+			}
+		})
+	}
+}
+
+func TestRequest_GeminiStreamSetsStream(t *testing.T) {
+	tr := newTestTracer(t, nil)
+	// Gemini request bodies carry no "model" or "stream" member; the
+	// streamGenerateContent action and the URL's model are passed in.
 	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:streamGenerateContent", strings.NewReader(body))
 
-	info, err := tr.Request(req, []byte(body), "", RequestOptions{GeminiStream: true})
+	info, err := tr.Request(req, []byte(body), "", RequestOptions{Format: "gemini", Operation: "messages", Model: ptr("gemini-2.5-pro"), GeminiStream: true})
 	if err != nil {
 		t.Fatalf("Request: %v", err)
 	}
 	if !info.Stream {
 		t.Fatal("Stream = false, want true when GeminiStream is set")
 	}
+	if !equalPtr(info.Model, ptr("gemini-2.5-pro")) {
+		t.Fatalf("Model = %v, want gemini-2.5-pro from RequestOptions.Model", deref(info.Model))
+	}
 }
 
-func TestRequest_GeminiStreamFalseLeavesStreamAtWhateverTheBodySays(t *testing.T) {
+func TestRequest_GeminiNonStreamingActionIsNotStreamed(t *testing.T) {
 	tr := newTestTracer(t, nil)
-	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
+	// A "stream" member in a Gemini body means nothing to Gemini; only the
+	// action decides.
+	body := `{"stream":true,"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent", strings.NewReader(body))
 
-	info, err := tr.Request(req, []byte(body), "", RequestOptions{GeminiStream: false})
+	info, err := tr.Request(req, []byte(body), "", RequestOptions{Format: "gemini", Operation: "messages", Model: ptr("gemini-2.5-pro")})
 	if err != nil {
 		t.Fatalf("Request: %v", err)
 	}
 	if info.Stream {
-		t.Fatal("Stream = true, want false: a non-streaming Gemini action with no GeminiStream option must not be recorded as streamed")
+		t.Fatal("Stream = true, want false: a non-streaming Gemini action is not streamed")
+	}
+}
+
+func TestRequest_GeminiWithNoModelOptionHasNilModel(t *testing.T) {
+	tr := newTestTracer(t, nil)
+	body := `{"model":"from-the-body","contents":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent", strings.NewReader(body))
+
+	info, err := tr.Request(req, []byte(body), "", RequestOptions{Format: "gemini", Operation: "messages"})
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if info.Model != nil {
+		t.Fatalf("Model = %v, want nil: a Gemini model comes only from RequestOptions.Model, never the body", deref(info.Model))
 	}
 }
 

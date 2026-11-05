@@ -49,9 +49,6 @@ type ProviderEntry struct {
 	BaseURL   string   `mapstructure:"base_url"`
 	APIKeyEnv string   `mapstructure:"api_key_env"`
 	Models    []string `mapstructure:"models"`
-	// AcceptUnscanned lets a provider whose requests the Gateway cannot
-	// read be listed while filtering or policies are on.
-	AcceptUnscanned bool `mapstructure:"accept_unscanned"`
 }
 
 // ListMode reports whether a provider list is configured.
@@ -75,6 +72,7 @@ type RulesConfig struct {
 }
 
 type ProviderConfig struct {
+	// Name is one of: anthropic, mistral, gemini.
 	Name    string `mapstructure:"name"`
 	BaseURL string `mapstructure:"base_url"`
 	// APIKeyEnv is the name of the environment variable holding the
@@ -442,7 +440,12 @@ func validateRouting(v *viper.Viper, cfg Config) error {
 		return err
 	}
 	if !cfg.Routing.ListMode() {
-		return nil
+		switch cfg.Provider.Name {
+		case "anthropic", "mistral", "gemini":
+			return nil
+		default:
+			return fmt.Errorf("provider.name %q must be one of anthropic, mistral, gemini", cfg.Provider.Name)
+		}
 	}
 
 	seen := map[string]bool{}

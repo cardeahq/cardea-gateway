@@ -31,7 +31,7 @@ import (
 
 // singleSetAndTable builds the *provider.Set and *routing.Table single
 // mode needs for gateway.New, wrapping prov under name with a route of
-// kind (""  for a generic passthrough provider).
+// kind ("anthropic", "mistral" or "gemini": there is no passthrough kind).
 func singleSetAndTable(name, kind string, prov provider.Provider) (*provider.Set, *routing.Table) {
 	set := provider.NewSingleSet(name, prov)
 	route := routing.Route{Provider: name, Kind: kind, Formats: []routing.Format{routing.FormatOf(kind)}, Single: true}
@@ -40,9 +40,9 @@ func singleSetAndTable(name, kind string, prov provider.Provider) (*provider.Set
 
 // testSingleTable is a single-mode table for tests that exercise
 // buildStages and do not care about routing's own behavior: it resolves
-// every call.
+// every Anthropic-format call of a supported operation.
 func testSingleTable() *routing.Table {
-	return routing.NewSingleTable(routing.Route{Provider: "stub", Single: true})
+	return routing.NewSingleTable(routing.Route{Provider: "stub", Kind: "anthropic", Formats: []routing.Format{routing.FormatAnthropic}, Single: true})
 }
 
 func stageNames(stages []pipeline.Stage) []string {
@@ -94,7 +94,7 @@ func TestGateway_HealthzBypassesPipelineRegardlessOfStageConfig(t *testing.T) {
 				},
 				Tracing: fileSinkTracing(t),
 			}
-			set, table := singleSetAndTable("stub", "", prov)
+			set, table := singleSetAndTable("stub", "anthropic", prov)
 			g, err := New(cfg, zaptest.NewLogger(t), set, table)
 			if err != nil {
 				t.Fatalf("New: %v", err)
@@ -126,7 +126,7 @@ func TestGateway_ForwardsAllowedCallsThroughPipelineToProvider(t *testing.T) {
 		},
 		Tracing: fileSinkTracing(t),
 	}
-	set, table := singleSetAndTable("stub", "", prov)
+	set, table := singleSetAndTable("stub", "anthropic", prov)
 	g, err := New(cfg, zaptest.NewLogger(t), set, table)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -446,7 +446,7 @@ func TestGatewayNew_CardeaWithoutTheKeyVariableFailsNamingItAndLeavesNoOpenFile(
 				t.Setenv(gwAnthropicKeyEnv, "sk-test-upstream")
 				prov := stubProvider{handler: http.NotFoundHandler()}
 
-				set, table := singleSetAndTable("stub", "", prov)
+				set, table := singleSetAndTable("stub", "anthropic", prov)
 				g, err := New(cfg, zaptest.NewLogger(t), set, table)
 				if err == nil {
 					t.Fatal("gateway.New = nil error, want it to fail")

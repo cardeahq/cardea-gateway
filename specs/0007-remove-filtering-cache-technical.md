@@ -272,7 +272,7 @@ shape.
 ```yaml
 # PII filtering: before a request reaches the provider, email addresses,
 # SSNs (US/UK/France) and vendor-prefixed API keys are replaced with a
-# [category:UUID] placeholder. Responses are never touched. On by
+# [REDACTED:category] placeholder, e.g. [REDACTED:email]. Responses are never touched. On by
 # default, with zero configuration needed.
 filtering:
   categories:

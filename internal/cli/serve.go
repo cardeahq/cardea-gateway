@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -94,24 +95,20 @@ func buildProviders(cfg config.Config) (*provider.Set, *routing.Table, error) {
 
 	var prov provider.Provider
 	var err error
-	kind := ""
 	switch cfg.Provider.Name {
 	case "anthropic":
-		kind = "anthropic"
 		prov, err = provider.NewAnthropicProvider(cfg.Provider.BaseURL, cfg.Provider.APIKeyEnv)
 	case "mistral":
-		kind = "mistral"
 		prov, err = provider.NewMistralProvider(cfg.Provider.BaseURL, cfg.Provider.APIKeyEnv)
 	case "gemini":
-		kind = "gemini"
 		prov, err = provider.NewGeminiProvider(cfg.Provider.BaseURL, cfg.Provider.APIKeyEnv)
 	default:
-		prov, err = provider.NewHTTPProxy(cfg.Provider.Name, cfg.Provider.BaseURL)
+		err = fmt.Errorf("provider.name %q must be one of anthropic, mistral, gemini", cfg.Provider.Name)
 	}
 	if err != nil {
 		return nil, nil, err
 	}
 
-	route := routing.Route{Provider: cfg.Provider.Name, Kind: kind, Formats: []routing.Format{routing.FormatOf(kind)}, Single: true}
+	route := routing.Route{Provider: cfg.Provider.Name, Kind: cfg.Provider.Name, Formats: []routing.Format{routing.FormatOf(cfg.Provider.Name)}, Single: true}
 	return provider.NewSingleSet(cfg.Provider.Name, prov), routing.NewSingleTable(route), nil
 }

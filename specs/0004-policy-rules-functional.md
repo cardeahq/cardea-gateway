@@ -185,7 +185,7 @@ cannot map the policy by probing.
     | `agent` | `id`, the identified agent, if identification is enabled (specs/0002). |
     | `session` | `id`, the session identifier, if the operator configured where to find one for that agent (specs/0003): a claim by the agent, not a verified fact. |
     | `provider` | The provider name. |
-    | `operation` | `name` (`messages`, `count_tokens` or `other`), plus the raw HTTP `method` and `path`. |
+    | `operation` | `name`, the format-neutral operation name from specs/0009 *Supported operations* (`messages`, `count_tokens`, `completion`, `embeddings` or `models`), plus the raw HTTP `method` and `path`. |
     | `model` | The model name the caller asked for. |
     | `stream` | Whether the call asks for a streamed response. |
     | `parameters` | The other generation settings as sent (`max_tokens`, `temperature`, and the like). |
@@ -209,6 +209,20 @@ cannot map the policy by probing.
     empty is present and empty (`tools`, `tool_calls` and `tool_results`
     as `[]`, `parameters` as `{}`), so `count(input.tool_calls) == 0` is
     true for a request with no tool calls.
+
+    The shape is the same for every provider and API format: an
+    OpenAI-style chat request to Mistral and a Gemini generate request
+    fill the same keys as an Anthropic Messages request, so a rule written
+    against one matches the equivalent call in the others unchanged. A
+    system or developer message, or a Gemini system instruction, is
+    `system`; a Gemini function call and function response are a
+    `tool_call` and a `tool_result`. `completion` and `embeddings`, which
+    have no conversation, expose their text as one `user` message whose
+    `text` parts are the prompt and suffix, or the input texts, in order,
+    with `tools`, `tool_calls` and `tool_results` empty; a rule denying a
+    conversation that contains a forbidden word therefore also denies a
+    completion or embedding request containing it. `models` carries no
+    conversation keys.
 13. The current time and date are available through OPA's own time
     functions, so rules may depend on the hour, day of week or date.
 14. **Rules see argument values and conversation text; nothing else does.**
@@ -479,6 +493,23 @@ labels.
     defines no `deny` in the policy namespace, **when** the Gateway starts
     or reloads, **then** it refuses to start (or keeps the previous policy
     and logs the failure), naming the file.
+31. **Given** a rule denying any conversation whose text contains
+    "Project Falcon", **when** that text is sent in an Anthropic Messages
+    request, an OpenAI-style chat request to Mistral, a Gemini generate
+    request, and a Mistral embeddings request, **then** all four are
+    denied with the same error.
+32. **Given** a rule denying a tool call named `delete_repo` whose
+    argument `force` is true, **when** a Mistral or Gemini request
+    carries that call in its conversation, **then** it is denied.
+33. **Given** a rule keyed on `operation.name == "embeddings"`, **when** a
+    Mistral embeddings request and a Gemini embed request arrive, **then**
+    the rule fires for both.
+34. **Given** a model-listing request in any format, **when** a policy is
+    configured, **then** the rules see `operation.name == "models"` and no
+    conversation keys.
+35. **Given** an OpenAI-style chat request whose body is not valid JSON
+    and a policy configured, **when** it arrives, **then** the policies
+    stage fails closed and the provider receives nothing.
 
 ## Relationship to 0001, 0002 and 0003
 

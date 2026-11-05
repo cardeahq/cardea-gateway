@@ -54,14 +54,15 @@ type Call struct {
 	// (AllowTraced). Nil when tracing is disabled or did not run.
 	Trace *trace.RequestInfo
 
-	// Route, Format and Model are set by the pipeline from the routing
+	// Route, Format, Operation and Model are set by the pipeline from the routing
 	// stage's Decision (AllowRouted or DenyWithModel). Route is nil
 	// before routing runs or on denial; Model is nil when routing found
 	// none. Once set, no later stage's Decision can overwrite them — see
 	// Handler.
-	Route  *routing.Route
-	Format routing.Format
-	Model  *string
+	Route     *routing.Route
+	Format    routing.Format
+	Operation routing.Operation
+	Model     *string
 }
 
 // Denial is attached to Call when a stage — or the pipeline itself —
@@ -88,6 +89,7 @@ type Decision struct {
 	detail  *trace.StageDetail
 	route   *routing.Route
 	format  routing.Format
+	op      routing.Operation
 	model   *string
 }
 
@@ -119,9 +121,9 @@ func AllowTraced(info trace.RequestInfo, tap *trace.ResponseTap) Decision {
 	return Decision{allow: true, trace: &info, tap: tap}
 }
 
-// AllowRouted allows the call and attaches its route, format and model.
-func AllowRouted(r routing.Route, f routing.Format, model *string) Decision {
-	return Decision{allow: true, route: &r, format: f, model: model}
+// AllowRouted allows the call and attaches its route, format, operation and model.
+func AllowRouted(r routing.Route, f routing.Format, op routing.Operation, model *string) Decision {
+	return Decision{allow: true, route: &r, format: f, op: op, model: model}
 }
 
 // DenyWithModel denies like Deny and records the model routing found.
@@ -240,6 +242,7 @@ func (p *Pipeline) Handler(next http.Handler) http.Handler {
 				if decision.route != nil && c.Route == nil {
 					c.Route = decision.route
 					c.Format = decision.format
+					c.Operation = decision.op
 				}
 				if !decision.allow {
 					res.decision = "denied"

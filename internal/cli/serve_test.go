@@ -242,3 +242,40 @@ func TestServe_ExitsBeforeListeningOnAnInvalidPolicy(t *testing.T) {
 		t.Fatal("something is listening: serve must exit before listening")
 	}
 }
+
+func TestServe_ExitsBeforeListeningOnAnUnsupportedSingleProvider(t *testing.T) {
+	// specs/0009 AC 30: a single provider must be anthropic, mistral or
+	// gemini; there is no generic passthrough.
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(upstream.Close)
+	t.Setenv(cliAnthropicKeyEnv, "sk-test-upstream")
+	addr := freeAddr(t)
+	dir := t.TempDir()
+	cfg := fmt.Sprintf("server:\n  listen_addr: %q\nlogging:\n  level: error\nprovider:\n  name: my-proxy\n  base_url: %q\n  api_key_env: %q\npipeline:\n  stages:\n    tracing: false\n",
+		addr, upstream.URL, cliAnthropicKeyEnv)
+	cfgPath := filepath.Join(dir, "cardea-gateway.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCmd()
+	root.SetArgs([]string{"serve", "--config", cfgPath})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := root.ExecuteContext(ctx)
+	if err == nil {
+		t.Fatal("serve with provider.name my-proxy returned nil, want an error naming it")
+	}
+	if !strings.Contains(err.Error(), "my-proxy") {
+		t.Fatalf("error %q does not name the provider", err)
+	}
+	if strings.Contains(err.Error(), "sk-test-upstream") {
+		t.Fatalf("error %q leaks the key", err)
+	}
+	if conn, derr := net.DialTimeout("tcp", addr, 200*time.Millisecond); derr == nil {
+		_ = conn.Close()
+		t.Fatal("something is listening: serve must exit before listening")
+	}
+}

@@ -14,11 +14,12 @@ var (
 	exSSNUK = "AB123456C"       // valid NINO: letters/digits/suffix all in range
 	exSSNFR = "185067500312345" // sex 1, YY 85, MM 06, dept 75, commune 003, order 123, key 45
 
-	exAPIKeyOpenAI = "sk-" + strings.Repeat("A", 24)
-	exAPIKeyGitHub = "ghp_" + strings.Repeat("A", 36)
-	exAPIKeyAWS    = "AKIA" + strings.Repeat("A", 16)
-	exAPIKeySlack  = "xoxb-" + strings.Repeat("A", 20)
-	exAPIKeyGoogle = "AIza" + strings.Repeat("A", 35)
+	exAPIKeyOpenAI        = "sk-" + strings.Repeat("A", 24)
+	exAPIKeyOpenAIProject = "sk-proj-" + strings.Repeat("Ab1_-", 10) // '_' and '-' inside the body
+	exAPIKeyGitHub        = "ghp_" + strings.Repeat("A", 36)
+	exAPIKeyAWS           = "AKIA" + strings.Repeat("A", 16)
+	exAPIKeySlack         = "xoxb-" + strings.Repeat("A", 20)
+	exAPIKeyGoogle        = "AIza" + strings.Repeat("A", 35)
 
 	// exNoPrefixHex looks like a secret (40 hex characters, the shape of a
 	// SHA-1 or a GitHub token stripped of its prefix) but carries none of
@@ -47,14 +48,14 @@ func testEngineWithCategories(cats ...Category) *Engine {
 
 // --- Placeholder parsing -----------------------------------------------------
 
-var placeholderPattern = regexp.MustCompile(`\[(email|ssn|api_key):([0-9a-f-]{36})\]`)
+var placeholderPattern = regexp.MustCompile(`\[REDACTED:(email|ssn|api_key)\]`)
 
-// placeholders returns every (category, uuid) pair found in body, in order
-// of appearance.
-func placeholders(body []byte) [][2]string {
-	var out [][2]string
+// placeholders returns the category of every placeholder found in body, in
+// order of appearance.
+func placeholders(body []byte) []string {
+	var out []string
 	for _, m := range placeholderPattern.FindAllStringSubmatch(string(body), -1) {
-		out = append(out, [2]string{m[1], m[2]})
+		out = append(out, m[1])
 	}
 	return out
 }
