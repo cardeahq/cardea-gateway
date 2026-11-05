@@ -25,5 +25,17 @@
     "/secrets",
     "/etc/shadow",
     "~/.ssh"
-  ]
+  ],
+  "injection_patterns": [
+    "ignore (all )?(previous|prior|above) instructions",
+    "disregard (the|your) (system prompt|instructions)",
+    "you are now [a-z ]+",
+    "<\\s*/?\\s*system\\s*>"
+  ],
+  "forbidden_agent_models": {
+    "opencode": [
+      "mistral-*",
+      "codestral-*"
+    ]
+  }
 }
