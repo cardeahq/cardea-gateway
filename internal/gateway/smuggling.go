@@ -45,5 +45,10 @@ func isSmugglingRune(r rune) bool {
 		return true
 	}
 
+	// Unicode Tags block
+	if r >= 0xE0000 && r <= 0xE007F {
+		return true
+	}
+
 	return false
 }

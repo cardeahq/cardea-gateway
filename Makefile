@@ -54,6 +54,10 @@ fmt-check:
 .PHONY: check
 check: build vet fmt-check lint test
 
+.PHONY: vulncheck
+vulncheck:
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
 .PHONY: tidy
 tidy:
 	go mod tidy
