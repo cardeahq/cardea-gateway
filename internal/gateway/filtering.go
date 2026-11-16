@@ -22,7 +22,13 @@ type filteringStage struct {
 func (s *filteringStage) Name() string { return "filtering" }
 
 func (s *filteringStage) Request(ctx context.Context, c *pipeline.Call) (pipeline.Decision, error) {
-	res, err := s.engine.Redact(ctx, filtering.Request{CallID: c.ID, Path: c.Request.URL.Path, Body: c.Body, Format: string(c.Format), Operation: string(c.Operation)})
+	// Pre-filter for ASCII smuggling
+	cleanedBody, hadSmuggling := FilterInvisibleChars(c.Body)
+	if hadSmuggling && s.logger != nil {
+		s.logger.Warn("ASCII smuggling detected", zap.String("call_id", c.ID))
+	}
+
+	res, err := s.engine.Redact(ctx, filtering.Request{CallID: c.ID, Path: c.Request.URL.Path, Body: cleanedBody, Format: string(c.Format), Operation: string(c.Operation)})
 	if err != nil {
 		kind := "internal"
 		var fe *filtering.FilterError
