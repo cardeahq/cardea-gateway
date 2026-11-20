@@ -1,0 +1,10 @@
+.git
+bin
+*.out
+*.test
+.env
+.idea
+traces.jsonl
+cardea-gateway.yaml
+cardea-gateway.local.yaml
+configs/identification.local

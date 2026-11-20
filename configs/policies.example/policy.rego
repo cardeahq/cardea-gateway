@@ -9,13 +9,6 @@ deny contains "destructive-bash-in-history" if {
 	regex.match(`rm\s+-rf\s+(/|~)|mkfs\.|dd\s+if=.*of=/dev/`, c.arguments.command)
 }
 
-# Agent and model pairs that are never allowed, e.g. keep a coding agent off
-# a provider. Patterns use glob syntax: "mistral-*" matches every Mistral model.
-# deny contains "agent-model-forbidden" if {
-# 	some pattern in data.forbidden_agent_models[input.agent.id]
-# 	glob.match(pattern, null, input.model)
-# }
-
 # Cost guardrails: data.limits, overridable per agent in data.agents
 limit(name) := object.get(data.agents, [object.get(input, ["agent", "id"], ""), name], data.limits[name])
 

@@ -1,0 +1,10 @@
+agent_id: "mistral-vibe"
+# Vibe sets User-Agent "Mistral-Vibe/<version>"; on the Mistral backend the
+# SDK prefixes it, giving "mistral-client-python/Mistral-Vibe/<version>".
+match:
+  - header: "user-agent"
+    pattern: "(^|/)Mistral-Vibe/"
+# Vibe sends its session ID in the request body's metadata object (Mistral
+# chat completions only — other providers have no metadata channel).
+session_sources:
+  - body_field: "metadata.session_id"

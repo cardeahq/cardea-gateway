@@ -8,8 +8,9 @@ import (
 // Route is one entry a call can be resolved to: a configured provider in
 // list mode, or the sole provider in single mode.
 type Route struct {
-	Provider string   // configured provider name
-	Kind     string   // "anthropic", "mistral" or "gemini"
+	Provider string // configured provider name
+	Kind     string // "a
+	// nthropic", "mistral" or "gemini"
 	Formats  []Format // non-empty
 	Patterns []string // model patterns; empty in single mode
 	Single   bool     // true only for the route built by NewSingleTable
